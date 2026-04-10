@@ -431,7 +431,13 @@ if (error) {
   };
 
   const handleGoogleLogin = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+    const { error } = await supabase.auth.signInWithOAuth({ 
+      provider: 'google',
+      options: {
+        // 🚀 🆕 「今開いているURL」を帰り道として指定する
+        redirectTo: window.location.origin 
+      }
+    });
     if (error) alert(error.message);
   };
 
