@@ -57,6 +57,20 @@ function CancelReservation() {
 
       if (deleteError) throw deleteError;
 
+      // 🚀 🆕 【追加】キャンセル通知メールの送信処理
+      // 削除後でも変数 reservation にデータが残っているのでそれを利用します
+      try {
+        await supabase.functions.invoke('resend', {
+          body: {
+            type: 'cancel',
+            reservation: reservation // 予約情報を丸ごと渡す
+          }
+        });
+      } catch (mailErr) {
+        // メールの失敗で画面が止まらないようエラーログのみ出力
+        console.error("キャンセルメール送信失敗:", mailErr);
+      }
+
       // 2. 名簿の自動クリーニングロジック (AdminReservations.jsxと同等)
       // そのお客様の残りの予約数をカウント
       const { count } = await supabase
