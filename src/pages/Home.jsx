@@ -420,6 +420,25 @@ if (error) {
     }
   };
 
+  // 🆕 パスワード再設定メールを送信する関数
+  const handleForgotPassword = async () => {
+    if (!email) {
+      alert("再設定メールを送るため、まずはメールアドレスを入力してください");
+      return;
+    }
+    
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        // パスワード変更ページのURL（後で作ります）
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      alert("パスワード再設定用のメールを送信しました。メール内のリンクをクリックして新しいパスワードを設定してください。");
+    } catch (err) {
+      alert("エラーが発生しました: " + err.message);
+    }
+  };
+
   // 🆕 2. ログイン専用の関数
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -808,6 +827,18 @@ if (error) {
                   <>
                     <input type="text" placeholder="メールアドレス または ID" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInputStyle} required />
                     <input type="password" placeholder="パスワード" value={password} onChange={(e) => setPassword(e.target.value)} style={modalInputStyle} required />
+                    
+                    {/* 🆕 パスワード入力欄のすぐ下に追加 */}
+                    <div style={{ textAlign: 'right', marginTop: '-8px' }}>
+                      <button 
+                        type="button" 
+                        onClick={handleForgotPassword}
+                        style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline', padding: '5px' }}
+                      >
+                        パスワードを忘れた方はこちら
+                      </button>
+                    </div>
+
                     <button type="submit" style={modalPrimaryBtnStyle}>ログインして進む</button>
                   </>
                 ) : (

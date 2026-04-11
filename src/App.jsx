@@ -9,6 +9,9 @@ import ShopDetail from './pages/ShopDetail';
 import InitialSetup from './pages/InitialSetup';
 import TrialRegistration from './pages/TrialRegistration';
 
+// 🆕 パスワード再設定ページをインポート
+import ResetPassword from './pages/ResetPassword';
+
 // --- 📅 予約システム ---
 import ReservationForm from './pages/ReservationForm';
 import TimeSelectionCalendar from './pages/TimeSelectionCalendar'; 
@@ -78,6 +81,9 @@ function App() {
           <Route path="/setup" element={<InitialSetup />} />
 
           <Route path="/facility-search" element={<FacilitySearch />} />
+
+          {/* 🆕 パスワード再設定用の道（ルート）を追加 */}
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* 迷子防止（ホームへ強制送還） */}
           <Route path="*" element={<Navigate to="/" replace />} />
