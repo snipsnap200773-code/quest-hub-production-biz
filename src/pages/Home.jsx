@@ -369,7 +369,17 @@ if (error) {
           password 
         });
 
-        if (signUpError) throw signUpError;
+        if (signUpError) {
+          if (signUpError.message.includes("already registered")) {
+            alert("このメールアドレスは既に登録されています。新規登録は不要ですので、ログイン画面からそのままログインしてください！");
+            // モーダルをログインモードに切り替えてあげると親切です
+            setIsSignUpMode(false);
+            setSignUpStep('email');
+          } else {
+            throw signUpError; // その他のエラーは今まで通り外側の catch へ
+          }
+          return; // 処理を中断
+        }
         
         // 🆕 ユーザーが作成されたら、次の「プロフィール（電話番号）」ステップへ
         if (signUpData.user) {
