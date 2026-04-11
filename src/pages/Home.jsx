@@ -35,6 +35,22 @@ function Home() {
 const [isModalOpen, setIsModalOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false); 
+
+  // 🚀 追記：モーダルを閉じたら状態を初期化する
+  useEffect(() => {
+    if (!isModalOpen) {
+      // モーダルが閉じられた（falseになった）瞬間に実行
+      setIsForgotPasswordMode(false);
+      setIsSignUpMode(false);
+      setSignUpStep('email');
+      // ついでに入力中のメアドやパスワードも空にしたいならここに追加
+      // setEmail('');
+      // setPassword('');
+    }
+  }, [isModalOpen]);
+
   // 🆕 追加：多段登録フロー用
   const [signUpStep, setSignUpStep] = useState('email'); // 'email' | 'otp' | 'password' | 'profile'
   const [otpCode, setOtpCode] = useState('');
@@ -822,26 +838,54 @@ if (error) {
                 </>
               )}
 
-              <form onSubmit={isSignUpMode ? handleSignUpFlow : handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {!isSignUpMode ? (
-                  <>
-                    <input type="text" placeholder="メールアドレス または ID" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInputStyle} required />
-                    <input type="password" placeholder="パスワード" value={password} onChange={(e) => setPassword(e.target.value)} style={modalInputStyle} required />
-                    
-                    {/* 🆕 パスワード入力欄のすぐ下に追加 */}
-                    <div style={{ textAlign: 'right', marginTop: '-8px' }}>
-                      <button 
-                        type="button" 
-                        onClick={handleForgotPassword}
-                        style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline', padding: '5px' }}
-                      >
-                        パスワードを忘れた方はこちら
-                      </button>
-                    </div>
-
-                    <button type="submit" style={modalPrimaryBtnStyle}>ログインして進む</button>
-                  </>
-                ) : (
+              <form onSubmit={isSignUpMode ? handleSignUpFlow : (isForgotPasswordMode ? (e) => e.preventDefault() : handleLogin)} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+  {isForgotPasswordMode ? (
+    /* 🆕 パスワード再設定専用の表示 */
+    <>
+      <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+        <p style={{ fontSize: '0.9rem', color: '#475569' }}>登録済みのメールアドレスを入力してください。<br/>再設定用のリンクをお送りします。</p>
+      </div>
+      <input 
+        type="email" 
+        placeholder="example@gmail.com" 
+        value={email} 
+        onChange={(e) => setEmail(e.target.value)} 
+        style={modalInputStyle} 
+        required 
+      />
+      <button 
+        type="button" 
+        onClick={handleForgotPassword} 
+        style={modalPrimaryBtnStyle}
+      >
+        再設定メールを送信する
+      </button>
+      <button 
+        type="button" 
+        onClick={() => setIsForgotPasswordMode(false)} 
+        style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.85rem', cursor: 'pointer', marginTop: '10px' }}
+      >
+        ← ログイン画面に戻る
+      </button>
+    </>
+  ) : !isSignUpMode ? (
+    /* 通常のログイン表示 */
+    <>
+      <input type="text" placeholder="メールアドレス または ID" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInputStyle} required />
+      <input type="password" placeholder="パスワード" value={password} onChange={(e) => setPassword(e.target.value)} style={modalInputStyle} required />
+      
+      <div style={{ textAlign: 'right', marginTop: '-8px' }}>
+        <button 
+          type="button" 
+          onClick={() => setIsForgotPasswordMode(true)} // 🚀 ここでモードを切り替える
+          style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline', padding: '5px' }}
+        >
+          パスワードを忘れた方はこちら
+        </button>
+      </div>
+      <button type="submit" style={modalPrimaryBtnStyle}>ログインして進む</button>
+    </>
+  ) : (
                   <>
                     {signUpStep === 'email' && (
                       <>
