@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate } from 'react-router-dom';
-import { KeyRound, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { KeyRound, ShieldCheck, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
 const ResetPassword = () => {
   const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  // 🆕 パスワード表示/非表示の管理
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleUpdatePassword = async (e) => {
@@ -83,21 +85,31 @@ const ResetPassword = () => {
             <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#475569', marginLeft: '4px' }}>
               新しいパスワード
             </label>
-            <input 
-              type="password" 
-              placeholder="8文字以上の英数字" 
-              value={newPassword} 
-              onChange={(e) => setNewPassword(e.target.value)} 
-              style={{ 
-                width: '100%', padding: '16px', borderRadius: '16px', 
-                border: '1px solid #e2e8f0', fontSize: '1rem', boxSizing: 'border-box',
-                outline: 'none', transition: 'border-color 0.2s'
-              }}
-              onFocus={(e) => e.target.style.borderColor = '#07aadb'}
-              onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
-              required 
-              autoFocus
-            />
+            {/* 🆕 入力欄をrelativeのdivで囲む */}
+            <div style={{ position: 'relative' }}>
+              <input 
+                type={showPassword ? "text" : "password"} // 🚀 ステートで切り替え
+                placeholder="8文字以上の英数字" 
+                value={newPassword} 
+                onChange={(e) => setNewPassword(e.target.value)} 
+                style={{ 
+                  width: '100%', padding: '16px 50px 16px 16px', // 🚀 右側に余白
+                  borderRadius: '16px', border: '1px solid #e2e8f0', fontSize: '1rem', boxSizing: 'border-box', outline: 'none', transition: 'border-color 0.2s'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#07aadb'}
+                onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
+                required 
+                autoFocus
+              />
+              {/* 🆕 目のマークボタン */}
+              <button 
+                type="button" 
+                onClick={() => setShowPassword(!showPassword)} 
+                style={{ position: 'absolute', top: '50%', right: '15px', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, display: 'flex', alignItems: 'center' }}
+              >
+                {showPassword ? <EyeOff size={22} /> : <Eye size={22} />}
+              </button>
+            </div>
           </div>
           
           <button 

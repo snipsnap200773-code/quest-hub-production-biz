@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 // 🆕 共通マスター（大カテゴリのリスト）をインポート
 import { INDUSTRY_LABELS } from '../constants/industryMaster';
-import { MapPin, User, LogIn, Heart, Calendar, LogOut, X, Mail, ChevronRight } from 'lucide-react';
+import { MapPin, User, LogIn, Heart, Calendar, LogOut, X, Mail, ChevronRight, Eye, EyeOff } from 'lucide-react';
 // 🎮 🆕 ゲームの司令塔（ハブ）をインポート！ [cite: 2025-12-03]
 import GameQuestHub from '../components/game/GameQuestHub';
 const profileInputStyle = { width: '100%', padding: '8px', borderRadius: '6px', border: 'none', color: '#333', fontSize: '0.9rem', boxSizing: 'border-box' };
@@ -37,7 +37,8 @@ const [isModalOpen, setIsModalOpen] = useState(false);
   const [password, setPassword] = useState('');
 
 const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false); 
-
+// 🆕 パスワード表示/非表示の管理
+  const [showPassword, setShowPassword] = useState(false);
   // 🚀 追記：モーダルを閉じたら状態を初期化する
   useEffect(() => {
     if (!isModalOpen) {
@@ -902,8 +903,45 @@ if (error) {
                     )}
                     {signUpStep === 'password' && (
                       <>
-                        <input type="password" placeholder="新しいパスワード（8文字以上）" value={password} onChange={(e) => setPassword(e.target.value)} style={modalInputStyle} required />
-                        <input type="password" placeholder="パスワード（確認用）" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} style={modalInputStyle} required />
+                        {/* 🆕 1つ目のパスワード入力欄 */}
+                        <div style={{ position: 'relative' }}>
+                          <input 
+                            type={showPassword ? "text" : "password"} // 🚀 ステートで切り替え
+                            placeholder="新しいパスワード（8文字以上）" 
+                            value={password} 
+                            onChange={(e) => setPassword(e.target.value)} 
+                            style={{ ...modalInputStyle, paddingRight: '50px' }} // 🚀 アイコン分の余白を確保
+                            required 
+                          />
+                          {/* 🆕 目のマークボタン */}
+                          <button 
+                            type="button" 
+                            onClick={() => setShowPassword(!showPassword)} 
+                            style={{ position: 'absolute', top: '50%', right: '15px', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, display: 'flex', alignItems: 'center' }}
+                          >
+                            {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                          </button>
+                        </div>
+
+                        {/* 🆕 2つ目の確認用パスワード入力欄（こっちも目のマークに対応） */}
+                        <div style={{ position: 'relative' }}>
+                          <input 
+                            type={showPassword ? "text" : "password"} // 🚀 共通のステートで切り替え
+                            placeholder="パスワード（確認用）" 
+                            value={confirmPassword} 
+                            onChange={(e) => setConfirmPassword(e.target.value)} 
+                            style={{ ...modalInputStyle, paddingRight: '50px' }} 
+                            required 
+                          />
+                          <button 
+                            type="button" 
+                            onClick={() => setShowPassword(!showPassword)} 
+                            style={{ position: 'absolute', top: '50%', right: '15px', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, display: 'flex', alignItems: 'center' }}
+                          >
+                            {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                          </button>
+                        </div>
+                        
                         <button type="submit" style={modalPrimaryBtnStyle}>パスワードを確定して次へ</button>
                       </>
                     )}
