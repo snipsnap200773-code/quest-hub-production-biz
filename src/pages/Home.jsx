@@ -493,34 +493,29 @@ if (error) {
     }
   };
 
-  // 🆕 予約キャンセル実行ロジック
+  // 🆕 ユーザー自身によるステータス更新キャンセル
   const handleCancelReservation = async (res) => {
     const shopName = res.profiles?.business_name || '店舗';
     const startTime = new Date(res.start_time).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-    if (!window.confirm(`${shopName}（${startTime}）のご予約をキャンセルしますか？\n※この操作は取り消せません。`)) return;
+    if (!window.confirm(`${shopName}（${startTime}）のご予約をキャンセルしますか？`)) return;
 
     try {
-      // 1. 予約データを削除（三土手さんの既存Edge Functionがdeleteトリガーで動く想定）
       const { error } = await supabase
         .from('reservations')
-        .delete()
+        .update({ status: 'canceled' }) // 🚀 物理削除から「更新」へ変更
         .eq('id', res.id);
 
       if (error) throw error;
 
-      alert("キャンセルが完了しました。店舗へ通知を送信しました。");
-      
-      // 2. 画面上の履歴を最新の状態に更新する
+      alert("キャンセルが完了しました。店舗へ自動通知を送信しました。");
       const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        handleSyncUser(session);
-      }
+      handleSyncUser(session);
     } catch (err) {
-      console.error("Cancel Error:", err);
-      alert("キャンセル処理に失敗しました。時間をおいて再度お試しください。");
+      alert("キャンセル処理に失敗しました。");
     }
   };
+
 
   return (
     <div style={{ backgroundColor: '#f4f7f9', minHeight: '100vh', fontFamily: '"Hiragino Sans", "Meiryo", sans-serif', color: '#333', width: '100%' }}>
@@ -606,11 +601,9 @@ if (error) {
     <div style={{ display: 'inline-flex', background: '#f0f9ff', color: '#07aadb', padding: '12px', borderRadius: '50%', marginBottom: '15px' }}>
       <Sparkles size={28} />
     </div>
-    <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>
-      マイページでもっと便利に！
-    </h3>
+    <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>マイページでもっと便利に！</h3>
     <p style={{ fontSize: '0.8rem', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>
-      無料のアカウントを作ると、<strong>予約履歴の確認</strong>や<strong>お気に入り保存</strong>、<br />さらに予約でレベルが上がる<strong>限定クエスト</strong>に参加できます。
+      無料のアカウントを作ると、<strong>予約履歴の確認</strong>や<strong>お気に入り保存</strong>、さらに予約でレベルが上がる<strong>限定クエスト</strong>に参加できます。
     </p>
     <button 
       onClick={() => { setIsSignUpMode(true); setIsModalOpen(true); }}
