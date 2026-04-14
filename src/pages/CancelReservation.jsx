@@ -23,7 +23,8 @@ function CancelReservation() {
     try {
       const { data, error } = await supabase
         .from("reservations")
-        .select("*")
+        // 🚀 profilesテーブルから電話番号（phone_contact）も一緒に取得
+        .select("*, profiles(phone_contact)")
         .eq("cancel_token", token)
         .maybeSingle();
 
@@ -169,10 +170,29 @@ function CancelReservation() {
             <p style={{ color: '#e74c3c', fontWeight: 'bold', margin: '0 0 10px 0' }}>
               ⚠️ 当日のキャンセルはWEBから行えません
             </p>
-            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.5', margin: 0 }}>
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.5', marginBottom: '15px' }}>
               お手数ですが、店舗へ直接お電話にて<br />ご連絡をお願いいたします。
             </p>
-            {/* 💡 店舗の電話番号を表示する場合はここに配置 */}
+
+            {/* 🚀 🆕 電話発信ボタンの追加 */}
+            {reservation.profiles?.phone_contact && (
+              <a 
+                href={`tel:${reservation.profiles.phone_contact}`} 
+                style={{ 
+                  ...btnStyle, 
+                  background: '#1e293b', 
+                  color: '#fff', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '8px',
+                  marginTop: '10px'
+                }}
+              >
+                <span>📞</span>
+                <span>{reservation.profiles.phone_contact} に電話する</span>
+              </a>
+            )}
           </div>
         ) : (
           <>
