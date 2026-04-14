@@ -23,8 +23,7 @@ function CancelReservation() {
     try {
       const { data, error } = await supabase
         .from("reservations")
-        // 🚀 profilesテーブルから電話番号（phone_contact）も一緒に取得
-        .select("*, profiles(phone_contact)")
+        .select("*, profiles(phone)")
         .eq("cancel_token", token)
         .maybeSingle();
 
