@@ -1131,38 +1131,52 @@ if (error) {
                   return acc;
                 }, {});
 
-                return Object.values(shopGroups).map((group) => (
-                  <Link key={group.profile.id} to={`/shop/${group.profile.id}/detail`} onClick={() => setActiveTabModal(null)} style={{ textDecoration: 'none' }}>
-                    <div style={{ background: '#fff', borderRadius: '20px', padding: '16px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                        <div>
-  {/* 🚀 修正：res ではなく group.visits[0] を使ってキャンセル判定 */}
-  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-    <div style={{ 
-      fontWeight: '900', 
-      fontSize: '1.1rem', 
-      color: group.visits[0].status === 'canceled' ? '#94a3b8' : '#1e293b',
-      textDecoration: group.visits[0].status === 'canceled' ? 'line-through' : 'none'
-    }}>
-      {group.profile.business_name}
-    </div>
-    {group.visits[0].status === 'canceled' && (
-      <span style={{ background: '#f8fafc', color: '#64748b', fontSize: '0.6rem', border: '1px solid #e2e8f0', padding: '1px 5px', borderRadius: '4px' }}>
-        キャンセル
-      </span>
-    )}
-  </div>
-  <div style={{ fontSize: '0.7rem', color: '#07aadb', fontWeight: 'bold', marginTop: '2px' }}>来店回数：{group.visits.length}回</div>
-</div>
-                        <ChevronRight size={20} color="#cbd5e1" />
+                return Object.values(shopGroups).map((group) => {
+                  // 🚀 1. キャンセル分を除いた「本当の来店回数」を計算
+                  const actualVisitCount = group.visits.filter(v => v.status !== 'canceled').length;
+                  // 🚀 2. 最新の履歴がキャンセルかどうか
+                  const isLatestCanceled = group.visits[0].status === 'canceled';
+
+                  return (
+                    <Link key={group.profile.id} to={`/shop/${group.profile.id}/detail`} onClick={() => setActiveTabModal(null)} style={{ textDecoration: 'none' }}>
+                      <div style={{ background: '#fff', borderRadius: '20px', padding: '16px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.02)', marginBottom: '15px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                          <div>
+                            {/* 🚀 3. 店名は常にきれいに表示（斜線なし） */}
+                            <div style={{ fontWeight: '900', fontSize: '1.1rem', color: '#1e293b' }}>
+                              {group.profile.business_name}
+                            </div>
+                            {/* 🚀 4. 来店回数を計算した値に変更 */}
+                            <div style={{ fontSize: '0.7rem', color: '#07aadb', fontWeight: 'bold', marginTop: '2px' }}>
+                              来店回数：{actualVisitCount}回
+                            </div>
+                          </div>
+                          <ChevronRight size={20} color="#cbd5e1" />
+                        </div>
+
+                        <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '10px', fontSize: '0.75rem' }}>
+                          {/* 🚀 5. 日付に斜線を適用（キャンセルの時だけ） */}
+                          <div style={{ 
+                            color: '#64748b', 
+                            marginBottom: '4px', 
+                            fontSize: '0.65rem',
+                            textDecoration: isLatestCanceled ? 'line-through' : 'none' 
+                          }}>
+                            最新の利用日：{new Date(group.visits[0].start_time).toLocaleDateString('ja-JP')}
+                          </div>
+                          
+                          {/* 🚀 6. メニュー名に「をキャンセル」を足し、文字を薄くする */}
+                          <div style={{ 
+                            color: isLatestCanceled ? '#94a3b8' : '#1e293b', 
+                            fontWeight: 'bold' 
+                          }}>
+                            {group.visits[0].menu_name}{isLatestCanceled ? ' をキャンセル' : ''}
+                          </div>
+                        </div>
                       </div>
-                      <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '10px', fontSize: '0.75rem' }}>
-                        <div style={{ color: '#64748b', marginBottom: '4px', fontSize: '0.65rem' }}>最新の利用日：{new Date(group.visits[0].start_time).toLocaleDateString('ja-JP')}</div>
-                        <div style={{ color: '#1e293b', fontWeight: 'bold' }}>{group.visits[0].menu_name}</div>
-                      </div>
-                    </div>
-                  </Link>
-                ));
+                    </Link>
+                  );
+                });
               })()}
             </div>
           </div>
