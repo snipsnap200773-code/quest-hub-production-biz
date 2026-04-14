@@ -1122,7 +1122,29 @@ if (error) {
                     <div style={{ background: '#fff', borderRadius: '20px', padding: '16px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                         <div>
-                          <div style={{ fontWeight: '900', fontSize: '1.1rem', color: '#1e293b' }}>{group.profile.business_name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+  <div style={{ 
+    fontWeight: '900', 
+    fontSize: '1.1rem', 
+    color: res.status === 'canceled' ? '#94a3b8' : '#1e293b', // キャンセルなら文字を薄く
+    textDecoration: res.status === 'canceled' ? 'line-through' : 'none' // キャンセルなら打ち消し線
+  }}>
+    {res.profiles?.business_name}
+  </div>
+  
+  {res.status === 'canceled' && (
+    <span style={{ 
+      background: '#f1f5f9', 
+      color: '#64748b', 
+      fontSize: '0.65rem', 
+      padding: '2px 8px', 
+      borderRadius: '4px', 
+      fontWeight: 'bold' 
+    }}>
+      キャンセル済
+    </span>
+  )}
+</div>
                           <div style={{ fontSize: '0.7rem', color: '#07aadb', fontWeight: 'bold', marginTop: '2px' }}>来店回数：{group.visits.length}回</div>
                         </div>
                         <ChevronRight size={20} color="#cbd5e1" />
