@@ -1060,7 +1060,21 @@ if (error) {
                             <div style={{ fontSize: '0.85rem', color: '#07aadb', fontWeight: 'bold' }}>
                               {new Date(res.start_time).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </div>
-                            <div style={{ fontWeight: '900', fontSize: '1.15rem', color: '#1e293b', margin: '2px 0' }}>{res.profiles?.business_name}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0' }}>
+  <div style={{ 
+    fontWeight: '900', 
+    fontSize: '1.15rem', 
+    color: res.status === 'canceled' ? '#94a3b8' : '#1e293b', 
+    textDecoration: res.status === 'canceled' ? 'line-through' : 'none' 
+  }}>
+    {res.profiles?.business_name}
+  </div>
+  {res.status === 'canceled' && (
+    <span style={{ background: '#f1f5f9', color: '#64748b', fontSize: '0.65rem', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+      キャンセル済
+    </span>
+  )}
+</div>
                             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '8px' }}>{res.menu_name}</div>
                           </div>
                           <div style={{ background: isToday ? '#ef4444' : '#07aadb', color: '#fff', padding: '4px 12px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '900' }}>
@@ -1122,31 +1136,24 @@ if (error) {
                     <div style={{ background: '#fff', borderRadius: '20px', padding: '16px', border: '1px solid #f1f5f9', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                         <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-  <div style={{ 
-    fontWeight: '900', 
-    fontSize: '1.1rem', 
-    color: res.status === 'canceled' ? '#94a3b8' : '#1e293b', // キャンセルなら文字を薄く
-    textDecoration: res.status === 'canceled' ? 'line-through' : 'none' // キャンセルなら打ち消し線
-  }}>
-    {res.profiles?.business_name}
-  </div>
-  
-  {res.status === 'canceled' && (
-    <span style={{ 
-      background: '#f1f5f9', 
-      color: '#64748b', 
-      fontSize: '0.65rem', 
-      padding: '2px 8px', 
-      borderRadius: '4px', 
-      fontWeight: 'bold' 
+  {/* 🚀 修正：res ではなく group.visits[0] を使ってキャンセル判定 */}
+  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+    <div style={{ 
+      fontWeight: '900', 
+      fontSize: '1.1rem', 
+      color: group.visits[0].status === 'canceled' ? '#94a3b8' : '#1e293b',
+      textDecoration: group.visits[0].status === 'canceled' ? 'line-through' : 'none'
     }}>
-      キャンセル済
-    </span>
-  )}
+      {group.profile.business_name}
+    </div>
+    {group.visits[0].status === 'canceled' && (
+      <span style={{ background: '#f8fafc', color: '#64748b', fontSize: '0.6rem', border: '1px solid #e2e8f0', padding: '1px 5px', borderRadius: '4px' }}>
+        キャンセル
+      </span>
+    )}
+  </div>
+  <div style={{ fontSize: '0.7rem', color: '#07aadb', fontWeight: 'bold', marginTop: '2px' }}>来店回数：{group.visits.length}回</div>
 </div>
-                          <div style={{ fontSize: '0.7rem', color: '#07aadb', fontWeight: 'bold', marginTop: '2px' }}>来店回数：{group.visits.length}回</div>
-                        </div>
                         <ChevronRight size={20} color="#cbd5e1" />
                       </div>
                       <div style={{ background: '#f8fafc', borderRadius: '12px', padding: '10px', fontSize: '0.75rem' }}>
