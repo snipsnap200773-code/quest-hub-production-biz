@@ -105,6 +105,18 @@ function CancelReservation() {
     }
   };
 
+  // 🚀 🆕 当日かどうかを判定する関数
+  const isToday = (dateInput) => {
+    if (!dateInput) return false;
+    const target = new Date(dateInput);
+    const today = new Date();
+    return (
+      target.getFullYear() === today.getFullYear() &&
+      target.getMonth() === today.getMonth() &&
+      target.getDate() === today.getDate()
+    );
+  };
+
   const showError = (msg) => {
     setErrMsg(msg);
     setView('error');
@@ -144,8 +156,31 @@ function CancelReservation() {
               : reservation.options?.services?.map(s => s.name).join(', ') || 'なし'
           }
         </div>
-        <p style={{ fontSize: '12px', color: '#666' }}>※変更の場合は一度キャンセルして再度ご予約ください。</p>
-        <button style={{ ...btnStyle, background: '#e74c3c', color: '#fff' }} onClick={execCancel}>予約をキャンセルする</button>
+        
+        {/* 🚀 🆕 当日判定によるボタンの切り替え */}
+        {isToday(reservation.start_time || reservation.start_at) ? (
+          <div style={{ 
+            marginTop: '20px', 
+            padding: '20px', 
+            background: '#fff1f2', 
+            borderRadius: '12px', 
+            border: '2px solid #ff7b7b' 
+          }}>
+            <p style={{ color: '#e74c3c', fontWeight: 'bold', margin: '0 0 10px 0' }}>
+              ⚠️ 当日のキャンセルはWEBから行えません
+            </p>
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.5', margin: 0 }}>
+              お手数ですが、店舗へ直接お電話にて<br />ご連絡をお願いいたします。
+            </p>
+            {/* 💡 店舗の電話番号を表示する場合はここに配置 */}
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: '12px', color: '#666' }}>※変更の場合は一度キャンセルして再度ご予約ください。</p>
+            <button style={{ ...btnStyle, background: '#e74c3c', color: '#fff' }} onClick={execCancel}>予約をキャンセルする</button>
+          </>
+        )}
+
         <Link to="/" style={{ ...btnStyle, background: '#eee', color: '#333' }}>戻る</Link>
       </div>
     );
