@@ -17,6 +17,7 @@ import ReservationForm from './pages/ReservationForm';
 import TimeSelectionCalendar from './pages/TimeSelectionCalendar'; 
 import ConfirmReservation from './pages/ConfirmReservation';
 import CancelReservation from './pages/CancelReservation';
+import ReservedSuccess from './pages/ReservedSuccess';
 
 // --- 🛠️ 共通コンポーネント ---
 import ShopSearch from './components/ShopSearch';
@@ -74,6 +75,8 @@ function App() {
           <Route path="/shop/:shopId/confirm" element={<ConfirmReservation />} />
           {/* 修正：/cancel-reservation を /cancel に戻しました */}
           <Route path="/cancel" element={<CancelReservation />} />
+
+          <Route path="/reserved-success" element={<ReservedSuccess />} />
 
           {/* --- 🚀 新規登録・初期設定：ここも稼働中に合わせました --- */}
           <Route path="/trial-registration" element={<TrialRegistration />} />
