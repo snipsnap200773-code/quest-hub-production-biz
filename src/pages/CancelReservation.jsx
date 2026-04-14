@@ -174,24 +174,24 @@ function CancelReservation() {
             </p>
 
             {/* 🚀 🆕 電話発信ボタンの追加 */}
-            {reservation.profiles?.phone_contact && (
-              <a 
-                href={`tel:${reservation.profiles.phone_contact}`} 
-                style={{ 
-                  ...btnStyle, 
-                  background: '#1e293b', 
-                  color: '#fff', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  gap: '8px',
-                  marginTop: '10px'
-                }}
-              >
-                <span>📞</span>
-                <span>{reservation.profiles.phone_contact} に電話する</span>
-              </a>
-            )}
+            {reservation.profiles?.phone && (
+  <a 
+    href={`tel:${reservation.profiles.phone}`} 
+    style={{ 
+      ...btnStyle, 
+      background: '#1e293b', 
+      color: '#fff', 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center', 
+      gap: '8px',
+      marginTop: '10px'
+    }}
+  >
+    <span>📞</span>
+    <span>{reservation.profiles.phone} に電話する</span>
+  </a>
+)}
           </div>
         ) : (
           <>
