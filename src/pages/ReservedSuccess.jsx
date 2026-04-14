@@ -20,7 +20,7 @@ const ReservedSuccess = () => {
         </div>
 
         <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px' }}>
-          予約完了！クエスト達成です！
+          予約完了しました
         </h2>
         <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '32px' }}>
           ご予約ありがとうございます。<br/>当日のお越しを心よりお待ちしております。
