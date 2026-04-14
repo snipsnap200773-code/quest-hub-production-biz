@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 // 🆕 共通マスター（大カテゴリのリスト）をインポート
 import { INDUSTRY_LABELS } from '../constants/industryMaster';
-import { MapPin, User, LogIn, Heart, Calendar, LogOut, X, Mail, ChevronRight, Eye, EyeOff } from 'lucide-react';
+import { MapPin, User, LogIn, Heart, Calendar, LogOut, X, Mail, ChevronRight, Eye, EyeOff, Sparkles } from 'lucide-react';
 // 🎮 🆕 ゲームの司令塔（ハブ）をインポート！ [cite: 2025-12-03]
 import GameQuestHub from '../components/game/GameQuestHub';
 const profileInputStyle = { width: '100%', padding: '8px', borderRadius: '6px', border: 'none', color: '#333', fontSize: '0.9rem', boxSizing: 'border-box' };
@@ -493,6 +493,35 @@ if (error) {
     }
   };
 
+  // 🆕 予約キャンセル実行ロジック
+  const handleCancelReservation = async (res) => {
+    const shopName = res.profiles?.business_name || '店舗';
+    const startTime = new Date(res.start_time).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    if (!window.confirm(`${shopName}（${startTime}）のご予約をキャンセルしますか？\n※この操作は取り消せません。`)) return;
+
+    try {
+      // 1. 予約データを削除（三土手さんの既存Edge Functionがdeleteトリガーで動く想定）
+      const { error } = await supabase
+        .from('reservations')
+        .delete()
+        .eq('id', res.id);
+
+      if (error) throw error;
+
+      alert("キャンセルが完了しました。店舗へ通知を送信しました。");
+      
+      // 2. 画面上の履歴を最新の状態に更新する
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        handleSyncUser(session);
+      }
+    } catch (err) {
+      console.error("Cancel Error:", err);
+      alert("キャンセル処理に失敗しました。時間をおいて再度お試しください。");
+    }
+  };
+
   return (
     <div style={{ backgroundColor: '#f4f7f9', minHeight: '100vh', fontFamily: '"Hiragino Sans", "Meiryo", sans-serif', color: '#333', width: '100%' }}>
       
@@ -571,6 +600,27 @@ if (error) {
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
         
+{/* 🆕 野良ユーザー専用：会員登録のメリット案内 */}
+{!user && (
+  <div style={{ background: '#fff', borderRadius: '24px', padding: '25px', marginBottom: '25px', border: '2px dashed #07aadb', textAlign: 'center', boxShadow: '0 10px 25px -5px rgba(7,170,219,0.1)' }}>
+    <div style={{ display: 'inline-flex', background: '#f0f9ff', color: '#07aadb', padding: '12px', borderRadius: '50%', marginBottom: '15px' }}>
+      <Sparkles size={28} />
+    </div>
+    <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>
+      マイページでもっと便利に！
+    </h3>
+    <p style={{ fontSize: '0.8rem', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>
+      無料のアカウントを作ると、<strong>予約履歴の確認</strong>や<strong>お気に入り保存</strong>、<br />さらに予約でレベルが上がる<strong>限定クエスト</strong>に参加できます。
+    </p>
+    <button 
+      onClick={() => { setIsSignUpMode(true); setIsModalOpen(true); }}
+      style={{ background: '#07aadb', color: '#fff', border: 'none', padding: '12px 30px', borderRadius: '50px', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer', boxShadow: '0 4px 15px rgba(7,170,219,0.3)' }}
+    >
+      今すぐ無料で登録する
+    </button>
+  </div>
+)}
+
 {/* 🆕 お客様専用：ログイン後のパーソナライズボード */}
 {user && !isSignUpMode && (
   <div style={{ background: 'linear-gradient(135deg, #07aadb 0%, #0284c7 100%)', borderRadius: '16px', padding: '20px', marginBottom: '25px', color: '#fff', boxShadow: '0 8px 20px rgba(7, 170, 219, 0.2)' }}>
@@ -1000,37 +1050,52 @@ if (error) {
               <div style={{ width: '8px', height: '8px', background: '#07aadb', borderRadius: '50%' }}></div>
               これからの予定
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {myHistory
                 .filter(res => new Date(res.start_time) >= new Date())
                 .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
-                .map(res => (
-                  <Link key={res.id} to={`/shop/${res.profiles?.id}/detail`} onClick={() => setActiveTabModal(null)} style={{ textDecoration: 'none' }}>
-                    <div style={{ background: '#f0f9ff', borderRadius: '16px', padding: '16px', border: '2px solid #07aadb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div style={{ fontSize: '0.85rem', color: '#07aadb', fontWeight: 'bold' }}>
-                            {new Date(res.start_time).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                .map(res => {
+                  // 🚀 当日判定
+                  const daysLeft = getDaysUntil(res.start_time);
+                  const isToday = daysLeft === 0;
+
+                  return (
+                    <div key={res.id} style={{ background: '#f0f9ff', borderRadius: '20px', padding: '18px', border: '2px solid #07aadb', position: 'relative' }}>
+                      <Link to={`/shop/${res.profiles?.id}/detail`} onClick={() => setActiveTabModal(null)} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '0.85rem', color: '#07aadb', fontWeight: 'bold' }}>
+                              {new Date(res.start_time).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            <div style={{ fontWeight: '900', fontSize: '1.15rem', color: '#1e293b', margin: '2px 0' }}>{res.profiles?.business_name}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '8px' }}>{res.menu_name}</div>
                           </div>
-                          
-                          {/* 🆕 カウントダウンバッジ [cite: 2026-03-01] */}
-                          {(() => {
-                            const days = getDaysUntil(res.start_time);
-                            if (days < 0) return null;
-                            return (
-                              <div style={{ background: days === 0 ? '#ef4444' : (days <= 3 ? '#f59e0b' : '#07aadb'), color: '#fff', padding: '2px 10px', borderRadius: '20px', fontSize: '0.65rem', fontWeight: '900' }}>
-                                {days === 0 ? '本日予約！' : `あと ${days} 日`}
-                              </div>
-                            );
-                          })()}
+                          <div style={{ background: isToday ? '#ef4444' : '#07aadb', color: '#fff', padding: '4px 12px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '900' }}>
+                            {isToday ? '本日予約！' : `あと ${daysLeft} 日`}
+                          </div>
                         </div>
-                        <div style={{ fontWeight: '900', fontSize: '1.1rem', color: '#1e293b', margin: '2px 0' }}>{res.profiles?.business_name}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{res.menu_name}</div>
+                      </Link>
+
+                      {/* 🆕 キャンセルアクションエリア */}
+                      <div style={{ borderTop: '1px dashed #bae6fd', paddingTop: '12px', marginTop: '5px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        {isToday ? (
+                          <div style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <Mail size={14} /> 当日キャンセルは店舗へ直接お電話ください
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleCancelReservation(res); }}
+                            style={{ background: '#fff', color: '#ef4444', border: '1px solid #fee2e2', padding: '8px 16px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}
+                            onMouseEnter={(e) => e.target.style.background = '#fff1f1'}
+                            onMouseLeave={(e) => e.target.style.background = '#fff'}
+                          >
+                            予約をキャンセルする
+                          </button>
+                        )}
                       </div>
-                      <ChevronRight size={20} color="#07aadb" />
                     </div>
-                  </Link>
-                ))}
+                  );
+                })}
             </div>
             {/* 未来の予約がない場合のメッセージ [cite: 2025-12-01] */}
             {myHistory.filter(res => new Date(res.start_time) >= new Date()).length === 0 && (
