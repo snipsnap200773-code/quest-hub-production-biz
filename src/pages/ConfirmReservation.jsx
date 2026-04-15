@@ -448,7 +448,7 @@ const handleReserve = async () => {
 
         const { data: matched } = await supabase
           .from('customers')
-          .select('id, total_visits')
+          .select('id, name, admin_name, total_visits')
           .or(orConditions.length > 0 ? orConditions.join(',') : `name.eq.${customerData.name}`)
           .eq('shop_id', shopId)
           .maybeSingle();
@@ -516,6 +516,8 @@ const handleReserve = async () => {
         finalCustomerId = newCust.id;
       }
       
+      // 修正箇所：customer_name の決定ロジック
+      const finalDisplayName = existingCust?.admin_name || existingCust?.name || customerData.name;
       // ✅ 予約データの挿入
       const { error: dbError } = await supabase.from('reservations').insert([
         {
@@ -523,7 +525,7 @@ const handleReserve = async () => {
           customer_id: finalCustomerId,
           staff_id: finalStaffId,
           reservation_date: targetDate, 
-          customer_name: customerData.name,
+          customer_name: finalDisplayName,
           customer_phone: customerData.phone || '---',
           customer_email: customerData.email || null,
           zip_code: customerData.zip_code || null,
@@ -567,7 +569,7 @@ const handleReserve = async () => {
           body: {
             type: 'booking', 
             shopId,
-            customerName: displayNameForEmail, // ✅ 書き換えられた名前を送る
+            customerName: finalDisplayName, // ✅ 書き換えられた名前を送る
             staffName: finalStaffName || staffName,
             shopName: customShopName || shop.business_name, // 🆕 追加
             startTime: `${targetDate.replace(/-/g, '/')} ${targetTime}`,
