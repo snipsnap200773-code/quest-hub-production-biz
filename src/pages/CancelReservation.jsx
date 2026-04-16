@@ -210,7 +210,14 @@ function CancelReservation() {
       <div style={containerStyle}>
         <h1 style={{ color: '#333', fontSize: '20px' }}>キャンセル完了</h1>
         <p>キャンセルを受け付けました。</p>
-        <Link to="/" style={{ ...btnStyle, background: '#ff7b7b', color: '#fff' }}>新しい予約を入れる</Link>
+        
+        {/* 🚀 🆕 修正：店舗のトップページ（または予約フォーム）へ戻るように変更 */}
+        <Link 
+          to={`/shop/${reservation?.shop_id}`} 
+          style={{ ...btnStyle, background: '#ff7b7b', color: '#fff' }}
+        >
+          新しい予約を入れる
+        </Link>
       </div>
     );
   }
@@ -219,6 +226,7 @@ function CancelReservation() {
     <div style={containerStyle}>
       <h1 style={{ color: '#333', fontSize: '20px' }}>エラー</h1>
       <p>{errMsg}</p>
+      {/* 💡 エラー時は店舗IDが取れない場合があるので、ここはトップ（/）に戻すのが安全です */}
       <Link to="/" style={{ ...btnStyle, background: '#eee', color: '#333' }}>トップへ戻る</Link>
     </div>
   );

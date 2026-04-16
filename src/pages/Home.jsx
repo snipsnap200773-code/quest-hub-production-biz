@@ -603,7 +603,7 @@ if (error) {
     </div>
     <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>マイページでもっと便利に！</h3>
     <p style={{ fontSize: '0.8rem', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>
-      無料のアカウントを作ると、<strong>予約履歴の確認</strong>や<strong>お気に入り保存</strong>、さらに予約でレベルが上がる<strong>限定クエスト</strong>に参加できます。
+      無料のアカウントを作ると、<strong>予約履歴の確認</strong>や<strong>お気に入り保存</strong>ができます。さらに、<strong>プロフィールを登録</strong>しておけば予約時にお名前などが自動入力されるので、ご予約がぐっとスムーズになります。
     </p>
     <button 
       onClick={() => { setIsSignUpMode(true); setIsModalOpen(true); }}
