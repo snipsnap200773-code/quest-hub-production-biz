@@ -262,14 +262,25 @@ try {
     fetchPortalData();
 
     // 初期セッションチェック
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setUser(session.user);
-        handleSyncUser(session);
+    const restoreSession = async () => {
+      // 1. LocalStorageに保存されたセッションがあるか確認
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (session && !sessionError) {
+        // 2. セッションがあれば、最新のユーザー情報をサーバーに再確認（これでログイン維持を確定させる）
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        
+        if (currentUser) {
+          console.log("💎 ログインセッションを復元しました:", currentUser.email);
+          setUser(currentUser);
+          // 3. プロフィールや履歴、お気に入りを同期
+          handleSyncUser(session); 
+        }
       }
     };
-    checkSession();
+
+    // 実行！
+    restoreSession();
 
 // 認証状態の監視
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {

@@ -29,6 +29,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     headers: {
       'x-shop-id': getShopIdFromUrl()
     }
+  },
+  // 🚀 🆕 ログイン維持のための設定（ポータル用）
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    // 💡 保存キーを portal 用に分けるのがポイントです
+    storageKey: 'quest-hub-portal-auth', 
+    storage: window.localStorage
   }
 });
 
