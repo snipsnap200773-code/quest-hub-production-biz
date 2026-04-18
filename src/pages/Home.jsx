@@ -78,10 +78,10 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
   };
 
   const sliderImages = [
-    { id: 1, url: 'https://images.unsplash.com/photo-1600880210836-8f8fe100a35c?auto=format&fit=crop&w=1200&q=80', title: '自分らしく、働く。', desc: 'Solopreneurを支えるポータルサイト' },
-    { id: 2, url: 'https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=1200&q=80', title: '次世代の予約管理', desc: 'SOLOでビジネスを加速させる' },
-    { id: 3, url: 'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80', title: '新しい繋がりを。', desc: 'あなたのサービスを世界へ届けよう' },
-  ];
+  { id: 1, url: 'https://images.unsplash.com/photo-1600880210836-8f8fe100a35c?auto=format&fit=crop&w=1200&q=80', title: 'スマートな予約体験を。', desc: 'QUEST HUB はあなたの日常をよりスムーズにします' },
+  { id: 2, url: 'https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=1200&q=80', title: '次世代の予約ポータル', desc: 'お気に入りのサービスを、いつでも、どこからでも' },
+  { id: 3, url: 'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80', title: 'プロと繋がる、安心を。', desc: '信頼できるプロフェッショナルがあなたを待っています' },
+];
 
   // 🆕 1. 【部品】ポータルデータを読み込む関数（最優先で実行される）
   const fetchPortalData = async () => {
@@ -535,10 +535,12 @@ if (error) {
       <div style={{ background: '#fff', padding: '15px 20px', borderBottom: '1px solid #eee', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
-            <h1 style={{ color: '#07aadb', fontSize: '1.6rem', fontWeight: '900', margin: 0, letterSpacing: '-1.5px' }}>SOLO</h1>
-            <div style={{ height: '20px', width: '1px', background: '#ccc', margin: '0 12px' }}></div>
-            <span style={{ fontSize: '0.75rem', color: '#666', fontWeight: 'bold' }}>Solopreneur Portal</span>
-          </div>
+  {/* 🆕 名前を QUEST HUB に。文字間隔を少し広げてスッキリさせました */}
+  <h1 style={{ color: '#07aadb', fontSize: '1.6rem', fontWeight: '900', margin: 0, letterSpacing: '-0.5px' }}>QUEST HUB</h1>
+  <div style={{ height: '20px', width: '1px', background: '#ccc', margin: '0 12px' }}></div>
+  {/* 🆕 分かりやすく、洗練されたキャッチコピーへ */}
+  <span style={{ fontSize: '0.75rem', color: '#666', fontWeight: 'bold' }}>予約をもっとスマートに。</span>
+</div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             {user ? (
@@ -863,21 +865,22 @@ if (error) {
               <X size={24} color="#94a3b8" />
             </button>
             
-            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+<div style={{ textAlign: 'center', marginBottom: '32px' }}>
               <h2 style={{ fontSize: '1.6rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px' }}>
-                {!isSignUpMode ? 'SOLOにログイン' : 
+                {/* 🆕 SOLO から QUEST HUB に変更 */}
+                {!isSignUpMode ? 'QUEST HUB にログイン' : 
                   signUpStep === 'email' ? '新規アカウント作成' : 
                   signUpStep === 'otp' ? '認証コードを確認' : 
                   signUpStep === 'password' ? 'パスワード設定' : 'プロフィール登録'}
               </h2>
               <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                {!isSignUpMode ? 'スマートな予約体験を。' : 
+                {/* 🆕 文言を整理。ログイン時はシンプルに「予約をもっとスマートに。」 */}
+                {!isSignUpMode ? '予約をもっとスマートに。' : 
                   signUpStep === 'email' ? 'まずはメールアドレスを送信してください' : 
                   signUpStep === 'otp' ? 'メールに届いた6ケタの番号を入力' : 
                   signUpStep === 'password' ? 'ログイン用のパスワードを決めましょう' : '最後に連絡先を教えてください'}
               </p>
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {(!isSignUpMode || signUpStep === 'email') && (
                 <>
@@ -1226,7 +1229,7 @@ if (error) {
         </div>
       )}
       <div style={{ padding: '60px 20px', textAlign: 'center', color: '#cbd5e1', fontSize: '0.7rem' }}>
-        <p>© 2026 Solopreneur Portal SOLO</p>
+        <p>© 2026 QUEST HUB</p>
       </div>    </div>
   );
 }
