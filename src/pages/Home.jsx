@@ -16,6 +16,14 @@ const modalPrimaryBtnStyle = { background: '#0f172a', color: '#fff', border: 'no
 
 function Home() {
   const navigate = useNavigate();
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isPC = windowWidth > 900;
   const [shops, setShops] = useState([]);
   const [newShops, setNewShops] = useState([]); 
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -532,34 +540,72 @@ if (error) {
     <div style={{ backgroundColor: '#f4f7f9', minHeight: '100vh', fontFamily: '"Hiragino Sans", "Meiryo", sans-serif', color: '#333', width: '100%' }}>
       
       {/* 1. ヘッダーエリア（🆕 ログイン対応版） */}
-      <div style={{ background: '#fff', padding: '15px 20px', borderBottom: '1px solid #eee', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
+      <div style={{ 
+        background: 'rgba(255, 255, 255, 0.98)', 
+        padding: isPC ? '15px 25px' : '10px 15px', 
+        borderBottom: '1px solid #f1f5f9', 
+        position: 'sticky', 
+        top: 0, 
+        zIndex: 100, 
+        backdropFilter: 'blur(10px)',
+        boxShadow: '0 2px 15px rgba(0,0,0,0.03)'
+      }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-  {/* 🆕 名前を QUEST HUB に。文字間隔を少し広げてスッキリさせました */}
-  <h1 style={{ color: '#07aadb', fontSize: '1.6rem', fontWeight: '900', margin: 0, letterSpacing: '-0.5px' }}>QUEST HUB</h1>
-  <div style={{ height: '20px', width: '1px', background: '#ccc', margin: '0 12px' }}></div>
-  {/* 🆕 分かりやすく、洗練されたキャッチコピーへ */}
-  <span style={{ fontSize: '0.75rem', color: '#666', fontWeight: 'bold' }}>予約をもっとスマートに。</span>
-</div>
+          
+          {/* 左側：ロゴ ＆ コピー（スマホでは縦に並んでバランスを整える） */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0px' }}>
+            <h1 style={{ 
+              color: '#07aadb', 
+              fontSize: isPC ? '1.7rem' : '1.4rem', 
+              fontWeight: '900', 
+              margin: 0, 
+              letterSpacing: '-1px',
+              lineHeight: 1.1
+            }}>
+              QUEST HUB
+            </h1>
+            <span style={{ 
+              fontSize: isPC ? '0.75rem' : '0.6rem', 
+              color: '#94a3b8', 
+              fontWeight: '800',
+              letterSpacing: '0.5px',
+              marginTop: '2px'
+            }}>
+              予約をもっとスマートに。
+            </span>
+          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          {/* 右側：ログイン・プロフィール（カプセル型ボタンで今どきのデザインへ） */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {user ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-{user.user_metadata?.avatar_url ? (
-  <img 
-    src={user.user_metadata.avatar_url} 
-    style={{ width: '32px', height: '32px', borderRadius: '50%', border: '2px solid #07aadb' }} 
-    alt="profile" 
-  />
-) : (
-  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #07aadb' }}>
-    <User size={18} color="#07aadb" />
-  </div>
-)}
-         <button onClick={handleLogout} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><LogOut size={18} color="#666" /></button>
+                {user.user_metadata?.avatar_url ? (
+                  <img src={user.user_metadata.avatar_url} style={{ width: '34px', height: '34px', borderRadius: '50%', border: '2px solid #07aadb' }} alt="profile" />
+                ) : (
+                  <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #07aadb' }}>
+                    <User size={18} color="#07aadb" />
+                  </div>
+                )}
+                <button onClick={handleLogout} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '5px' }}>
+                  <LogOut size={18} color="#94a3b8" />
+                </button>
               </div>
             ) : (
-              <button onClick={() => setIsModalOpen(true)} style={{ background: '#07aadb', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 4px 10px rgba(7,170,219,0.2)' }}>
+              <button 
+                onClick={() => setIsModalOpen(true)} 
+                style={{ 
+                  background: 'linear-gradient(135deg, #07aadb 0%, #0284c7 100%)', 
+                  color: '#fff', 
+                  border: 'none', 
+                  padding: isPC ? '10px 24px' : '8px 18px', 
+                  borderRadius: '50px', // 完全に丸いカプセル
+                  fontWeight: 'bold', 
+                  fontSize: '0.8rem', 
+                  cursor: 'pointer', 
+                  boxShadow: '0 4px 12px rgba(7,170,219,0.3)',
+                  transition: '0.2s'
+                }}
+              >
                 ログイン
               </button>
             )}
