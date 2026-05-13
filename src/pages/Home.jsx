@@ -520,17 +520,30 @@ if (error) {
     if (!window.confirm(`${shopName}（${startTime}）のご予約をキャンセルしますか？`)) return;
 
     try {
+      // 1. データベースのステータスを更新
       const { error } = await supabase
         .from('reservations')
-        .update({ status: 'canceled' }) // 🚀 物理削除から「更新」へ変更
+        .update({ status: 'canceled' })
         .eq('id', res.id);
 
       if (error) throw error;
 
-      alert("キャンセルが完了しました。店舗へ自動通知を送信しました。");
+      // 🚀 🆕 2. 通知を送る（Edge Function を呼び出す）
+      // index.ts 側の type: 'cancel' が反応してお互いにメール/LINEが飛びます
+      await supabase.functions.invoke('resend', {
+        body: {
+          type: 'cancel',
+          reservation: res, // 予約データを丸ごと渡す
+          shopId: res.shop_id
+        }
+      });
+
+      alert("キャンセルが完了しました。店舗とお客様へ通知を送信しました。");
+      
       const { data: { session } } = await supabase.auth.getSession();
       handleSyncUser(session);
     } catch (err) {
+      console.error("Cancel Error:", err);
       alert("キャンセル処理に失敗しました。");
     }
   };
@@ -1105,7 +1118,7 @@ if (error) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {myHistory
-                .filter(res => new Date(res.start_time) >= new Date())
+                .filter(res => new Date(res.start_time) >= new Date() && res.status !== 'canceled') // 🚀 🆕 キャンセル済は非表示
                 .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
                 .map(res => {
                   // 🚀 当日判定
@@ -1121,20 +1134,15 @@ if (error) {
                               {new Date(res.start_time).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0' }}>
-  <div style={{ 
-    fontWeight: '900', 
-    fontSize: '1.15rem', 
-    color: res.status === 'canceled' ? '#94a3b8' : '#1e293b', 
-    textDecoration: res.status === 'canceled' ? 'line-through' : 'none' 
-  }}>
-    {res.profiles?.business_name}
-  </div>
-  {res.status === 'canceled' && (
-    <span style={{ background: '#f1f5f9', color: '#64748b', fontSize: '0.65rem', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
-      キャンセル済
-    </span>
-  )}
-</div>
+                              <div style={{ 
+                                fontWeight: '900', 
+                                fontSize: '1.15rem', 
+                                color: '#1e293b', 
+                                textDecoration: 'none' 
+                              }}>
+                                {res.profiles?.business_name}
+                              </div>
+                            </div>
                             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '8px' }}>{res.menu_name}</div>
                           </div>
                           <div style={{ background: isToday ? '#ef4444' : '#07aadb', color: '#fff', padding: '4px 12px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '900' }}>
