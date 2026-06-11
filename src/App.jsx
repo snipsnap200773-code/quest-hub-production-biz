@@ -8,9 +8,11 @@ import ShopList from './pages/ShopList';
 import ShopDetail from './pages/ShopDetail';
 import InitialSetup from './pages/InitialSetup';
 import TrialRegistration from './pages/TrialRegistration';
-
-// 🆕 パスワード再設定ページをインポート
 import ResetPassword from './pages/ResetPassword';
+
+// 🆕 ゲーム関連ページをインポート
+import GameDashboard from './pages/Game/GameDashboard';
+import AdventurePage from './pages/Game/Adventure/AdventurePage';
 
 // --- 📅 予約システム ---
 import ReservationForm from './pages/ReservationForm';
@@ -65,27 +67,23 @@ function App() {
           <Route path="/category/:categoryId" element={<ShopList />} />
           <Route path="/shop/:shopId/detail" element={<ShopDetail />} />
           <Route path="/search" element={<ShopSearch />} />
-          {/* 稼働中のAppに合わせて調整 */}
           <Route path="/inquiry" element={<InquiryForm />} />
 
-          {/* --- 📅 予約フロー：ここが今回の「迷子」の犯人でした！ --- */}
+          {/* --- 🎮 ゲーミフィケーションエリア --- */}
+          <Route path="/game" element={<GameDashboard />} />
+          <Route path="/game/adventure" element={<AdventurePage />} />
+
+          {/* --- 📅 予約フロー --- */}
           <Route path="/shop/:shopId/reserve" element={<ReservationForm />} />
-          {/* 修正：/calendar をやめて、稼働中と同じ /reserve/time に戻しました */}
           <Route path="/shop/:shopId/reserve/time" element={<TimeSelectionCalendar />} />
           <Route path="/shop/:shopId/confirm" element={<ConfirmReservation />} />
-          {/* 修正：/cancel-reservation を /cancel に戻しました */}
           <Route path="/cancel" element={<CancelReservation />} />
-
           <Route path="/reserved-success" element={<ReservedSuccess />} />
 
-          {/* --- 🚀 新規登録・初期設定：ここも稼働中に合わせました --- */}
+          {/* --- 🚀 新規登録・初期設定 --- */}
           <Route path="/trial-registration" element={<TrialRegistration />} />
-          {/* 修正：/initial-setup を /setup に戻しました */}
           <Route path="/setup" element={<InitialSetup />} />
-
           <Route path="/facility-search" element={<FacilitySearch />} />
-
-          {/* 🆕 パスワード再設定用の道（ルート）を追加 */}
           <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* 迷子防止（ホームへ強制送還） */}

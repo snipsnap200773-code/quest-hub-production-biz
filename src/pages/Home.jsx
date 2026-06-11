@@ -764,6 +764,40 @@ if (error) {
               プロフィール編集
             </button>
           </div>
+
+          {/* -----------------------------------------------------------
+              🎮 🆕 三土手さん（開発者ID）にだけ見えるゲームへの入り口
+          -------------------------------------------------------------- */}
+          {user && user.id === 'd1669717-95f4-4f80-932f-d412576d55a7' && (
+            <div style={{ marginTop: '10px', marginBottom: '5px' }}>
+              <button
+                onClick={() => navigate('/game')}
+                style={{
+                  width: '100%',
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', // ゴールド/オレンジ系
+                  color: '#fff',
+                  border: 'none',
+                  padding: '12px',
+                  borderRadius: '12px',
+                  fontWeight: '900',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 15px rgba(217,119,6,0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  transition: 'transform 0.2s'
+                }}
+                onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
+                onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              >
+                <Sparkles size={16} /> 【開発用】QUEST HUB ゲームへ
+              </button>
+            </div>
+          )}
+          {/* ----------------------------------------------------------- */}
+
           {/* 🆕 住所表示(MapPin)のブロックを削除しました */}
         </div>
       )}
