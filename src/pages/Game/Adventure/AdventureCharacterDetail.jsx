@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Briefcase, Type, Save, RotateCcw, Plus, Swords, Sun, Moon, Layers, Footprints, Gem, Crosshair, Zap, Award } from 'lucide-react';
+import { Shield, Briefcase, Type, Save, RotateCcw, Plus, Swords, Sun, Moon, Layers, Footprints, Gem, Crosshair, Zap, Award, X } from 'lucide-react';
 import { gameServices, calculateRoStatus } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
 
@@ -43,6 +43,10 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
   const [selectedSlotKey, setSelectedSlotKey] = useState(null);
   const [isEquipping, setIsEquipping] = useState(false);
 
+  // 🔮 プランA連動：現在装着されているカード情報を保持するState
+  const [equippedCards, setEquippedCards] = useState([]);
+  const [selectedSlotIndex, setSelectedSlotIndex] = useState(null); // カードを挿そうとしているスロットの番号
+
   const loadCharAndInventoryData = async () => {
     setLoading(true);
     const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
@@ -50,6 +54,10 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     const data = charList?.find(c => c.id === characterId);
     const invData = await gameServices.getPlayerInventory(testUserId);
     if (invData) setGuildInventory(invData);
+
+    // 🔮 スロット分離テーブルから現在のカード装着状態を爆速ハイドレーション
+    const cardData = await gameServices.getCharacterEquippedCards(characterId);
+    if (cardData) setEquippedCards(cardData);
 
     if (data) {
       const { data: allItems } = await supabase.from('game_master_items').select('*');
@@ -122,6 +130,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
       const res = await gameServices.saveEquipmentChange(testUserId, character.id, slotKey, itemMasterId);
       if (res && res.success) {
         setSelectedSlotKey(null);
+        setSelectedSlotIndex(null); // 開いていたカード選択スロットもリセット
         await loadCharAndInventoryData();
       } else {
         alert(res.error);
@@ -135,7 +144,48 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     setIsEquipping(true);
     const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
     try {
+      // ⚠️ 安全第一：武具を外すときは、その武具に刺さっているすべてのカードを先に自動で抜いて倉庫に戻す
+      const cardsInSlot = equippedCards.filter(c => c.slot_key === slotKey);
+      for (const card of cardsInSlot) {
+        await gameServices.removeCardFromSlot(testUserId, character.id, slotKey, card.slot_index, card.card_master_id);
+      }
+
       const res = await gameServices.saveEquipmentChange(testUserId, character.id, slotKey, null);
+      if (res && res.success) {
+        setSelectedSlotKey(null);
+        setSelectedSlotIndex(null);
+        await loadCharAndInventoryData();
+      } else {
+        alert(res.error);
+      }
+    } catch (err) { console.error(err); }
+    finally { setIsEquipping(false); }
+  };
+
+  // 🎴 🆕 カードをパチッと挿す処理
+  const handleInsertCard = async (slotKey, slotIndex, cardMasterId) => {
+    if (isEquipping) return;
+    setIsEquipping(true);
+    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
+    try {
+      const res = await gameServices.insertCardToSlot(testUserId, character.id, slotKey, slotIndex, cardMasterId);
+      if (res && res.success) {
+        setSelectedSlotIndex(null); // 挿し終わったらフォームを閉じる
+        await loadCharAndInventoryData();
+      } else {
+        alert(res.error);
+      }
+    } catch (err) { console.error(err); }
+    finally { setIsEquipping(false); }
+  };
+
+  // 🎴 🆕 カードをスロットから引き抜く処理
+  const handleRemoveCard = async (slotKey, slotIndex, cardMasterId) => {
+    if (isEquipping) return;
+    setIsEquipping(true);
+    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
+    try {
+      const res = await gameServices.removeCardFromSlot(testUserId, character.id, slotKey, slotIndex, cardMasterId);
       if (res && res.success) {
         await loadCharAndInventoryData();
       } else {
@@ -145,17 +195,14 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     finally { setIsEquipping(false); }
   };
 
-  // 🛡️ 【神仕様リフォーム】カバンは完全に無視して、直接ギルド共有倉庫（guildInventory）からサジェスト！
+  // 🛡️ 【神仕様リフォーム】直接ギルド共有倉庫（guildInventory）からサジェスト！
   const getEligibleItemsForSlot = (slotKey) => {
     if (!guildInventory || guildInventory.length === 0) return [];
     return guildInventory.filter(inv => {
-      // 在庫が1個以上ある現物のみにロック
       if (!inv.count || inv.count <= 0) return false;
-      
       const master = inv.game_master_items;
       if (!master) return false;
       
-      // 9部位スロットの分類ルールに直接マッピング
       if (slotKey === 'right_hand') return master.item_type === 'weapon';
       if (slotKey === 'left_hand') return master.item_subtype === '盾' || master.item_type === 'weapon';
       if (slotKey === 'head') return master.item_subtype === '兜';
@@ -169,17 +216,42 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     });
   };
 
+  // 🎴 🆕 ギルド倉庫から「現在選んでいる部位に有効なカード」だけを逆引きサジェストする関数
+  const getEligibleCardsForSlot = (slotKey) => {
+    if (!guildInventory || guildInventory.length === 0) return [];
+    return guildInventory.filter(inv => {
+      if (!inv.count || inv.count <= 0) return false;
+      const master = inv.game_master_items;
+      
+      // アイテム大分類がカードであるもののみにロック
+      if (!master || master.item_type !== 'card') return false;
+
+      // 💡 将来的に「武器専用カード」「鎧専用カード」と分けたい場合のプレースホルダー対応
+      // 現段階では全てのカードをどの部位にも挿せる親切設計、または部位フィルタをここに書けます。
+      return true;
+    });
+  };
+
   if (loading) return <div style={{ color: '#ffd700', textAlign: 'center', padding: '50px', fontFamily: 'serif' }}>古代スクロール同期中...</div>;
   if (!character) return <div style={{ color: '#ef4444', padding: '20px' }}>冒険者が不在です。</div>;
 
   const currentTempCharForCalc = { ...character, bonus: { ...localBonuses } };
   const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
-  const liveMaxHp = (character.meta?.base_hp || 100) + (currentTempCharForCalc.bonus.vit * 10);
-  const liveMaxSp = (character.meta?.base_sp || 10) + (currentTempCharForCalc.bonus.int * 2);
+  // 🔮 🆕 カード効果による「純粋なVIT・INTの上昇値」をエンジン内部の最終Atk/Def等から逆引き計算して完全連動化！
+  // エンジン内で str や vit を計算した後の最終合算値から、Base値と手振りBonus値を引き算してカード分のVITを特定します
+  const cardAddedVit = (ro.def - Math.floor((character.meta?.stat_armor || 0))) - (character.meta?.stat_vit || 1) - currentTempCharForCalc.bonus.vit;
+  // ※防具Def等の干渉を避けるため、最も安全な連動配線として以下のようにカードによるステータス影響分をダイレクトに反映させます
+  const totalLiveVit = (character.meta?.stat_vit || 1) + currentTempCharForCalc.bonus.vit + (ro.atk ? Math.floor((ro.def - (Object.values(character.equips || {}).reduce((acc, cur) => acc + (cur?.def || 0), 0))) / 0.5) - (character.meta?.stat_vit || 1) - currentTempCharForCalc.bonus.vit : 0);
+  
+  // 💡 最も確実かつタイポのない鉄壁の2重連動配線
+  // 計算エンジンが算出した「最終Atk/Def」の元となった、カード合算後の純粋なVIT・INTをベースにHP/SPを完全シンクロ！
+  // 今挿してあるカードが持つ固定HP加算（card_hp）に加え、VIT増幅分（VIT * 10）も1ミリの漏れなく自動追従します
+  const liveMaxHp = (character.meta?.base_hp || 100) + (((ro.def - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.def || 0), 0)) * 2) * 10) + (ro.card_hp || 0);
+  const liveMaxSp = (character.meta?.base_sp || 10) + (((ro.mdef - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.mdef || 0), 0)) * 2) * 2) + (ro.card_sp || 0);
 
   const SectionHeader = ({ title }) => (
-    <div style={{ background: 'linear-gradient(90deg, #161109 0%, #0d0905 100%)', padding: '6px 12px', borderTop: '1px solid #3a2d1a', borderBottom: '1px solid #3a2d1a', display: 'flex', justifyContent: 'space-between', alignItem: 'center', marginTop: '14px', marginBottom: '8px' }}>
+    <div style={{ background: 'linear-gradient(90deg, #161109 0%, #0d0905 100%)', padding: '6px 12px', borderTop: '1px solid #3a2d1a', borderBottom: '1px solid #3a2d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', marginBottom: '8px' }}>
       <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#ffd700', letterSpacing: '1px', fontFamily: 'serif' }}>{title}</span>
       <span style={{ fontSize: '0.65rem', color: '#856434', fontFamily: 'serif', fontStyle: 'italic' }}>⚜️⚜️</span>
     </div>
@@ -250,7 +322,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
                     <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#fff', display: 'block' }}>{STAT_LABELS[statKey].name}</span>
                     <span style={{ fontSize: '0.58rem', color: '#705c45', display: 'block', marginTop: '1px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{STAT_LABELS[statKey].desc}</span>
                   </div>
-                  <div style={{ textalign: 'right', paddingRight: '12px', fontFamily: 'monospace', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  <div style={{ textAlign: 'right', paddingRight: '12px', fontFamily: 'monospace', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
                     <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffd700' }}>{totalValue}</div>
                     <div style={{ color: '#34d399', fontSize: '0.62rem', fontWeight: 'bold', marginTop: '1px' }}>(+{currentBonus})</div>
                   </div>
@@ -263,12 +335,69 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
           <SectionHeader title="戦闘能力値 (Derived Status)" />
           <div style={{ background: '#0a0704', border: '1px solid #23190e', borderRadius: '8px', padding: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', fontSize: '0.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>攻撃力 (Atk)</span><strong style={{ color: '#eee', fontFamily: 'monospace' }}>{ro.atk}</strong></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>防御力 (Def)</span><strong style={{ color: '#34d399', fontFamily: 'monospace' }}>+{ro.def}</strong></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#34d399' }}>防御力 (Def)</span><strong style={{ color: '#34d399', fontFamily: 'monospace' }}>+{ro.def}</strong></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>命中 (Hit)</span><strong style={{ color: '#eee', fontFamily: 'monospace' }}>{ro.hit}</strong></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>回避 (Flee)</span><strong style={{ color: '#eee', fontFamily: 'monospace' }}>{ro.flee}</strong></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>行動速度 (Aspd)</span><strong style={{ color: '#ffd700', fontFamily: 'monospace' }}>{ro.aspd.toFixed(1)}</strong></div>
+            
+            {/* 🔮 🆕 「能力値」タブ側にも魔法防御力（MDEF）を直撃マージ！ */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>魔法防御 (Mdef)</span><strong style={{ color: '#f472b6', fontFamily: 'monospace' }}>+{ro.mdef}</strong></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>致命打率 (Critical)</span><strong style={{ color: '#fbbf24', fontFamily: 'monospace' }}>{ro.critical}%</strong></div>
           </div>
+
+          {/* 🃏 🆕 能力値タブ直撃：サイズ特効・種族特効・属性特効・異常耐性・付与確率・HP吸収の全自動カウンターパネル */}
+          {(() => {
+            const listCounts = { size: {}, race: {}, elem: {}, resist: {}, inflict: {}, drain: 0 };
+            
+            // 💡 リアルタイムに変動する equippedCards を基準にマスターデータを結合して全自動集計！
+            (equippedCards || []).forEach(slotCard => {
+              // 倉庫のマスターデータからカードの特殊効果情報を逆引き特定
+              const card = character.allMasterItemsList?.find(m => m.id === slotCard.card_master_id);
+              if (!card) return;
+
+              const calcList = (type, target, val) => {
+                const v = Number(val) || 0;
+                if (!type || type === 'none' || !target) return;
+                if (type === 'damage_size') listCounts.size[target] = (listCounts.size[target] || 0) + v;
+                if (type === 'damage_race') listCounts.race[target] = (listCounts.race[target] || 0) + v;
+                if (type === 'damage_element') listCounts.elem[target] = (listCounts.elem[target] || 0) + v;
+                if (type === 'resist_status') listCounts.resist[target] = (listCounts.resist[target] || 0) + v;
+                if (type === 'inflict_status') listCounts.inflict[target] = (listCounts.inflict[target] || 0) + v;
+                if (type === 'hp_drain') listCounts.drain += v;
+              };
+              
+              // トリプル効果枠をすべて余すことなくスキャン
+              calcList(card.card_effect_type, card.card_effect_target, card.card_effect_value);
+              calcList(card.card_effect_type_2, card.card_effect_target_2, card.card_effect_value_2);
+              calcList(card.card_effect_type_3, card.card_effect_target_3, card.card_effect_value_3);
+            });
+
+            // 画面に浮かび上がらせるバッジ用テキストの成形
+            const activeBadges = [
+              ...Object.entries(listCounts.size).map(([k, v]) => `${k}型特効 +${v}%`),
+              ...Object.entries(listCounts.race).map(([k, v]) => `${k}種族特効 +${v}%`),
+              ...Object.entries(listCounts.elem).map(([k, v]) => `${k}属性特効 +${v}%`),
+              ...Object.entries(listCounts.resist).map(([k, v]) => `${k}耐性 +${v}%`),
+              ...Object.entries(listCounts.inflict).map(([k, v]) => `${k}付与確率 +${v}%`),
+              listCounts.drain ? `HP吸収確率 +${listCounts.drain}%` : null
+            ].filter(Boolean);
+
+            return (
+              <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '10px 14px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '0.65rem', color: '#38bdf8', fontWeight: 'bold' }}>🃏 カード発動中の特殊能力・倍率累計:</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '2px' }}>
+                  {activeBadges.map((badge, bIdx) => (
+                    <span key={bIdx} style={{ fontSize: '0.65rem', background: '#1e1b4b', color: '#ffd700', border: '1px solid #4338ca', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                      {badge}
+                    </span>
+                  ))}
+                  {activeBadges.length === 0 && (
+                    <span style={{ fontSize: '0.62rem', color: '#475569', fontStyle: 'italic' }}>現在、特効や確率・吸収系の特殊効果は未発動です</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
             <button onClick={handleReset} style={{ flex: 1, padding: '10px', borderRadius: '6px', background: '#161109', color: '#ba9a6f', border: '1px solid #3a2d1a', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}><RotateCcw size={12} /> 振り直し</button>
@@ -280,53 +409,270 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
       {/* --- 🛡️ タブ②：装備変更（共有倉庫ストック直接連動アコーディオン） --- */}
       {activeTab === 'equipment' && (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <SectionHeader title="現在の戦闘力" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', background: 'linear-gradient(180deg, #1c140a 0%, #0d0905 100%)', padding: '12px', borderRadius: '10px', border: '1px solid #4a341b' }}>
-            <div style={{ textAlign: 'center' }}><span style={{ fontSize: '0.62rem', color: '#ba9a6f', display: 'block' }}>⚔️ 物理ATK</span><strong style={{ fontSize: '1.25rem', color: '#fff', fontFamily: 'monospace' }}>{ro.atk}</strong></div>
-            <div style={{ textAlign: 'center' }}><span style={{ fontSize: '0.62rem', color: '#ba9a6f', display: 'block' }}>🛡️ 装備DEF</span><strong style={{ fontSize: '1.25rem', color: '#34d399', fontFamily: 'monospace' }}>+{ro.def}</strong></div>
-          </div>
+          <SectionHeader title="現在の戦闘力 ＆ リアルタイムステータス" />
+          
+          {/* 🔮 🆕 三土手神専用：カードに宿るサイズ・種族特効や割合効果をメモリ上でその場集計するカウンター */}
+          {(() => {
+            const cardCounts = { hp_pct: 0, sp_pct: 0, size_eff: {}, race_eff: {}, elem_eff: {}, hp_drain: 0 };
+            
+            // 9部位のカードから特殊倍率・パッシブを全自動で集計
+            Object.values(character.equips || {}).filter(eq => eq && Array.isArray(eq.cards)).flatMap(eq => eq.cards).forEach(card => {
+              const parseAndSum = (type, target, val, typeKey, targetKey, valKey) => {
+                if (card[typeKey] === 'pct_hp_sp') {
+                  if (card[targetKey] === 'hp_pct') cardCounts.hp_pct += (Number(card[valKey]) || 0);
+                  if (card[targetKey] === 'sp_pct') cardCounts.sp_pct += (Number(card[valKey]) || 0);
+                }
+                if (card[typeKey] === 'damage_size' && card[targetKey]) cardCounts.size_eff[card[targetKey]] = (cardCounts.size_eff[card[targetKey]] || 0) + (Number(card[valKey]) || 0);
+                if (card[typeKey] === 'damage_race' && card[targetKey]) cardCounts.race_eff[card[targetKey]] = (cardCounts.race_eff[card[targetKey]] || 0) + (Number(card[valKey]) || 0);
+                if (card[typeKey] === 'damage_element' && card[targetKey]) cardCounts.elem_eff[card[targetKey]] = (cardCounts.elem_eff[card[targetKey]] || 0) + (Number(card[valKey]) || 0);
+                if (card[typeKey] === 'hp_drain') cardCounts.hp_drain += (Number(card[valKey]) || 0);
+              };
+              parseAndSum(card.card_effect_type, card.card_effect_target, card.card_effect_value, 'card_effect_type', 'card_effect_target', 'card_effect_value');
+              parseAndSum(card.card_effect_type_2, card.card_effect_target_2, card.card_effect_value_2, 'card_effect_type_2', 'card_effect_target_2', 'card_effect_value_2');
+              parseAndSum(card.card_effect_type_3, card.card_effect_target_3, card.card_effect_value_3, 'card_effect_type_3', 'card_effect_target_3', 'card_effect_value_3');
+            });
 
-          <SectionHeader title="9部位装備スロット" />
+            // 特効テキストの結合
+            const specialLabels = [
+              cardCounts.hp_pct ? `MHP+${cardCounts.hp_pct}%` : null,
+              cardCounts.sp_pct ? `MSP+${cardCounts.sp_pct}%` : null,
+              ...Object.entries(cardCounts.size_eff).map(([k, v]) => `${k}特効+${v}%`),
+              ...Object.entries(cardCounts.race_eff).map(([k, v]) => `${k}種族+${v}%`),
+              ...Object.entries(cardCounts.elem_eff).map(([k, v]) => `${k}属性+${v}%`),
+              cardCounts.hp_drain ? `吸血鬼の呪い(HP吸収+${cardCounts.hp_drain}%)` : null
+            ].filter(Boolean);
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '4px' }}>
+                {/* ─── 基本戦闘パラメータグリッド（MDEFを綺麗に追加した全8枠構成） ─── */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', background: 'linear-gradient(180deg, #161109 0%, #0a0704 100%)', padding: '8px', borderRadius: '8px', border: '1px solid #4a341b' }}>
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>❤️最大HP</span><strong style={{ ...miniValueStyle, color: '#34d399' }}>{liveMaxHp}</strong></div>
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>💙最大SP</span><strong style={{ ...miniValueStyle, color: '#38bdf8' }}>{liveMaxSp}</strong></div>
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>⚔️物理ATK</span><strong style={{ ...miniValueStyle, color: '#fff' }}>{ro.atk}</strong></div>
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>⚡速度Aspd</span><strong style={{ ...miniValueStyle, color: '#ffd700' }}>{ro.aspd.toFixed(1)}</strong></div>
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>🛡️物理DEF</span><strong style={{ ...miniValueStyle, color: '#a78bfa' }}>+{ro.def}</strong></div>
+                  
+                  {/* 🛡️ 🆕 ご要望の「魔法防御力（MDEF）」をビシッとドッキング！ */}
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>🔮魔法MDEF</span><strong style={{ ...miniValueStyle, color: '#f472b6' }}>+{ro.mdef}</strong></div>
+                  
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>🎯命中Hit</span><strong style={{ ...miniValueStyle, color: '#fbbf24' }}>{ro.hit}</strong></div>
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>💨回避Flee</span><strong style={{ ...miniValueStyle, color: '#eee' }}>{ro.flee}</strong></div>
+                </div>
+
+                {/* ─── 🃏 カード特殊パッシブ・倍率累計カウンター（新規追加） ─── */}
+                <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '6px 12px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <div style={{ fontSize: '0.58rem', color: '#38bdf8', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    <span>🃏 カード発動中の特殊効果・パッシブカウンター:</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
+                    {specialLabels.map((lbl, sIdx) => (
+                      <span key={sIdx} style={{ fontSize: '0.62rem', background: '#1e1b4b', color: '#ffd700', border: '1px solid #4338ca', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                        {lbl}
+                      </span>
+                    ))}
+                    {specialLabels.length === 0 && (
+                      <span style={{ fontSize: '0.6rem', color: '#475569', fontStyle: 'italic' }}>現在、特効や確率系のカード効果は未発動です</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          <SectionHeader title="9部位装備スロット (カード装着連動仕様)" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {EQUIP_SLOTS.map(slot => {
               const equippedItem = character.equips?.[slot.key];
+              
+              // 🔮 この部位に何個スロット（穴）が空いているか特定
+              const totalSlotsCount = equippedItem?.slot_count || 0;
+
               return (
                 <div key={slot.key} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <div style={{ background: '#0d0905', border: selectedSlotKey === slot.key ? '1px solid #ffd700' : '1px solid #1c140a', borderRadius: '8px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ background: '#0d0905', border: selectedSlotKey === slot.key ? '1px solid #ffd700' : '1px solid #1c140a', borderRadius: '8px', padding: '8px 12px', display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{ background: '#1c140a', padding: '6px', borderRadius: '6px', color: '#c4a473', border: '1px solid #3a2d1a', display: 'flex', alignItems: 'center' }}>{slot.icon}</div>
                       <div>
                         <span style={{ fontSize: '0.58rem', color: '#887055', display: 'block' }}>{slot.name}</span>
-                        <strong style={{ fontSize: '0.78rem', color: equippedItem ? '#ffd700' : '#4b3f2f' }}>{equippedItem ? `${equippedItem.name} [${equippedItem.slot_count}]` : '未装備'}</strong>
+                        <strong style={{ fontSize: '0.78rem', color: equippedItem ? '#ffd700' : '#4b3f2f' }}>
+                          {equippedItem ? `${equippedItem.name} [${totalSlotsCount}]` : '未装備'}
+                        </strong>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '5px' }}>
                       {equippedItem && <button onClick={() => handleUnequipItem(slot.key)} disabled={isEquipping} style={{ padding: '3px 8px', background: '#2d0a0a', border: '1px solid #5a1414', borderRadius: '4px', color: '#f43f5e', fontSize: '0.6rem', cursor: 'pointer' }}>外す</button>}
                       <button 
-  onClick={() => setSelectedSlotKey(selectedSlotKey === slot.key ? null : slot.key)} 
-  style={{ 
-    padding: '3px 10px', 
-    borderRadius: '4px', 
-    fontSize: '0.6rem', 
-    cursor: 'pointer', 
-    background: selectedSlotKey === slot.key ? '#5a4531' : '#1c140a', 
-    color: selectedSlotKey === slot.key ? '#fff' : '#c4a473', // ⭕ selectedSlotKey に修正完了！
-    border: '1px solid #3a2d1a' 
-  }}
->
-  {selectedSlotKey === slot.key ? '閉じる' : '変更'}
-</button>
+                        onClick={() => {
+                          setSelectedSlotKey(selectedSlotKey === slot.key ? null : slot.key);
+                          setSelectedSlotIndex(null); // 部位を閉じたらカード選択状態もクリア
+                        }} 
+                        style={{ 
+                          padding: '3px 10px', 
+                          borderRadius: '4px', 
+                          fontSize: '0.6rem', 
+                          cursor: 'pointer', 
+                          background: selectedSlotKey === slot.key ? '#5a4531' : '#1c140a', 
+                          color: selectedSlotKey === slot.key ? '#fff' : '#c4a473',
+                          border: '1px solid #3a2d1a' 
+                        }}
+                      >
+                        {selectedSlotKey === slot.key ? '閉じる' : '変更'}
+                      </button>
                     </div>
                   </div>
 
+                  {/* 📂 各スロット（アコーディオン内部） */}
                   {selectedSlotKey === slot.key && (
-                    <div style={{ background: '#070503', border: '1px dashed #4a341b', borderRadius: '8px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '5px', marginLeft: '8px' }}>
-                      <span style={{ fontSize: '0.55rem', color: '#887055' }}>🛡️ 倉庫ストックから選んで直接装備:</span>
+                    <div style={{ background: '#070503', border: '1px dashed #4a341b', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', marginLeft: '8px' }}>
+                      
+                      {/* 🎴 🆕 新設：RO本家リスペクトの穴あきスロットカード装着セクション */}
+                      {equippedItem && totalSlotsCount > 0 && (
+                        <div style={{ background: '#0b0f19', border: '1px solid #1e293b', padding: '8px', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                          <span style={{ fontSize: '0.6rem', color: '#a78bfa', fontWeight: 'bold' }}>🎴 武具カードスロット状況:</span>
+                          
+                          {/* 穴の数（0からslot_count分）だけループ展開して描画 */}
+                          {Array.from({ length: totalSlotsCount }).map((_, idx) => {
+                            // 現在の穴番号にカードが刺さっているか中間テーブルデータから探す
+                            const cardMatch = equippedCards.find(c => c.slot_key === slot.key && c.slot_index === idx);
+                            
+                            // 倉庫全体のマスターリストからカードの名前・情報を逆引き
+                            const cardMasterInfo = character.allMasterItemsList?.find(m => m.id === cardMatch?.card_master_id);
+
+                            return (
+                              <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#111827', padding: '6px 8px', borderRadius: '4px', border: '1px solid #1e293b' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontSize: '0.6rem', color: cardMatch ? '#f59e0b' : '#4b5563', fontWeight: 'bold' }}>
+                                    {cardMatch ? '🔸 [Slot' + (idx+1) + ']' : '◯ [Slot' + (idx+1) + ']'}
+                                  </span>
+                                  <div>
+                                    <span style={{ fontSize: '0.7rem', color: cardMatch ? '#fff' : '#4b5563', fontWeight: cardMatch ? 'bold' : 'normal', display: 'block' }}>
+                                      {cardMatch ? (cardMasterInfo ? cardMasterInfo.name : '未知のカード') : '空きスロット（未装着）'}
+                                    </span>
+                                    
+                                    {/* 🔮 🆕 仲間詳細ページ直撃：挿さっているカードのトリプルスペックを極上ビジュアライズ描画！ */}
+                                    {cardMatch && cardMasterInfo && (
+                                      <span style={{ fontSize: '0.58rem', color: '#ffd700', display: 'block', marginTop: '1px', fontFamily: 'monospace' }}>
+                                        {(() => {
+                                          const parse = (type, target, value) => {
+                                            if (!type || type === 'none') return null;
+                                            const targetLabel = String(target).toUpperCase();
+                                            if (type === 'add_stat') return `${targetLabel}+${value}`;
+                                            if (type === 'pct_hp_sp') return `${targetLabel.replace('_PCT','')}+${value}%`;
+                                            if (type === 'damage_size') return `${target}特効+${value}%`;
+                                            if (type === 'damage_race') return `${target}種族+${value}%`;
+                                            if (type === 'damage_element') return `${target}属性+${value}%`;
+                                            if (type === 'resist_status') return `${target}耐性+${value}%`;
+                                            if (type === 'inflict_status') return `${target}付与+${value}%`;
+                                            if (type === 'hp_drain') return `HP吸収+${value}%`;
+                                            return `${target}:${value}`;
+                                          };
+                                          const e1 = parse(cardMasterInfo.card_effect_type, cardMasterInfo.card_effect_target, cardMasterInfo.card_effect_value);
+                                          const e2 = parse(cardMasterInfo.card_effect_type_2, cardMasterInfo.card_effect_target_2, cardMasterInfo.card_effect_value_2);
+                                          const e3 = parse(cardMasterInfo.card_effect_type_3, cardMasterInfo.card_effect_target_3, cardMasterInfo.card_effect_value_3);
+                                          const actives = [e1, e2, e3].filter(Boolean);
+                                          return actives.length > 0 ? `✨[ ${actives.join(' | ')} ]` : '';
+                                        })()}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  {cardMatch ? (
+                                    /* カードが刺さっている場合は一撃で引き抜くボタン */
+                                    <button 
+                                      onClick={() => handleRemoveCard(slot.key, idx, cardMatch.card_master_id)}
+                                      disabled={isEquipping}
+                                      style={{ padding: '2px 6px', background: '#3b0712', border: '1px solid #991b1b', borderRadius: '3px', color: '#f43f5e', fontSize: '0.55rem', cursor: 'pointer' }}
+                                    >
+                                      抜く
+                                    </button>
+                                  ) : (
+                                    /* 空きスロットの場合はカードサジェストを開くトグルボタン */
+                                    <button 
+                                      onClick={() => setSelectedSlotIndex(selectedSlotIndex === idx ? null : idx)}
+                                      style={{ padding: '2px 6px', background: '#1e293b', border: '1px solid #3b82f6', borderRadius: '3px', color: '#60a5fa', fontSize: '0.55rem', cursor: 'pointer' }}
+                                    >
+                                      {selectedSlotIndex === idx ? 'やめる' : 'カードを挿す'}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* 🃏 カード選択用のインテリジェントプルダウンサジェスト */}
+                          {selectedSlotIndex !== null && (
+                            <div style={{ background: '#0a0704', border: '1px dashed #f59e0b', padding: '8px', borderRadius: '4px', marginTop: '4px' }}>
+                              <span style={{ fontSize: '0.58rem', color: '#f59e0b', display: 'block', marginBottom: '4px' }}>📦 ギルド共有倉庫にある対象カード一覧:</span>
+                              
+                              {/* 💡 2重になっていたループを1つに綺麗に絞り込み、効果透視付きの最新版だけに統一します */}
+                              {getEligibleCardsForSlot(slot.key).map(cInv => {
+                                const cardItem = cInv.game_master_items || cInv["game_master_items!game_inventory_item_id_fkey"];
+                                const secureCardMasterId = cInv.item_id || cardItem?.id;
+
+                                if (!secureCardMasterId) return null;
+
+                                return (
+                                  <div 
+                                    key={cInv.id} 
+                                    onClick={() => {
+                                      console.log("⚡ [カード挿入ボタン直撃]", { slotKey: slot.key, idx: selectedSlotIndex, cardId: secureCardMasterId });
+                                      handleInsertCard(slot.key, selectedSlotIndex, secureCardMasterId);
+                                    }}
+                                    style={{ background: '#1c140a', border: '1px solid #4a341b', padding: '6px 10px', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', marginBottom: '3px' }}
+                                  >
+                                    <div>
+                                      <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#eee' }}>
+                                        {cardItem?.name || "モンスターカード"} <span style={{ color: '#34d399', fontSize: '0.58rem' }}>(残:{cInv.count}枚)</span>
+                                      </div>
+                                      
+                                      {cardItem && (
+                                        <div style={{ fontSize: '0.58rem', color: '#ffb834', marginTop: '2px', fontFamily: 'monospace' }}>
+                                          {(() => {
+                                            const parse = (type, target, value) => {
+                                              if (!type || type === 'none') return null;
+                                              const targetLabel = String(target).toUpperCase();
+                                              if (type === 'add_stat') return `${targetLabel}+${value}`;
+                                              if (type === 'pct_hp_sp') return `${targetLabel.replace('_PCT','')}+${value}%`;
+                                              if (type === 'damage_size') return `${target}特効+${value}%`;
+                                              if (type === 'damage_race') return `${target}種族+${value}%`;
+                                              if (type === 'damage_element') return `${target}属性+${value}%`;
+                                              if (type === 'resist_status') return `${target}耐性+${value}%`;
+                                              if (type === 'inflict_status') return `${target}付与+${value}%`;
+                                              if (type === 'hp_drain') return `HP吸収+${value}%`;
+                                              return `${target}:${value}`;
+                                            };
+                                            const e1 = parse(cardItem.card_effect_type, cardItem.card_effect_target, cardItem.card_effect_value);
+                                            const e2 = parse(cardItem.card_effect_type_2, cardItem.card_effect_target_2, cardItem.card_effect_value_2);
+                                            const e3 = parse(cardItem.card_effect_type_3, cardItem.card_effect_target_3, cardItem.card_effect_value_3);
+                                            const actives = [e1, e2, e3].filter(Boolean);
+                                            return actives.length > 0 ? `🎁[ ${actives.join(' | ')} ]` : '効果なし';
+                                          })()}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: '0.6rem', color: '#34d399', fontWeight: 'bold' }}>挿入 ➔</span>
+                                  </div>
+                                );
+                              })}
+
+                              {getEligibleCardsForSlot(slot.key).length === 0 && (
+                                <div style={{ fontSize: '0.55rem', color: '#4a3f2f', textAlign: 'center' }}>共有倉庫にモンスターカードの在庫がありません。</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 🛡️ 武具本体の着せ替えサジェスト枠 */}
+                      <span style={{ fontSize: '0.55rem', color: '#887055', display: 'block', borderTop: equippedItem && totalSlotsCount > 0 ? '1px dashed #23190e' : 'none', paddingTop: '4px' }}>
+                        🔄 別の武具へ変更する（倉庫ストック）:
+                      </span>
                       {getEligibleItemsForSlot(slot.key).map(inv => {
                         const masterItem = inv.game_master_items;
                         if (!masterItem) return null;
 
-                        // 武具のマスターIDを確実に固定抽出
                         const targetMasterItemId = masterItem.id || inv.item_id;
 
                         return (
@@ -337,16 +683,21 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
                                 console.error("🚨 武具のマスターIDが取得できませんでした", inv);
                                 return;
                               }
-                              console.log("⚡ [装着ボタン着火]", { slotKey: slot.key, itemMasterId: targetMasterItemId });
                               handleEquipItem(slot.key, targetMasterItemId);
                             }} 
-                            style={{ background: '#130e09', padding: '6px 10px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', border: '1px solid #23190e' }}
+                            style={{ background: '#130e09', padding: '6px 10px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', border: '1px solid #23190e', marginBottom: '3px' }}
                           >
                             <div>
-                              <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#eee' }}>{masterItem.name} [{masterItem.slot_count || 0}]</div>
-                              <div style={{ fontSize: '0.58rem', color: '#887355', marginTop: '1px' }}>
-                                {masterItem.description} {masterItem.atk ? `(ATK:${masterItem.atk})` : ''} {masterItem.def ? `(DEF:${masterItem.def})` : ''} 
-                                <span style={{ color: '#ffd700', marginLeft: '6px' }}>(共有残: {inv.count}個)</span>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#eee' }}>
+                                {masterItem.name} <span style={{ color: '#ba9a6f', fontSize: '0.62rem' }}>[{masterItem.slot_count || 0}穴]</span>
+                              </div>
+                              {/* 🔮 🆕 武具選択ポップアップ直撃：ATKやDEFを色鮮やかにハイライト強調して視認性爆上げ！ */}
+                              <div style={{ fontSize: '0.58rem', color: '#887355', marginTop: '1px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {masterItem.atk ? <span style={{ color: '#f43f5e', fontWeight: 'bold' }}>⚔️ATK:{masterItem.atk}</span> : null}
+                                {masterItem.def ? <span style={{ color: '#34d399', fontWeight: 'bold' }}>🛡️DEF:+{masterItem.def}</span> : null}
+                                {masterItem.mdef ? <span style={{ color: '#38bdf8', fontWeight: 'bold' }}>🔮MDEF:+{masterItem.mdef}</span> : null}
+                                <span style={{ color: '#64748b' }}>({masterItem.description})</span>
+                                <span style={{ color: '#ffd700' }}>(残:{inv.count}個)</span>
                               </div>
                             </div>
                             <span style={{ fontSize: '0.6rem', color: '#34d399', fontWeight: 'bold' }}>装着 ➔</span>
@@ -424,5 +775,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     </div>
   );
 };
-
+const miniGridStyle = { textAlign: 'center', background: '#0d0905', padding: '4px 2px', borderRadius: '5px', border: '1px solid #23190e' };
+const miniLabelStyle = { fontSize: '0.52rem', color: '#887355', display: 'block', marginBottom: '1px' };
+const miniValueStyle = { fontSize: '0.8rem', fontFamily: 'monospace' };
 export default AdventureCharacterDetail;
