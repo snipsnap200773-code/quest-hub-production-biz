@@ -242,8 +242,19 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
   if (loading) return <div style={{ color: '#ffd700', textAlign: 'center', padding: '50px', fontFamily: 'serif' }}>古代スクロール同期中...</div>;
   if (!character) return <div style={{ color: '#ef4444', padding: '20px' }}>冒険者が不在です。</div>;
 
-  const currentTempCharForCalc = { ...character, bonus: { ...localBonuses } };
-  const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
+  const currentTempCharForCalc = { 
+  ...character, 
+  // 手振りStateを最優先でバインド
+  bonus: { ...localBonuses },
+  // エンジン内部のBase計算が手振りにリアルタイム追従するよう、本体のステータス値も同期
+  str: (character.meta?.stat_str || 1) + localBonuses.str,
+  agi: (character.meta?.stat_agi || 1) + localBonuses.agi,
+  vit: (character.meta?.stat_vit || 1) + localBonuses.vit,
+  int: (character.meta?.stat_int || 1) + localBonuses.int,
+  dex: (character.meta?.stat_dex || 1) + localBonuses.dex,
+  luk: (character.meta?.stat_luk || 1) + localBonuses.luk
+};
+const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
   // 🔮 🆕 カード効果による「純粋なVIT・INTの上昇値」をエンジン内部の最終Atk/Def等から逆引き計算して完全連動化！
   // エンジン内で str や vit を計算した後の最終合算値から、Base値と手振りBonus値を引き算してカード分のVITを特定します
@@ -320,44 +331,59 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
           <SectionHeader title="能力値 (Base Status)" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
             {Object.keys(STAT_LABELS).map(statKey => {
-              // 🔢 ①：大元の設計図に書いてある初期ステータス（1など）
-              const masterBase = character.meta?.[`stat_${statKey}`] || 1;
-              
-              // 🖱️ ②：三土手さんが画面でポチポチ振った手振りボーナス値
-              const myHandBonus = localBonuses[statKey] || 0;
-              
-              // 🧠 ③：手振り値を含めた、プレイヤー自身の「手振りベース総数」
-              const currentBaseTotal = masterBase + myHandBonus;
+  const lowKey = statKey.toLowerCase().trim();
 
-              // 🔮 ④：gameServices.jsから返ってきた、ジョブボーナス・カード効果をすべて含んだ「最終総ステータス」
-              const finalLiveTotal = ro[statKey] || currentBaseTotal;
+  // 👑 三土手神特注：4つのエネルギーを完全分離して単独ロード！
+  // ① 基礎値（マスター初期値）
+  const initialBase = character.meta?.[`stat_${lowKey}`] !== undefined ? Number(character.meta[`stat_${lowKey}`]) : 0;
+  
+  // ② 手振りポイント ➔ 🔵【青色】
+  const userAllocated = localBonuses[lowKey] || 0;
+  
+  // ③ 職業ボーナス（jobBonusからダイレクト抽出） ➔ 🟡【黄色】
+  const jobBonusValue = ro?.displayStatus?.[lowKey]?.bonus ? (ro.displayStatus[lowKey].bonus - (ro?.cardStats?.[lowKey] || 0)) : 0;
+  
+  // ② カード補正：直送されてきた cardStats からダイレクトに直撃点灯！ ➔ 🔴【赤色】
+  const cardBonusValue = ro?.cardStats?.[lowKey] || 0;
 
-              // ⚜️ ⑤：最終値から手振りベース値を引くだけで、ジョブボーナスなどの裏加算値が全自動で割り出されます！
-              const hiddenJobBonus = finalLiveTotal - currentBaseTotal;
+  // ⑤ すべてを合算した絶対トータル値 ➔ ⚪【白色】
+  const finalTotal = initialBase + userAllocated + jobBonusValue + cardBonusValue;
 
-              return (
-                <div key={statKey} style={{ background: '#0d0905', border: '1px solid #1c140a', borderRadius: '8px', padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 100px 32px', alignItems: 'center' }}>
-                  <div style={{ paddingRight: '8px' }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#fff', display: 'block' }}>{STAT_LABELS[statKey].name}</span>
-                    <span style={{ fontSize: '0.58rem', color: '#705c45', display: 'block', marginTop: '1px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{STAT_LABELS[statKey].desc}</span>
-                  </div>
-                  
-                  {/* 📊 本家RO完全再現：大文字の総数 ＆ 小文字の裏加算補正点灯エリア */}
-                  <div style={{ textAlign: 'right', paddingRight: '12px', fontFamily: 'monospace', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
-                    {/* 👑 ここに「手振り＋ジョブボーナス」がすべて載った本物の数字がドカンと入ります */}
-                    <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffd700' }}>
-                      {finalLiveTotal}
-                    </div>
-                    {/* 🟢 カッコの中身を「手振り値（myHandBonus）」から「裏加算値（hiddenJobBonus）」へ接続リフォーム！ */}
-                    <div style={{ color: '#34d399', fontSize: '0.62rem', fontWeight: 'bold', marginTop: '1px' }}>
-                      (+{hiddenJobBonus})
-                    </div>
-                  </div>
-                  
-                  <button onClick={() => handleAddStat(statKey)} disabled={localPoints <= 0} style={{ width: '32px', height: '32px', borderRadius: '6px', background: localPoints > 0 ? 'linear-gradient(180deg, #4a341b 0%, #21150b 100%)' : '#140e08', color: localPoints > 0 ? '#ffd700' : '#4a341b', border: '1px solid #4a341b', fontSize: '1.1rem', fontWeight: 'bold', cursor: localPoints > 0 ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
-                </div>
-              );
-            })}
+  return (
+    <div key={statKey} style={{ background: '#0d0905', border: '1px solid #1c140a', borderRadius: '8px', padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 140px 32px', alignItems: 'center' }}>
+      <div style={{ paddingRight: '8px' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#fff', display: 'block' }}>{STAT_LABELS[statKey].name}</span>
+        <span style={{ fontSize: '0.58rem', color: '#705c45', display: 'block', marginTop: '1px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{STAT_LABELS[statKey].desc}</span>
+      </div>
+      
+      {/* 📊 三土手式トリプル・エレメント：白（トータル）、青（手振り）、黄（職業）、赤（カード） */}
+      <div style={{ textAlign: 'right', paddingRight: '12px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
+        
+        {/* 1. 【白色】最も大きく表示される最終合算値 */}
+        <div style={{ fontSize: '1.4rem', fontWeight: 'black', color: '#ffffff', fontFamily: 'monospace', lineHeight: '1' }}>
+          {finalTotal}
+        </div>
+
+        {/* 2. 【青・黄・赤】の3層サブインジケーター（左揃え縦列） */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', fontSize: '0.55rem', fontFamily: 'monospace', fontWeight: 'bold', minWidth: '55px', lineHeight: '1.2' }}>
+          
+          {/* 🔵 青色：自分が割り振ったポイント */}
+          <span style={{ color: '#38bdf8' }}>振: {userAllocated}</span>
+          
+          {/* 🟡 黄色：職業による成長ボーナス */}
+          <span style={{ color: '#fbbf24' }}>職: +{jobBonusValue}</span>
+          
+          {/* 🔴 赤色：モンスターカードによる特殊補正 */}
+          <span style={{ color: '#f43f5e' }}>札: +{cardBonusValue}</span>
+          
+        </div>
+
+      </div>
+      
+      <button onClick={() => handleAddStat(statKey)} disabled={localPoints <= 0} style={{ width: '32px', height: '32px', borderRadius: '6px', background: localPoints > 0 ? 'linear-gradient(180deg, #4a341b 0%, #21150b 100%)' : '#140e08', color: localPoints > 0 ? '#ffd700' : '#4a341b', border: '1px solid #4a341b', fontSize: '1.1rem', fontWeight: 'bold', cursor: localPoints > 0 ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+    </div>
+  );
+})}
           </div>
 
           <SectionHeader title="戦闘能力値 (Derived Status)" />
@@ -825,20 +851,23 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
           <div style={{ background: '#1c140a', border: '1px dashed #ffd700', padding: '10px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <span style={{ fontSize: '0.6rem', color: '#ffd700' }}>※ マスターに存在する武具をギルド倉庫に10個強制ポップさせます</span>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
-              {(character.allMasterItemsList || []).map(item => {
-                return (
-                  <button 
-                    key={item.id}
-                    onClick={async () => {
-                      await gameServices.debugGiveItemToWarehouse("d1669717-95f4-4f80-932f-d412576d55a7", item.id, 10);
-                      await loadCharAndInventoryData();
-                    }}
-                    style={{ padding: '6px', background: '#0d0905', border: '1px solid #4a341b', color: '#ffd700', fontSize: '0.62rem', borderRadius: '4px', cursor: 'pointer', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    ➕ {item.name} ✕10支給
-                  </button>
-                );
-              })}
+              {/* 🔮 🆕 スキル（sp_cost持ち）を除外した、純粋なアイテム・武具のみに厳密フィルタリング！ */}
+              {(character.allMasterItemsList || [])
+                .filter(item => item.sp_cost === undefined)
+                .map(item => {
+                  return (
+                    <button 
+                      key={item.id}
+                      onClick={async () => {
+                        await gameServices.debugGiveItemToWarehouse("d1669717-95f4-4f80-932f-d412576d55a7", item.id, 10);
+                        await loadCharAndInventoryData();
+                      }}
+                      style={{ padding: '6px', background: '#0d0905', border: '1px solid #4a341b', color: '#ffd700', fontSize: '0.62rem', borderRadius: '4px', cursor: 'pointer', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      ➕ {item.name} ✕10支給
+                    </button>
+                  );
+                })}
             </div>
           </div>
 
