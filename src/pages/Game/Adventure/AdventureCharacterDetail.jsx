@@ -45,7 +45,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
 
   // 🔮 プランA連動：現在装着されているカード情報を保持するState
   const [equippedCards, setEquippedCards] = useState([]);
-  const [selectedSlotIndex, setSelectedSlotIndex] = useState(null); // カードを挿そうとしているスロットの番号
+  const [selectedSlotIndex, setSelectedSlotIndex] = useState(null); // カードを挿しようとしているスロットの番号
 
   const loadCharAndInventoryData = async () => {
     setLoading(true);
@@ -60,10 +60,17 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     if (cardData) setEquippedCards(cardData);
 
     if (data) {
+      // 🔮 🛠️ 創世神配線リフォーム：武具アイテムとスキル技能の両方をSupabaseから同時に完全ロード！
       const { data: allItems } = await supabase.from('game_master_items').select('*');
+      const { data: allSkills } = await supabase.from('game_master_skills').select('*');
       
-      // 倉庫が空っぽでもデバッグボタンが出るようマスター一覧を退避
-      data.allMasterItemsList = allItems || [];
+      // ロードした2つの異なる世界のデータを、1つの配列に美しく結合してキャラクターに持たせます
+      const combinedMasterList = [
+        ...(allItems || []),
+        ...(allSkills || [])
+      ];
+      
+      data.allMasterItemsList = combinedMasterList;
       
       setCharacter(data);
       setLocalPoints(data.status_points || 0);
@@ -313,19 +320,40 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
           <SectionHeader title="能力値 (Base Status)" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
             {Object.keys(STAT_LABELS).map(statKey => {
-              const baseValue = character.meta?.[`stat_${statKey}`] || 0;
-              const currentBonus = localBonuses[statKey];
-              const totalValue = baseValue + currentBonus;
+              // 🔢 ①：大元の設計図に書いてある初期ステータス（1など）
+              const masterBase = character.meta?.[`stat_${statKey}`] || 1;
+              
+              // 🖱️ ②：三土手さんが画面でポチポチ振った手振りボーナス値
+              const myHandBonus = localBonuses[statKey] || 0;
+              
+              // 🧠 ③：手振り値を含めた、プレイヤー自身の「手振りベース総数」
+              const currentBaseTotal = masterBase + myHandBonus;
+
+              // 🔮 ④：gameServices.jsから返ってきた、ジョブボーナス・カード効果をすべて含んだ「最終総ステータス」
+              const finalLiveTotal = ro[statKey] || currentBaseTotal;
+
+              // ⚜️ ⑤：最終値から手振りベース値を引くだけで、ジョブボーナスなどの裏加算値が全自動で割り出されます！
+              const hiddenJobBonus = finalLiveTotal - currentBaseTotal;
+
               return (
                 <div key={statKey} style={{ background: '#0d0905', border: '1px solid #1c140a', borderRadius: '8px', padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 100px 32px', alignItems: 'center' }}>
                   <div style={{ paddingRight: '8px' }}>
                     <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#fff', display: 'block' }}>{STAT_LABELS[statKey].name}</span>
                     <span style={{ fontSize: '0.58rem', color: '#705c45', display: 'block', marginTop: '1px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{STAT_LABELS[statKey].desc}</span>
                   </div>
+                  
+                  {/* 📊 本家RO完全再現：大文字の総数 ＆ 小文字の裏加算補正点灯エリア */}
                   <div style={{ textAlign: 'right', paddingRight: '12px', fontFamily: 'monospace', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffd700' }}>{totalValue}</div>
-                    <div style={{ color: '#34d399', fontSize: '0.62rem', fontWeight: 'bold', marginTop: '1px' }}>(+{currentBonus})</div>
+                    {/* 👑 ここに「手振り＋ジョブボーナス」がすべて載った本物の数字がドカンと入ります */}
+                    <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ffd700' }}>
+                      {finalLiveTotal}
+                    </div>
+                    {/* 🟢 カッコの中身を「手振り値（myHandBonus）」から「裏加算値（hiddenJobBonus）」へ接続リフォーム！ */}
+                    <div style={{ color: '#34d399', fontSize: '0.62rem', fontWeight: 'bold', marginTop: '1px' }}>
+                      (+{hiddenJobBonus})
+                    </div>
                   </div>
+                  
                   <button onClick={() => handleAddStat(statKey)} disabled={localPoints <= 0} style={{ width: '32px', height: '32px', borderRadius: '6px', background: localPoints > 0 ? 'linear-gradient(180deg, #4a341b 0%, #21150b 100%)' : '#140e08', color: localPoints > 0 ? '#ffd700' : '#4a341b', border: '1px solid #4a341b', fontSize: '1.1rem', fontWeight: 'bold', cursor: localPoints > 0 ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
                 </div>
               );
@@ -399,6 +427,81 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
             );
           })()}
 
+          {/* 🔮 🆕 クエストハブ完全オリジナル：職業制限 ＆ ベースLv連動型・全自動スキル習得ブック */}
+          <SectionHeader title="習得済みの特技・魔法（職業 ＆ レベル連動解放）" />
+          <div style={{ background: '#070503', border: '1px dashed #4a341b', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            {(() => {
+              const currentJob = character.meta?.job || 'ノービス';
+              const currentLv = character.level || 1;
+
+              // 🔮 未定義エラー回避仕様：存在しないskills変数を見に行きません
+              const activeSkillsSource = character.allMasterItemsList || [];
+              const finalLearnedList = activeSkillsSource.filter(s => {
+                // スキルデータ（sp_costを持っている等）かつ、条件一致のものをフィルタリング
+                if (s.sp_cost === undefined) return false;
+                const jobReq = s.job_requirement || '全職業';
+                const lvReq = Number(s.level_requirement) || 1;
+                return (jobReq === '全職業' || jobReq === currentJob) && currentLv >= lvReq;
+              });
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {finalLearnedList.map((sk) => (
+                    <div key={sk.id} style={{ background: '#0e0b07', border: '1px solid #23190e', padding: '10px 12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, paddingRight: '8px' }}>
+                        {/* ─── 1行目：スキル名 ＆ 分類バッジ ─── */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '0.52rem', background: sk.skill_type === 'magic' ? '#1e3a8a' : '#311005', color: sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
+                            {sk.skill_type === 'magic' ? '魔法' : '特技'}
+                          </span>
+                          <strong style={{ fontSize: '0.8rem', color: '#ffd700' }}>{sk.name}</strong>
+                          <span style={{ fontSize: '0.55rem', color: '#887055' }}>(必要Lv.{sk.level_requirement})</span>
+                        </div>
+                        
+                        {/* ─── 2行目：🆕 創世神拡張・オリジナル高度戦術スペックバッジ ─── */}
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '1px' }}>
+                          <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>
+                            🎯 {sk.target_type || '単体エネミー'}
+                          </span>
+                          <span style={{ fontSize: '0.55rem', background: '#1a130b', border: '1px solid #5a3d1b', color: '#ffb834', padding: '1px 5px', borderRadius: '3px' }}>
+                            🔥 {sk.element || '無'}属性
+                          </span>
+                          {sk.effect_type && sk.effect_type !== 'なし' && (
+                            <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
+                              ✨ {sk.effect_type} ({sk.effect_chance}% / {sk.duration_turns}T)
+                            </span>
+                          )}
+                          {sk.use_condition === '魔物調教' && (
+                            <span style={{ fontSize: '0.55rem', background: '#0a1a14', border: '1px solid #14402f', color: '#34d399', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
+                              🐾 調教モード
+                            </span>
+                          )}
+                        </div>
+
+                        {/* ─── 3行目：説明文 ─── */}
+                        <p style={{ margin: '2px 0 0 0', fontSize: '0.65rem', color: '#887355', lineHeight: '1.2' }}>{sk.description}</p>
+                      </div>
+
+                      {/* ─── 右側：SP消費 ＆ 威力・回復量表示（単位の全自動判定マージ） ─── */}
+                      <div style={{ textAlign: 'right', fontSize: '0.65rem', fontFamily: 'monospace', minWidth: '75px' }}>
+                        <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>消費SP: {sk.sp_cost}</div>
+                        <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
+                          {sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} 
+                          <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {finalLearnedList.length === 0 && (
+                    <div style={{ fontSize: '0.65rem', color: '#5a4531', textAlign: 'center', padding: '10px', fontStyle: 'italic' }}>
+                      現在のレベル、または【{currentJob}】の職業で習得できるスキル知識がまだありません。
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
             <button onClick={handleReset} style={{ flex: 1, padding: '10px', borderRadius: '6px', background: '#161109', color: '#ba9a6f', border: '1px solid #3a2d1a', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}><RotateCcw size={12} /> 振り直し</button>
             <button onClick={handleCommitStatus} disabled={isCommitting} style={{ flex: 2, padding: '10px', borderRadius: '6px', background: 'linear-gradient(180deg, #856434 0%, #4a341b 100%)', color: '#fff', border: '1px solid #ffd70033', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}><Save size={12} /> 能力値を確定する</button>
@@ -450,7 +553,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
                   <div style={miniGridStyle}><span style={miniLabelStyle}>💙最大SP</span><strong style={{ ...miniValueStyle, color: '#38bdf8' }}>{liveMaxSp}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>⚔️物理ATK</span><strong style={{ ...miniValueStyle, color: '#fff' }}>{ro.atk}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>⚡速度Aspd</span><strong style={{ ...miniValueStyle, color: '#ffd700' }}>{ro.aspd.toFixed(1)}</strong></div>
-                  <div style={miniGridStyle}><span style={miniLabelStyle}>🛡️物理DEF</span><strong style={{ ...miniValueStyle, color: '#a78bfa' }}>+{ro.def}</strong></div>
+                  <div style={{ ...miniGridStyle }}><span style={miniLabelStyle}>🛡️物理DEF</span><strong style={{ ...miniValueStyle, color: '#a78bfa' }}>+{ro.def}</strong></div>
                   
                   {/* 🛡️ 🆕 ご要望の「魔法防御力（MDEF）」をビシッとドッキング！ */}
                   <div style={miniGridStyle}><span style={miniLabelStyle}>🔮魔法MDEF</span><strong style={{ ...miniValueStyle, color: '#f472b6' }}>+{ro.mdef}</strong></div>
@@ -489,7 +592,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
 
               return (
                 <div key={slot.key} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <div style={{ background: '#0d0905', border: selectedSlotKey === slot.key ? '1px solid #ffd700' : '1px solid #1c140a', borderRadius: '8px', padding: '8px 12px', display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ background: '#0d0905', border: selectedSlotKey === slot.key ? '1px solid #ffd700' : '1px solid #1c140a', borderRadius: '8px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{ background: '#1c140a', padding: '6px', borderRadius: '6px', color: '#c4a473', border: '1px solid #3a2d1a', display: 'flex', alignItems: 'center' }}>{slot.icon}</div>
                       <div>
@@ -606,7 +709,6 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
                             <div style={{ background: '#0a0704', border: '1px dashed #f59e0b', padding: '8px', borderRadius: '4px', marginTop: '4px' }}>
                               <span style={{ fontSize: '0.58rem', color: '#f59e0b', display: 'block', marginBottom: '4px' }}>📦 ギルド共有倉庫にある対象カード一覧:</span>
                               
-                              {/* 💡 2重になっていたループを1つに綺麗に絞り込み、効果透視付きの最新版だけに統一します */}
                               {getEligibleCardsForSlot(slot.key).map(cInv => {
                                 const cardItem = cInv.game_master_items || cInv["game_master_items!game_inventory_item_id_fkey"];
                                 const secureCardMasterId = cInv.item_id || cardItem?.id;
@@ -643,7 +745,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
                                               if (type === 'hp_drain') return `HP吸収+${value}%`;
                                               return `${target}:${value}`;
                                             };
-                                            const e1 = parse(cardItem.card_effect_type, cardItem.card_effect_target, cardItem.card_effect_value);
+                                            const e1 = parse(cardItem.card_effect_type, cardItem.card_effect_type, cardItem.card_effect_value);
                                             const e2 = parse(cardItem.card_effect_type_2, cardItem.card_effect_target_2, cardItem.card_effect_value_2);
                                             const e3 = parse(cardItem.card_effect_type_3, cardItem.card_effect_target_3, cardItem.card_effect_value_3);
                                             const actives = [e1, e2, e3].filter(Boolean);
@@ -763,7 +865,7 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
 
       {/* タブ④：名前変更 */}
       {activeTab === 'rename' && (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           <SectionHeader title="二つ名・身分改名" />
           <div style={{ background: '#0d0905', border: '1px solid #1c140a', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <label style={{ fontSize: '0.7rem', color: '#ba9a6f', fontWeight: 'bold' }}>新しい登録名称</label>
