@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Timer, Trophy, ShieldAlert } from 'lucide-react';
 import QuestResultModal from './components/QuestResultModal';
 import { gameServices } from '../../../gameServices';
+// 👑 三土手神特注：Supabaseクライアントをダイレクトにインポート配線！
+import { supabase } from '../../../supabaseClient';
 
 // テスト用の三土手さんの固定UUID
 const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
 
 // ⭕ 犯人発見：引数にちゃんと「partyCharacterIds」を明示的に受け取るように大修正！
-const AdventureActive = ({ partyCharacterIds = [], onReturn }) => {
+const AdventureActive = ({ partyCharacterIds = [], quest = null, onReturn }) => {
   const scrollRef = useRef(null);
 
   // 🧪 バトルのドラマを検証しやすいように「30秒」の制限時間に設定
@@ -42,33 +44,54 @@ const AdventureActive = ({ partyCharacterIds = [], onReturn }) => {
           return {
             id: ch.id,
             name: ch.custom_name,
-            mhp: ch.max_hp,
-            hp: ch.max_hp,
-            msp: ch.max_sp,
-            sp: ch.max_sp,
-            str: ch.str,
-            agi: ch.meta?.stat_agi + ch.bonus?.agi,
-            vit: ch.meta?.stat_vit + ch.bonus?.vit,
-            job: ch.meta?.job || 'ノービス'
+            mhp: ch.max_hp || 120,
+            hp: ch.max_hp || 120,
+            msp: ch.max_sp || 30,
+            sp: ch.max_sp || 30,
+            str: ch.str || 10,
+            agi: (ch.meta?.stat_agi || 10) + (ch.bonus?.agi || 0),
+            vit: (ch.meta?.stat_vit || 10) + (ch.bonus?.vit || 0),
+            dex: (ch.meta?.stat_dex || 10) + (ch.bonus?.dex || 0), // 🎯 暗殺・命中に必要なので追加！
+            job: ch.meta?.job || 'ノービス',
+            // 🌀 状態異常テスト用バッファ（スタンや凍結の経過ターン数などを管理）
+            state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0 }
           };
         });
 
         setParty(loadedParty);
 
-        // 対戦相手：バフォメットJr（階層主）
-        setEnemy({
-          name: "バフォメットJr",
-          mhp: 450,
-          hp: 450,
-          str: 15,
-          agi: 20, 
-          vit: 10,
-          exp: 120,
-          gold: 85
-        });
+        // 🔮 【バフォメットJr固定を打破！】クエストから敵のIDを取得（なければテストポリンJr）
+        const targetEnemyId = quest?.enemy_master_id || 'test_porin_junior';
+        
+        // 💡 修正：直接インポートした supabase から一撃でテーブルへアクセス！
+        const { data: dbEnemy } = await supabase
+          .from('game_master_units')
+          .select('*')
+          .eq('id', targetEnemyId)
+          .single();
+
+        // 敵のステータスオブジェクトを生成（無ければテスト用の高HPポリンをセット）
+        const enemyData = {
+          name: dbEnemy?.name || "テストポリンJr",
+          mhp: dbEnemy?.base_hp || 2500, // 🧪 実験しやすいようにタフなHP
+          hp: dbEnemy?.base_hp || 2500,
+          str: dbEnemy?.stat_str || 12,
+          agi: dbEnemy?.stat_agi || 15, 
+          vit: dbEnemy?.stat_vit || 20,
+          size: dbEnemy?.size || '小型',
+          element: dbEnemy?.element || '水', // 🎯 属性テスト用
+          exp: quest?.exp_reward || 120,
+          gold: quest?.zeny_reward || 85,
+          state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0 },
+          // 🛡️ 先ほど登録した状態異常耐性をここで戦闘エンジンにバインド！
+          resist_stun: dbEnemy?.resist_stun || 0,
+          resist_freeze: dbEnemy?.resist_freeze || 0
+        };
+
+        setEnemy(enemyData);
 
         setDisplayedLogs([
-          { id: 'start', text: `⚔️ 始まりの洞窟最深部！【${loadedParty.map(p => p.name).join(', ')}】(${loadedParty.length}名) のパーティが突入した！`, type: "system" }
+          { id: 'start', text: `⚔️ クエスト【${quest?.name || 'テスト演習'}】突入！相手は【${enemyData.name}】(${enemyData.element}属性/${enemyData.size} / HP:${enemyData.mhp})！`, type: "system" }
         ]);
       } else {
         setDisplayedLogs([{ id: 'err', text: "酒場に冒険者がいません。編成を確認してください。", type: "system" }]);
@@ -77,7 +100,7 @@ const AdventureActive = ({ partyCharacterIds = [], onReturn }) => {
     };
 
     initAdventure();
-  }, [partyCharacterIds]); // ⭕ IDが変わるたびに再結成されるように追従！
+  }, [partyCharacterIds, quest]); // ⭕ IDが変わるたびに再結成されるように追従！
 
   // 2. 🧠 クエストメインループ（三土手さん考案：アディショナルタイム対応型バトルエンジン）
   useEffect(() => {
@@ -167,38 +190,99 @@ const AdventureActive = ({ partyCharacterIds = [], onReturn }) => {
 
         if (partyAtkTimers.current[member.id] >= playerInterval) {
           partyAtkTimers.current[member.id] = 0;
+          
+          // 🛌 スタンまたは凍結中の場合は行動不能スキップ！
+          if (member.state?.isStunned || member.state?.isFrozen) {
+            newLogs.push({ id: `skip-${member.id}-${Date.now()}`, text: `💤 ${member.name} は身体が固まっていて動けない！`, type: "system" });
+            return;
+          }
+
           let finalDmg = 0;
           let logText = "";
 
-          // 職業ごとの行動分岐
-          if (member.job === 'マジシャン') {
-            finalDmg = Math.floor(20 + member.str * 0.2 + (member.agi * 0.4)); 
-            localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
-            logText = `🔥 ${member.name} の【ファイアーボルト】！ ${enemy.name} に ${finalDmg} の魔法ダメージ！`;
-          } else if (member.job === 'アコライト') {
-            const injured = [...localParty].filter(p => p.hp > 0 && p.hp < p.mhp).sort((a,b) => a.hp - b.hp);
-            if (injured.length > 0) {
-              const healTargetIdx = localParty.findIndex(p => p.id === injured[0].id);
-              const healAmt = 35;
-              localParty[healTargetIdx].hp = Math.min(localParty[healTargetIdx].mhp, localParty[healTargetIdx].hp + healAmt);
-              logText = `✨ ${member.name} の【ヒール】！ ${localParty[healTargetIdx].name} のHPが ${healAmt} 回復した！`;
+          // ==========================================================
+          // 👤 ① スカウト（隠密）➔ 【ぬすっと・暗殺】のぶっ放し検証
+          // ==========================================================
+          if (member.job === 'スカウト') {
+            const isAssassination = Math.random() < 0.30; // 30%の確率で暗殺瞬撃が発動
+            if (isAssassination) {
+              // 暗殺は敵のVIT防御を100%完全無視(貫通)して特大3倍ダメージ！
+              const baseAtk = (member.str || 10) * 2 + (member.dex || 10) * 1.5;
+              finalDmg = Math.floor(baseAtk * 3);
+              localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
+              logText = `🗡️ 👁️ 【暗殺瞬撃】！！ ${member.name} が影から心臓を貫いた！ ${enemy.name} のVIT防御を完全無視して ${finalDmg} の致命物理ダメージ！`;
+            } else {
+              // 通常のぬすっと二連撃
+              finalDmg = Math.max(1, Math.floor(((member.str || 10) + (member.dex || 10)) * 1.2) - (enemy.vit || 0));
+              localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
+              logText = `💰 ${member.name} の【ぬすっと二連撃】！ ${enemy.name} から素材をかすめ取りつつ ${finalDmg} の物理ダメージ！`;
+            }
+          }
+          // ==========================================================
+          // 🔮 ② メイジ（魔術士）➔ 【凍結魔法 ＆ 属性倍率】のバインド検証
+          // ==========================================================
+          else if (member.job === 'メイジ') {
+            const isFreezeSkill = Math.random() < 0.40; // 40%で凍結魔法、60%で火炎魔法
+            
+            if (isFreezeSkill) {
+              // 水属性魔法（テストポリンJrは水属性なので、水 vs 水 は0.5倍に半減する相性数理）
+              let elementRate = 0.5;
+              finalDmg = Math.floor((30 + (member.str || 10) * 2) * elementRate);
+              localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
+              
+              logText = `❄️ ${member.name} の【コールドボルト】！ ${enemy.name} は水属性のためダメージ半減(${elementRate}倍)➔ ${finalDmg}魔法ダメージ！`;
+              
+              // 🎴 状態異常「凍結」の確率判定（敵の凍結耐性を引き算してジャッジ）
+              const baseChance = 50;
+              const finalChance = Math.max(0, baseChance - (enemy.resist_freeze || 0));
+              if (Math.random() * 100 < finalChance) {
+                logText += ` ➔ ❄️【凍結点灯】！ ${enemy.name} がガチガチに凍りつき行動不能！`;
+              }
+            } else {
+              // 火属性魔法（火 vs 水属性のエネミーは、相性によってダメージが0.75倍にリアル変動！）
+              let elementRate = enemy.element === '水' ? 0.75 : 1.5;
+              finalDmg = Math.floor((45 + (member.str || 10) * 3) * elementRate);
+              localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
+              logText = `🔥 ${member.name} の【ファイアーボルト】！ 属性逆相性(${elementRate}倍)が直撃！ ${enemy.name} に ${finalDmg} の爆炎魔法ダメージ！`;
+            }
+          } 
+          // ==========================================================
+          // 🔨 ③ クレリック（聖職者）➔ 【ヒール ＆ スタン鈍器殴り】検証
+          // ==========================================================
+          else if (member.job === 'クレリック') {
+            const lowestHpMember = [...localParty].filter(p => p.hp > 0 && p.hp < p.mhp).sort((a, b) => a.hp - b.hp)[0];
+            
+            if (lowestHpMember) {
+              // 傷ついた味方が一人でもいたら100%ヒールで最優先救済
+              const healAmt = Math.floor(40 + (member.str || 10) * 1.5);
+              const targetIdx = localParty.findIndex(p => p.id === lowestHpMember.id);
+              localParty[targetIdx].hp = Math.min(localParty[targetIdx].mhp, localParty[targetIdx].hp + healAmt);
+              logText = `✨ ${member.name} の聖なる【ヒール】！ 傷ついた ${localParty[targetIdx].name} のHPを ${healAmt} 回復させた！`;
               setParty([...localParty]);
             } else {
-              finalDmg = Math.max(1, (Math.floor(Math.random() * 5) + 1) + member.str - enemy.vit);
+              // 全員元気なら、本家ROリスペクトの「スタン殴り（ホーリースマイト）」
+              finalDmg = Math.max(1, Math.floor((member.str || 10) * 1.5) - (enemy.vit || 0));
               localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
-              logText = `🔨 ${member.name} の鈍器殴り！ ${enemy.name} に ${finalDmg} のダメージ！`;
+              logText = `🔨 ${member.name} の【ホーリースマイト】！鈍器で脳天を殴り ${finalDmg} ダメージ！`;
+              
+              // 🎴 スタン状態異常の判定（敵のスタン耐性を引き算）
+              const baseStunChance = 35;
+              const finalStunChance = Math.max(0, baseStunChance - (enemy.resist_stun || 0));
+              if (Math.random() * 100 < finalStunChance) {
+                logText += ` ➔ 💫【スタン点灯】！ ${enemy.name} の目の前が真っ暗になり気絶！`;
+              }
             }
-          } else {
-            // ソードマン、シーフ、ノービス（通常物理）
-            const strBonus = Math.pow(Math.floor(member.str / 10), 2);
-            const rawAtk = (Math.floor(Math.random() * 5) + 1) + member.str + strBonus;
-            finalDmg = Math.max(1, rawAtk - enemy.vit);
+          } 
+          // ==========================================================
+          // ⚔️ ④ ファイター（戦士）＆ その他通常物理職
+          // ==========================================================
+          else {
+            finalDmg = Math.max(1, Math.floor((member.str || 10) * 2) - (enemy.vit || 0));
             localEnemyHp = Math.max(0, localEnemyHp - finalDmg);
-            const prefix = member.job === 'シーフ' ? '🗡️' : member.job === 'ソードマン' ? '⚔️' : '👊';
-            logText = `${prefix} ${member.name} の攻撃！ ${enemy.name} に ${finalDmg} のダイスダメージ！(残HP: ${localEnemyHp})`;
+            logText = `⚔️ ${member.name} の全力【バッシュ】！ ${enemy.name} の肉体を叩き割り ${finalDmg} の物理ダメージ！(敵残HP: ${localEnemyHp})`;
           }
 
-          newLogs.push({ id: `p-${member.id}-${Date.now()}`, text: logText, type: "success" });
+          newLogs.push({ id: `p-${member.id}-${Date.now()}-${Math.random()}`, text: logText, type: "success" });
           setEnemy(prev => ({ ...prev, hp: localEnemyHp }));
 
           // 🏆 敵ボス完全撃破

@@ -24,14 +24,43 @@ const QuestModal = ({ quest, onClose, onStart }) => {
             <span style={{ color: '#666', fontSize: '0.8rem' }}>推奨レベル</span>
             <span style={{ color: '#fff', fontWeight: 'bold' }}>Lv. {quest.level}</span>
           </div>
+          
           <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #222', paddingBottom: '8px' }}>
             <span style={{ color: '#666', fontSize: '0.8rem' }}>階層</span>
             <span style={{ color: '#fff', fontWeight: 'bold' }}>地下 {quest.floors} 階</span>
           </div>
+
+          {/* 👑 三土手神専用：出現モンスターのスペック透視パネルを美しく増築！ */}
+          {quest.id === 'quest_debug_battle_test' && (
+            <div style={{ 
+              background: '#0a0d14', 
+              border: '1px dashed #38bdf8', 
+              padding: '12px', 
+              borderRadius: '12px', 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '6px' 
+            }}>
+              <span style={{ fontSize: '0.7rem', color: '#38bdf8', fontWeight: 'bold' }}>
+                📊 演習ターゲット情報
+              </span>
+              <p style={{ fontSize: '0.65rem', color: '#ba9a6f', margin: '0 0 4px 0', lineHeight: '1.4' }}>
+                {quest.description}
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.68rem', fontFamily: 'monospace', borderTop: '1px solid #1e293b', paddingTop: '6px' }}>
+                <div>👾 統一名: <span style={{ color: '#fff', fontWeight: 'bold' }}>テストポリンJr</span></div>
+                <div>🌍 属性: <span style={{ color: '#60a5fa' }}>水属性 (小型)</span></div>
+                <div>❤️ HP予測: <span style={{ color: '#34d399', fontWeight: 'bold' }}>2500 (超タフ)</span></div>
+                <div>⚔️ 攻撃力: <span style={{ color: '#f43f5e' }}>10 (極めて微弱)</span></div>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
             <span style={{ color: '#666', fontSize: '0.8rem' }}><Users size={14} /> 出撃パーティ選択</span>
             <select style={{ width: '100%', background: '#222', border: '1px solid #444', color: '#fff', padding: '10px', borderRadius: '8px' }}>
-              <option>第一のパーティ (平均Lv.5)</option>
+              {/* 💡 先ほど用意したレベル20のドリームチームに合わせて「平均Lv.20」へ完全バインド！ */}
+              <option>第一のパーティ (平均Lv.20)</option>
               <option disabled>第二のパーティ (未編成)</option>
             </select>
           </div>

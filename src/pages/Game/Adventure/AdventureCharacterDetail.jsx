@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Briefcase, Type, Save, RotateCcw, Plus, Swords, Sun, Moon, Layers, Footprints, Gem, Crosshair, Zap, Award, X } from 'lucide-react';
 import { gameServices, calculateRoStatus } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
+import { RO_NEXT_EXP_TABLE } from '../../../gameRules';
 
 // 日本語のステータス説明マッピング
 const STAT_LABELS = {
@@ -72,8 +73,29 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
       
       data.allMasterItemsList = combinedMasterList;
       
+      // 👑 三土手神特注：レベル連動・フリーポイント自動同期計算エンジン
+      // データベースの古い固定値(6)を突破し、現在のBaseレベルに応じた総獲得ポイントをシミュレート加算！
+      const currentLevel = data.level || 1;
+      let totalEarnedPoints = 6; // レベル1の初期値
+      
+      // レベル2から現在のレベルまで、数理室の漸増ルール（3〜7ポイント）をその場で高速シミュレート
+      for (let lv = 2; lv <= currentLevel; lv++) {
+        if (lv <= 10)       totalEarnedPoints += 3;
+        else if (lv <= 20)  totalEarnedPoints += 4;
+        else if (lv <= 30)  totalEarnedPoints += 5;
+        else if (lv <= 40)  totalEarnedPoints += 6;
+        else                totalEarnedPoints += 7;
+      }
+      
+      // すでにキャラクターの肉体に手振りで消費されているボーナス合計値を算出
+      const spentPoints = (data.bonus?.str || 0) + (data.bonus?.agi || 0) + (data.bonus?.vit || 0) + (data.bonus?.int || 0) + (data.bonus?.dex || 0) + (data.bonus?.luk || 0);
+      
+      // 総獲得ポイントから消費分を引いて、現在余っているはずのフリーポイントを特定
+      const calculatedRemainingPoints = Math.max(0, totalEarnedPoints - spentPoints);
+      
       setCharacter(data);
-      setLocalPoints(data.status_points || 0);
+      // 💡 データベースの生データではなく、レベル10（合計33ポイント）から弾き出した正しいフリーポイントを強制上書きバインド！
+      setLocalPoints(calculatedRemainingPoints);
       setLocalBonuses({
         str: data.bonus?.str || 0,
         agi: data.bonus?.agi || 0,
@@ -266,7 +288,25 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
   // 計算エンジンが算出した「最終Atk/Def」の元となった、カード合算後の純粋なVIT・INTをベースにHP/SPを完全シンクロ！
   // 今挿してあるカードが持つ固定HP加算（card_hp）に加え、VIT増幅分（VIT * 10）も1ミリの漏れなく自動追従します
   const liveMaxHp = (character.meta?.base_hp || 100) + (((ro.def - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.def || 0), 0)) * 2) * 10) + (ro.card_hp || 0);
-  const liveMaxSp = (character.meta?.base_sp || 10) + (((ro.mdef - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.mdef || 0), 0)) * 2) * 2) + (ro.card_sp || 0);
+  const liveMaxSp = (character.meta?.base_sp || 10) + (((ro.mdef - Object.values(character.equips || {}).reduce((sum, eq) => sum + (sum?.mdef || 0), 0)) * 2) * 2) + (ro.card_sp || 0);
+
+  // 👑 三土手神仕様：酒場・拠点（非戦闘時）に滞在しているため、現在のHP/SPは常に完全全回復（MAXバインド）！
+  const currentLiveHp = liveMaxHp;
+  const currentLiveSp = liveMaxSp;
+
+  // 👑 三土手神仕様：数理室のテーブルを逆引きし、現在のLvに応じた「次のレベルまでの必要経験値」を自動パース
+  const currentLvIdx = Math.min(50, Math.max(1, (character.level || 1) + 1));
+  const nextLevelNeedExp = RO_NEXT_EXP_TABLE[currentLvIdx] || 0;
+  const currentExp = character.exp || 0;
+  const expPercent = nextLevelNeedExp > 0 ? Math.min(100, (currentExp / nextLevelNeedExp) * 100) : 0;
+
+  // 👑 三土手神専用：戦闘能力値(Derived)の右側に点灯させるための、純粋な「カード由来の補正値」を抽出
+  const cardAtkBonus = ro?.cardStats?.atk || 0;
+  const cardHitBonus = ro?.cardStats?.hit || 0;
+  const cardFleeBonus = ro?.cardStats?.flee || 0;
+  const cardMdefBonus = ro?.cardStats?.mdef || 0;
+  const cardCritBonus = ro?.cardStats?.critical || 0;
+  const cardDefBonus = Object.values(character.equips || {}).filter(eq => eq && Array.isArray(eq.cards)).flatMap(eq => eq.cards).reduce((sum, c) => sum + (c.card_effect_type === 'add_stat' && c.card_effect_target === 'def' ? Number(c.card_effect_value) : 0), 0);
 
   const SectionHeader = ({ title }) => (
     <div style={{ background: 'linear-gradient(90deg, #161109 0%, #0d0905 100%)', padding: '6px 12px', borderTop: '1px solid #3a2d1a', borderBottom: '1px solid #3a2d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', marginBottom: '8px' }}>
@@ -310,10 +350,26 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.72rem' }}>
           <div style={{ display: 'flex' }}><span style={{ color: '#887355', width: '70px' }}>ジョブ</span><span style={{ color: '#eee', fontWeight: 'bold' }}>{character.meta?.job || 'ノービス'}</span></div>
           <div style={{ display: 'flex' }}><span style={{ color: '#887355', width: '70px' }}>種族属性</span><span style={{ color: '#eee' }}>{character.meta?.race || '人間'}</span></div>
-          <div style={{ display: 'flex' }}><span style={{ color: '#887355', width: '70px' }}>現在のHP</span><span style={{ color: '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>{character.current_hp} / {liveMaxHp}</span></div>
-          <div style={{ display: 'flex' }}><span style={{ color: '#887355', width: '70px' }}>現在のSP</span><span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>{character.current_sp} / {liveMaxSp}</span></div>
+          {/* 💡 常時全回復Stateへ結合 */}
+          <div style={{ display: 'flex' }}><span style={{ color: '#887355', width: '70px' }}>現在のHP</span><span style={{ color: '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>{currentLiveHp} / {liveMaxHp}</span></div>
+          <div style={{ display: 'flex' }}><span style={{ color: '#887355', width: '70px' }}>現在のSP</span><span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>{currentLiveSp} / {liveMaxSp}</span></div>
+          
+          {/* 👑 三土手神専用：現在のSPの直下に『経験値（EXP）プログレスバー』を完璧に結合増築！ */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '3px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#887355', fontSize: '0.62rem' }}>現在のEXP</span>
+              <span style={{ color: '#ffd700', fontFamily: 'monospace', fontSize: '0.62rem', fontWeight: 'bold' }}>
+                {currentExp} / {nextLevelNeedExp} ({expPercent.toFixed(1)}%)
+              </span>
+            </div>
+            {/* 高級感のあるミニEXPプログレスバー */}
+            <div style={{ width: '100%', height: '4px', background: '#0d0905', borderRadius: '2px', overflow: 'hidden', border: '1px solid #23190e' }}>
+              <div style={{ width: `${expPercent}%`, height: '100%', background: 'linear-gradient(90deg, #f59e0b 0%, #ffd700 100%)', transition: 'width 0.4s ease' }}></div>
+            </div>
+          </div>
         </div>
-        <div style={{ height: '90px', background: 'linear-gradient(180deg, #1a130b 0%, #0d0905 100%)', border: '1px dashed #42321c', borderRadius: '6px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#5a4531' }}>
+        {/* アバターフレームの高さをEXPバー追加分に合わせて微調整 */}
+        <div style={{ height: '102px', background: 'linear-gradient(180deg, #1a130b 0%, #0d0905 100%)', border: '1px dashed #42321c', borderRadius: '6px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#5a4531' }}>
           <Award size={28} color="#42321c" />
           <span style={{ fontSize: '0.55rem', color: '#887055', marginTop: '4px', fontFamily: 'serif' }}>AVATAR FRAME</span>
         </div>
@@ -331,25 +387,25 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
           <SectionHeader title="能力値 (Base Status)" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
             {Object.keys(STAT_LABELS).map(statKey => {
-  const lowKey = statKey.toLowerCase().trim();
+              const lowKey = statKey.toLowerCase().trim();
 
-  // 👑 三土手神特注：4つのエネルギーを完全分離して単独ロード！
-  // ① 基礎値（マスター初期値）
-  const initialBase = character.meta?.[`stat_${lowKey}`] !== undefined ? Number(character.meta[`stat_${lowKey}`]) : 0;
-  
-  // ② 手振りポイント ➔ 🔵【青色】
-  const userAllocated = localBonuses[lowKey] || 0;
-  
-  // ③ 職業ボーナス（jobBonusからダイレクト抽出） ➔ 🟡【黄色】
-  const jobBonusValue = ro?.displayStatus?.[lowKey]?.bonus ? (ro.displayStatus[lowKey].bonus - (ro?.cardStats?.[lowKey] || 0)) : 0;
-  
-  // ② カード補正：直送されてきた cardStats からダイレクトに直撃点灯！ ➔ 🔴【赤色】
-  const cardBonusValue = ro?.cardStats?.[lowKey] || 0;
+              // 👑 三土手神特注：4つのエネルギーを完全分離して単独ロード！
+              // ① 基礎値（マスター初期値）
+              const initialBase = character.meta?.[`stat_${lowKey}`] !== undefined ? Number(character.meta[`stat_${lowKey}`]) : 0;
+              
+              // ② 手振りポイント ➔ 🔵【青色】
+              const userAllocated = localBonuses[lowKey] || 0;
+              
+              // ③ 🔮 職バ配線リフォーム：存在しないJobLvを全廃し、Baseレベルをそのままジョブボーナス配列へ直撃バインド！
+              // gameServicesで計算した ro.bonus（ジョブボーナス＋カード効果）から、純粋なカード効果を引き算して「純粋な職業成長分」を特定
+              const totalBonusBuffer = ro?.bonus?.[lowKey] || 0;
+              const cardBonusValue = ro?.cardStats?.[lowKey] || 0;
+              const jobBonusValue = Math.max(0, totalBonusBuffer - cardBonusValue - userAllocated);
+              
+              // ⑤ すべてを合算した絶対トータル値（白文字） ➔ ⚪【白色】
+              const finalTotal = initialBase + userAllocated + jobBonusValue + cardBonusValue;
 
-  // ⑤ すべてを合算した絶対トータル値 ➔ ⚪【白色】
-  const finalTotal = initialBase + userAllocated + jobBonusValue + cardBonusValue;
-
-  return (
+              return (
     <div key={statKey} style={{ background: '#0d0905', border: '1px solid #1c140a', borderRadius: '8px', padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 140px 32px', alignItems: 'center' }}>
       <div style={{ paddingRight: '8px' }}>
         <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#fff', display: 'block' }}>{STAT_LABELS[statKey].name}</span>
@@ -388,15 +444,47 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
           <SectionHeader title="戦闘能力値 (Derived Status)" />
           <div style={{ background: '#0a0704', border: '1px solid #23190e', borderRadius: '8px', padding: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', fontSize: '0.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>攻撃力 (Atk)</span><strong style={{ color: '#eee', fontFamily: 'monospace' }}>{ro.atk}</strong></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#34d399' }}>防御力 (Def)</span><strong style={{ color: '#34d399', fontFamily: 'monospace' }}>+{ro.def}</strong></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>命中 (Hit)</span><strong style={{ color: '#eee', fontFamily: 'monospace' }}>{ro.hit}</strong></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>回避 (Flee)</span><strong style={{ color: '#eee', fontFamily: 'monospace' }}>{ro.flee}</strong></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>行動速度 (Aspd)</span><strong style={{ color: '#ffd700', fontFamily: 'monospace' }}>{ro.aspd.toFixed(1)}</strong></div>
-            
-            {/* 🔮 🆕 「能力値」タブ側にも魔法防御力（MDEF）を直撃マージ！ */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>魔法防御 (Mdef)</span><strong style={{ color: '#f472b6', fontFamily: 'monospace' }}>+{ro.mdef}</strong></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}><span style={{ color: '#887355' }}>致命打率 (Critical)</span><strong style={{ color: '#fbbf24', fontFamily: 'monospace' }}>{ro.critical}%</strong></div>
+            {/* 🔮 👑 三土手神特注：カードが乗っている戦闘スペックに、鮮やかな赤色のカッコ内訳 (+X) を同時点灯！ */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#887355' }}>攻撃力 (Atk)</span>
+              <span style={{ color: '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.atk} {cardAtkBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardAtkBonus})</span>}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#34d399' }}>防御力 (Def)</span>
+              <span style={{ color: '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                +{ro.def} {cardDefBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardDefBonus})</span>}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#887355' }}>命中 (Hit)</span>
+              <span style={{ color: '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.hit} {cardHitBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardHitBonus})</span>}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#887355' }}>回避 (Flee)</span>
+              <span style={{ color: '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.flee} {cardFleeBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardFleeBonus})</span>}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#887355' }}>行動速度 (Aspd)</span>
+              <strong style={{ color: '#ffd700', fontFamily: 'monospace' }}>{ro.aspd.toFixed(1)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#887355' }}>魔法防御 (Mdef)</span>
+              <span style={{ color: '#f472b6', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                +{ro.mdef} {cardMdefBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardMdefBonus})</span>}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+              <span style={{ color: '#887355' }}>致命打率 (Critical)</span>
+              <span style={{ color: '#fbbf24', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.critical}% {cardCritBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardCritBonus}%)</span>}
+              </span>
+            </div>
           </div>
 
           {/* 🃏 🆕 能力値タブ直撃：サイズ特効・種族特効・属性特効・異常耐性・付与確率・HP吸収の全自動カウンターパネル */}
