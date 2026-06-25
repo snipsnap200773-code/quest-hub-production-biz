@@ -25,7 +25,6 @@ const AdventureActive = ({
   const [enemy, setEnemy] = useState(null);
   const [displayedLogs, setDisplayedLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  // 🔮 🆕 クラッシュ破壊：ファイル全体で選ばれたクエストを共有するStateを増築！
   const [currentQuestState, setCurrentQuestState] = useState(null);
 
   const partyStateRef = useRef([]);
@@ -35,30 +34,22 @@ const AdventureActive = ({
   
   const [droppedItems, setDroppedItems] = useState([]);
   const hasAnnouncedATRef = useRef(false);
+  
+  // 🔮 🆕 セーブ中表示用のローカル状態を増築
+  const [isSaving, setIsSaving] = useState(false);
 
-  // 1. 初回ロード
+  // 1. 初回ロード（ここが「最初」の1回だけの通信）
   useEffect(() => {
     const initAdventure = async () => {
       setLoading(true);
       
-      // 💡 1. 親がどんな名前で送ってきてもキャッチ
       let currentQuest = quest || activeQuest || selectedQuest;
       
-      // 🔮 🆕 三土手創世神特注配線：IDが「quest_」でも「est_」でも、オブジェクトが存在していればそれを100%本物として強制上書きアサイン！
       if (!currentQuest && (quest !== null || activeQuest !== null || selectedQuest !== null)) {
         currentQuest = quest || activeQuest || selectedQuest;
       }
       
       setCurrentQuestState(currentQuest);
-
-      // 🚨 【創世神の超セーフティネット】
-      // もし親ファイルがバグっていて、バフォメットJrのクエストが選ばれたのに
-      // データをすり潰してしまっている場合、ブラウザのクリック履歴や初期化状態から「バフォメットJr討伐」であることを強制マウントします！
-      if (!currentQuest || currentQuest.id === 'quest_debug_battle_test') {
-        // 現在、画面でクリックされたクエスト名や、何らかの理由でバフォメット側が選ばれているかを
-        // 判定するため、あえてフォールバックを『baphomet_junior』側に寄せるテストを行います。
-        // もし「始まりの洞窟」をテストしたい場合は、以下のコメントアウトを切り替えるか、強制的に上書きします。
-      }
 
       const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
       const { data: dbSkills } = await supabase.from('game_master_skills').select('*');
@@ -112,11 +103,7 @@ const AdventureActive = ({
         partyStateRef.current = loadedParty;
         setParty(loadedParty);
 
-        // 🔮 🆕 三土手創世神完全データ直結配線：
-        // 1. まずデフォルトを安全にポリンJrにする
         let targetEnemyId = 'test_porin_junior';
-        
-        // 2. 親のProps（currentQuest）、またはさきほど保存したState（currentQuestState）から、DBの本物の敵IDを完全抽出！
         const activeQuestData = currentQuest || currentQuestState;
         
         if (activeQuestData?.enemy_master_id) {
@@ -125,7 +112,6 @@ const AdventureActive = ({
           targetEnemyId = 'baphomet_junior';
         }
 
-        // 💡 すり抜け防止用の厳密チェックが完了。ここをそのままSupabaseのeqに流し込みます
         const { data: dbEnemy, error: enemyError } = await supabase
           .from('game_master_units')
           .select('*')
@@ -136,11 +122,8 @@ const AdventureActive = ({
           console.error("エネミーデータ取得エラー:", enemyError);
         }
 
-        // 🔮 🆕 三土手創世神監修：IDストレート・バインドエンジン
-        // targetEnemyId の文字列を直接チェックし、大文字小文字や表記ブレを完全にシャットアウトします。
         const isBaphometTarget = String(targetEnemyId).toLowerCase().includes('baphomet');
         
-        // 各ステータスについて、DB(Supabase)の値があれば最優先、空ならID準拠で完全固定マウント！
         const finalName = dbEnemy?.name || (isBaphometTarget ? "バフォメットJr" : "テストポリンJr");
         const finalHp = dbEnemy?.hp || dbEnemy?.base_hp || dbEnemy?.max_hp || (isBaphometTarget ? 1800 : 2500);
         const finalStr = dbEnemy?.str || dbEnemy?.stat_str || (isBaphometTarget ? 35 : 10);
@@ -182,7 +165,7 @@ const AdventureActive = ({
     initAdventure();
   }, [partyCharacterIds, quest, activeQuest, selectedQuest]);
 
-  // 2. 🧠 超軽量・高速カウント保証型戦闘ループ
+  // 2. 🧠 超軽量・高速カウント保証型戦闘ループ（※この間は通信回数完全に「0」！）
   useEffect(() => {
     if (loading || party.length === 0 || !enemy || isBattleOver) return;
 
@@ -221,7 +204,6 @@ const AdventureActive = ({
         return;
       }
 
-      // 😈 エネミーの行動
       const enemyInterval = Math.max(1.0, 4.0 - localEnemy.agi * 0.1) * 1000;
       enemyAtkTimer.current += 100;
 
@@ -252,7 +234,6 @@ const AdventureActive = ({
         }
       }
 
-      // 👤 プレイヤーたちの行動
       localParty.forEach((member, idx) => {
         if (member.hp <= 0 || localEnemy.hp <= 0) return;
 
@@ -422,6 +403,40 @@ const AdventureActive = ({
     return () => { clearInterval(countTimer); clearInterval(battleTimer); };
   }, [loading, party, enemy, isBattleOver]);
 
+  // 3. 🔮 🆕 三土手創世神特注：サーバー無風コミットエンジン（これが「最後」の1回だけの通信）
+  const handleTownCommit = async () => {
+    setIsSaving(true);
+    try {
+      const finalParty = partyStateRef.current;
+      const finalEnemy = enemyStateRef.current;
+      const isVictory = finalEnemy && finalEnemy.hp <= 0;
+
+      // 👥 1. 生き残ったメンバーの現在HPを一斉にSupabaseへ最終保存
+      await Promise.all(
+        finalParty.map(async (member) => {
+          await supabase
+            .from('game_characters')
+            .update({ current_hp: member.hp })
+            .eq('id', member.id);
+        })
+      );
+
+      // 💰 2. 勝利時のみ、ユーザーのZenyやExp報酬を加算コミット（※将来の拡張用に器を配置！）
+      if (isVictory) {
+        console.log(`🎁 創世神特攻報酬の確定：BaseEXP +${finalEnemy.exp} / Zeny +${finalEnemy.gold}`);
+        // ここにユーザーの所持金を加算するマスターテーブルへのUPDATEを1発書くだけで接続可能！
+      }
+
+      // 3. モーダルを開いて完了！
+      setShowResult(true);
+    } catch (error) {
+      console.error("最終決戦データのセーブに失敗しました:", error);
+      setShowResult(true); // エラーでもスタックしないよう逃がす
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -431,9 +446,6 @@ const AdventureActive = ({
   if (loading) return <div style={{ color: '#f59e0b', textAlign: 'center', padding: '50px' }}>部隊結成中...</div>;
 
   return (
-    /* 🔮 🆕 三土手創世神完全レイヤージャック配線：
-       固定配置（fixed）と最上位レイヤー（zIndex: 2000）を付与することで、
-       親のポップアップを完全に裏側へねじ伏せて、戦闘ログ画面を最前面に強制引きずり出します！ */
     <div style={{ 
       display: 'flex', 
       flexDirection: 'column', 
@@ -444,7 +456,7 @@ const AdventureActive = ({
       margin: '0 auto',
       width: '100%', 
       maxWidth: '480px',
-      height: 'calc(100vh - 60px)', // 🎯 100vhから計算式に修正！これで下に60pxの隙間が綺麗に空きます
+      height: 'calc(100vh - 60px)', 
       backgroundColor: '#020617', 
       overflow: 'hidden', 
       zIndex: 2000 
@@ -452,7 +464,6 @@ const AdventureActive = ({
       
       <div style={{ padding: '12px 15px', borderBottom: '1px solid #1e293b', background: '#0f172a', zIndex: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {/* 🔮 🆕 三土手世界のデータ連動：Stateから安全にクエスト名称を引き出してマウント！ */}
           <div style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '0.85rem' }}>🐾 【{currentQuestState?.name || 'クエスト'}】 ({party.length}名編成)</div>
           <div style={{ fontSize: '0.8rem', color: timeLeft <= 0 ? '#f59e0b' : '#ef4444', fontWeight: 'bold' }}>
             {timeLeft <= 0 ? '⚠️ AT突入！' : `制限時間: ${timeLeft}秒`}
@@ -482,8 +493,13 @@ const AdventureActive = ({
 
       <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #1e293b', textAlign: 'center' }}>
         {(isTimeUp && isBattleOver) || enemy?.hp <= 0 ? (
-          <button onClick={() => setShowResult(true)} style={{ width: '100%', padding: '12px', borderRadius: '12px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#0f172a', border: 'none', fontSize: '0.95rem', fontWeight: '900', cursor: 'pointer' }}>
-            🏆 街へ帰還する
+          /* 🔮 🆕 ボタンのonClickを、直撃セーブ機能付きの handleTownCommit へコンバート！ */
+          <button 
+            onClick={handleTownCommit} 
+            disabled={isSaving}
+            style={{ width: '100%', padding: '12px', borderRadius: '12px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#0f172a', border: 'none', fontSize: '0.95rem', fontWeight: '900', cursor: isSaving ? 'not-allowed' : 'pointer', opacity: isSaving ? 0.7 : 1 }}
+          >
+            {isSaving ? '⏳ 冒険ログを同期中...' : '🏆 街へ帰還する'}
           </button>
         ) : (
           <button onClick={onReturn} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}>
