@@ -489,7 +489,8 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
           {/* 🃏 🆕 能力値タブ直撃：サイズ特効・種族特効・属性特効・異常耐性・付与確率・HP吸収の全自動カウンターパネル */}
           {(() => {
-            const listCounts = { size: {}, race: {}, elem: {}, resist: {}, inflict: {}, drain: 0 };
+            // 確率（drain_chance）と吸収量（drain_percent）を両方 0 で初期化
+            const listCounts = { size: {}, race: {}, elem: {}, resist: {}, inflict: {}, drain_chance: 0, drain_percent: 0 };
             
             // 💡 リアルタイムに変動する equippedCards を基準にマスターデータを結合して全自動集計！
             (equippedCards || []).forEach(slotCard => {
@@ -497,21 +498,31 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
               const card = character.allMasterItemsList?.find(m => m.id === slotCard.card_master_id);
               if (!card) return;
 
-              const calcList = (type, target, val) => {
+              const calcList = (type, target, val, target2) => {
                 const v = Number(val) || 0;
-                if (!type || type === 'none' || !target) return;
-                if (type === 'damage_size') listCounts.size[target] = (listCounts.size[target] || 0) + v;
-                if (type === 'damage_race') listCounts.race[target] = (listCounts.race[target] || 0) + v;
-                if (type === 'damage_element') listCounts.elem[target] = (listCounts.elem[target] || 0) + v;
-                if (type === 'resist_status') listCounts.resist[target] = (listCounts.resist[target] || 0) + v;
-                if (type === 'inflict_status') listCounts.inflict[target] = (listCounts.inflict[target] || 0) + v;
-                if (type === 'hp_drain') listCounts.drain += v;
+                if (!type || type === 'none') return;
+                if (type === 'damage_size' && target) listCounts.size[target] = (listCounts.size[target] || 0) + v;
+                if (type === 'damage_race' && target) listCounts.race[target] = (listCounts.race[target] || 0) + v;
+                if (type === 'damage_element' && target) listCounts.elem[target] = (listCounts.elem[target] || 0) + v;
+                if (type === 'resist_status' && target) listCounts.resist[target] = (listCounts.resist[target] || 0) + v;
+                if (type === 'inflict_status' && target) listCounts.inflict[target] = (listCounts.inflict[target] || 0) + v;
+                
+                // 🩸 【数理リフォーム】2枚以上のカード効果を完全に足し算（合算）する鉄壁の配線
+                if (type === 'hp_drain') {
+                  listCounts.drain_chance += v; // 発動確率を足し算 (例: 25% + 25% = 50%)
+                  
+                  const rawTargetStr = target2 || target || '';
+                  if (String(rawTargetStr).includes('drain_')) {
+                    const parsedPct = Number(String(rawTargetStr).replace('drain_', '')) || 0;
+                    listCounts.drain_percent += parsedPct; // 👑 吸収量も確実に足し算！ (例: 20% + 20% = 40%)
+                  }
+                }
               };
               
               // トリプル効果枠をすべて余すことなくスキャン
-              calcList(card.card_effect_type, card.card_effect_target, card.card_effect_value);
-              calcList(card.card_effect_type_2, card.card_effect_target_2, card.card_effect_value_2);
-              calcList(card.card_effect_type_3, card.card_effect_target_3, card.card_effect_value_3);
+              calcList(card.card_effect_type, card.card_effect_target, card.card_effect_value, card.card_effect_target_2);
+              calcList(card.card_effect_type_2, card.card_effect_target_2, card.card_effect_value_2, card.card_effect_target_2);
+              calcList(card.card_effect_type_3, card.card_effect_target_3, card.card_effect_value_3, card.card_effect_target_3);
             });
 
             // 画面に浮かび上がらせるバッジ用テキストの成形
@@ -521,7 +532,8 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
               ...Object.entries(listCounts.elem).map(([k, v]) => `${k}属性特効 +${v}%`),
               ...Object.entries(listCounts.resist).map(([k, v]) => `${k}耐性 +${v}%`),
               ...Object.entries(listCounts.inflict).map(([k, v]) => `${k}付与確率 +${v}%`),
-              listCounts.drain ? `HP吸収確率 +${listCounts.drain}%` : null
+              // 確率と吸収量の両方の累計をバッジに出力
+              listCounts.drain_chance > 0 ? `HP吸収 [確率:${listCounts.drain_chance}% / 吸収量:${listCounts.drain_percent}%]` : null
             ].filter(Boolean);
 
             return (
@@ -650,13 +662,27 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             });
 
             // 特効テキストの結合
+            let equipmentDrainPercent = 0;
+            Object.values(character.equips || {}).filter(eq => eq && Array.isArray(eq.cards)).flatMap(eq => eq.cards).forEach(card => {
+              const checkDrain = (type, tgt2) => {
+                if (type === 'hp_drain' && String(tgt2).includes('drain_')) {
+                  // 👑 最大値ではなく、見つかった吸収量をすべて足し算（加算）します
+                  equipmentDrainPercent += Number(String(tgt2).replace('drain_', ''));
+                }
+              };
+              checkDrain(card.card_effect_type, card.card_effect_target_2);
+              checkDrain(card.card_effect_type_2, card.card_effect_target_2);
+              checkDrain(card.card_effect_type_3, card.card_effect_target_3);
+            });
+
             const specialLabels = [
               cardCounts.hp_pct ? `MHP+${cardCounts.hp_pct}%` : null,
               cardCounts.sp_pct ? `MSP+${cardCounts.sp_pct}%` : null,
               ...Object.entries(cardCounts.size_eff).map(([k, v]) => `${k}特効+${v}%`),
               ...Object.entries(cardCounts.race_eff).map(([k, v]) => `${k}種族+${v}%`),
               ...Object.entries(cardCounts.elem_eff).map(([k, v]) => `${k}属性+${v}%`),
-              cardCounts.hp_drain ? `吸血鬼の呪い(HP吸収+${cardCounts.hp_drain}%)` : null
+              // 累計確率と累計吸収量を美しくドッキング
+              cardCounts.hp_drain ? `HP吸収 [確率:${cardCounts.hp_drain}% / 吸収量:${equipmentDrainPercent}%]` : null
             ].filter(Boolean);
 
             return (
