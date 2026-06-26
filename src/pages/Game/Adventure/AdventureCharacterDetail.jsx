@@ -487,67 +487,120 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             </div>
           </div>
 
-          {/* 🃏 🆕 能力値タブ直撃：サイズ特効・種族特効・属性特効・異常耐性・付与確率・HP吸収の全自動カウンターパネル */}
+          {/* 🃏 👑 三土手創世神仕様：全8大状態異常・全サイズ・全種族・全属性の完全網羅固定マトリクスパネル */}
           {(() => {
-            // 確率（drain_chance）と吸収量（drain_percent）を両方 0 で初期化
-            const listCounts = { size: {}, race: {}, elem: {}, resist: {}, inflict: {}, drain_chance: 0, drain_percent: 0 };
+            // ① 基礎データとして、あらかじめ全パラメーターを 0% で初期化マウント
+            const masterSpecs = {
+              inflict: { 'スタン': 0, '凍結': 0, '毒': 0, '暗闇': 0, '睡眠': 0, '沈黙': 0, '呪い': 0, '石化': 0 },
+              resist:  { 'スタン': 0, '凍結': 0, '毒': 0, '暗闇': 0, '睡眠': 0, '沈黙': 0, '呪い': 0, '石化': 0 },
+              size:    { '小型': 0, '中型': 0, '大型': 0 },
+              race:    { '無形': 0, '不死': 0, '動物': 0, '植物': 0, '昆虫': 0, '魚貝': 0, '悪魔': 0, '人間': 0, '天使': 0, '竜族': 0 },
+              elem:    { '無': 0, '水': 0, '地': 0, '火': 0, '風': 0, '毒': 0, '聖': 0, '闇': 0, '念': 0, '不死': 0 },
+              drain_chance: 0,
+              drain_percent: 0
+            };
             
-            // 💡 リアルタイムに変動する equippedCards を基準にマスターデータを結合して全自動集計！
-            (equippedCards || []).forEach(slotCard => {
-              // 倉庫のマスターデータからカードの特殊効果情報を逆引き特定
-              const card = character.allMasterItemsList?.find(m => m.id === slotCard.card_master_id);
-              if (!card) return;
+            // ② 装備品本体の効果 ＆ 挿さっている全カードの効果を網羅して1ミリの漏れなくリアルタイム全自動集計
+            const allEquipmentAndCards = [
+              ...Object.values(character.equips || {}), 
+              ...(equippedCards || []).map(slotCard => character.allMasterItemsList?.find(m => m.id === slotCard.card_master_id)) 
+            ].filter(Boolean);
 
-              const calcList = (type, target, val, target2) => {
+            allEquipmentAndCards.forEach(item => {
+              const scanEffect = (type, target, val, target2) => {
                 const v = Number(val) || 0;
                 if (!type || type === 'none') return;
-                if (type === 'damage_size' && target) listCounts.size[target] = (listCounts.size[target] || 0) + v;
-                if (type === 'damage_race' && target) listCounts.race[target] = (listCounts.race[target] || 0) + v;
-                if (type === 'damage_element' && target) listCounts.elem[target] = (listCounts.elem[target] || 0) + v;
-                if (type === 'resist_status' && target) listCounts.resist[target] = (listCounts.resist[target] || 0) + v;
-                if (type === 'inflict_status' && target) listCounts.inflict[target] = (listCounts.inflict[target] || 0) + v;
                 
-                // 🩸 【数理リフォーム】2枚以上のカード効果を完全に足し算（合算）する鉄壁の配線
+                if (type === 'inflict_status' && masterSpecs.inflict[target] !== undefined) masterSpecs.inflict[target] += v;
+                if (type === 'resist_status' && masterSpecs.resist[target] !== undefined)  masterSpecs.resist[target] += v;
+                if (type === 'damage_size' && masterSpecs.size[target] !== undefined)      masterSpecs.size[target] += v;
+                if (type === 'damage_race' && masterSpecs.race[target] !== undefined)      masterSpecs.race[target] += v;
+                if (type === 'damage_element' && masterSpecs.elem[target] !== undefined)   masterSpecs.elem[target] += v;
+                
                 if (type === 'hp_drain') {
-                  listCounts.drain_chance += v; // 発動確率を足し算 (例: 25% + 25% = 50%)
-                  
-                  const rawTargetStr = target2 || target || '';
-                  if (String(rawTargetStr).includes('drain_')) {
-                    const parsedPct = Number(String(rawTargetStr).replace('drain_', '')) || 0;
-                    listCounts.drain_percent += parsedPct; // 👑 吸収量も確実に足し算！ (例: 20% + 20% = 40%)
+                  masterSpecs.drain_chance += v;
+                  const rawTgt = target2 || target || '';
+                  if (String(rawTgt).includes('drain_')) {
+                    masterSpecs.drain_percent += (Number(String(rawTgt).replace('drain_', '')) || 0);
                   }
                 }
               };
-              
-              // トリプル効果枠をすべて余すことなくスキャン
-              calcList(card.card_effect_type, card.card_effect_target, card.card_effect_value, card.card_effect_target_2);
-              calcList(card.card_effect_type_2, card.card_effect_target_2, card.card_effect_value_2, card.card_effect_target_2);
-              calcList(card.card_effect_type_3, card.card_effect_target_3, card.card_effect_value_3, card.card_effect_target_3);
+              scanEffect(item.card_effect_type, item.card_effect_target, item.card_effect_value, item.card_effect_target_2);
+              scanEffect(item.card_effect_type_2, item.card_effect_target_2, item.card_effect_value_2, item.card_effect_target_2);
+              scanEffect(item.card_effect_type_3, item.card_effect_target_3, item.card_effect_value_3, item.card_effect_target_3);
             });
 
-            // 画面に浮かび上がらせるバッジ用テキストの成形
-            const activeBadges = [
-              ...Object.entries(listCounts.size).map(([k, v]) => `${k}型特効 +${v}%`),
-              ...Object.entries(listCounts.race).map(([k, v]) => `${k}種族特効 +${v}%`),
-              ...Object.entries(listCounts.elem).map(([k, v]) => `${k}属性特効 +${v}%`),
-              ...Object.entries(listCounts.resist).map(([k, v]) => `${k}耐性 +${v}%`),
-              ...Object.entries(listCounts.inflict).map(([k, v]) => `${k}付与確率 +${v}%`),
-              // 確率と吸収量の両方の累計をバッジに出力
-              listCounts.drain_chance > 0 ? `HP吸収 [確率:${listCounts.drain_chance}% / 吸収量:${listCounts.drain_percent}%]` : null
-            ].filter(Boolean);
+            const subSectionStyle = { fontSize: '0.62rem', color: '#887355', borderBottom: '1px solid #1a130b', paddingBottom: '2px', marginTop: '4px', fontWeight: 'bold', display: 'block' };
+            const badgeStyle = (isActive) => ({
+              fontSize: '0.6rem',
+              fontFamily: 'monospace',
+              background: isActive ? '#1e1b4b' : '#090705',
+              color: isActive ? '#ffd700' : '#475569',
+              border: isActive ? '1px solid #4338ca' : '1px solid #1a130b',
+              padding: '2px 5px',
+              borderRadius: '4px',
+              fontWeight: isActive ? 'bold' : 'normal',
+              transition: 'all 0.2s'
+            });
 
             return (
-              <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '10px 14px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <span style={{ fontSize: '0.65rem', color: '#38bdf8', fontWeight: 'bold' }}>🃏 カード発動中の特殊能力・倍率累計:</span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '2px' }}>
-                  {activeBadges.map((badge, bIdx) => (
-                    <span key={bIdx} style={{ fontSize: '0.65rem', background: '#1e1b4b', color: '#ffd700', border: '1px solid #4338ca', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', fontFamily: 'monospace' }}>
-                      {badge}
-                    </span>
+              <div style={{ background: '#070503', border: '1px solid #23190e', borderRadius: '8px', padding: '12px', marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <span style={{ fontSize: '0.7rem', color: '#38bdf8', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>✨ 装備特殊パッシブ ＆ 耐性ステータスボード</span>
+                
+                {/* ─── 1. 状態異常付与 ＆ 耐性マトリクス ─── */}
+                <span style={subSectionStyle}>🎭 状態異常付与確率 ／ 🛡️ 状態異常防御耐性</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    {Object.entries(masterSpecs.inflict).map(([status, val]) => (
+                      <div key={'inf-'+status} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{status}付与:</span>
+                        <span style={badgeStyle(val > 0)}>{val}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    {Object.entries(masterSpecs.resist).map(([status, val]) => (
+                      <div key={'res-'+status} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{status}耐性:</span>
+                        <span style={badgeStyle(val > 0)}>{val}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ─── 2. 3大特効倍率マトリクス（全種類を完全固定グリッド表示化！） ─── */}
+                <span style={subSectionStyle}>📏 モンスターサイズ特効倍率補正</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                  {Object.entries(masterSpecs.size).map(([k, v]) => <span key={'sz-'+k} style={badgeStyle(v > 0)}>{k}:+{v}%</span>)}
+                </div>
+
+                <span style={subSectionStyle}>🧬 モンスター種族特効倍率補正</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '3px 8px' }}>
+                  {Object.entries(masterSpecs.race).map(([k, v]) => (
+                    <div key={'rc-'+k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.62rem', color: '#94a3b8' }}>{k}特効:</span>
+                      <span style={badgeStyle(v > 0)}>+{v}%</span>
+                    </div>
                   ))}
-                  {activeBadges.length === 0 && (
-                    <span style={{ fontSize: '0.62rem', color: '#475569', fontStyle: 'italic' }}>現在、特効や確率・吸収系の特殊効果は未発動です</span>
-                  )}
+                </div>
+
+                <span style={subSectionStyle}>🔥 モンスター属性特効倍率補正</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '3px 8px' }}>
+                  {Object.entries(masterSpecs.elem).map(([k, v]) => (
+                    <div key={'el-'+k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.62rem', color: '#94a3b8' }}>{k}属性特効:</span>
+                      <span style={badgeStyle(v > 0)}>+{v}%</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ─── 3. HP吸収ステータス ─── */}
+                <span style={subSectionStyle}>🩸 特殊パッシブ：HPドレイン吸血</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>物理攻撃ヒット時：</span>
+                  <span style={badgeStyle(masterSpecs.drain_chance > 0)}>
+                    {masterSpecs.drain_chance > 0 ? `発動確率: ${masterSpecs.drain_chance}% ／ 吸収量: ${masterSpecs.drain_percent}%` : '未発動 (0%)'}
+                  </span>
                 </div>
               </div>
             );
@@ -640,82 +693,127 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <SectionHeader title="現在の戦闘力 ＆ リアルタイムステータス" />
           
-          {/* 🔮 🆕 三土手神専用：カードに宿るサイズ・種族特効や割合効果をメモリ上でその場集計するカウンター */}
+          {/* 🃏 👑 三土手創世神仕様：装備変更タブ側にも全く同じ固定マトリクスを完全同調マウント！ */}
           {(() => {
-            const cardCounts = { hp_pct: 0, sp_pct: 0, size_eff: {}, race_eff: {}, elem_eff: {}, hp_drain: 0 };
+            const masterSpecs = {
+              inflict: { 'スタン': 0, '凍結': 0, '毒': 0, '暗闇': 0, '睡眠': 0, '沈黙': 0, '呪い': 0, '石化': 0 },
+              resist:  { 'スタン': 0, '凍結': 0, '毒': 0, '暗闇': 0, '睡眠': 0, '沈黙': 0, '呪い': 0, '石化': 0 },
+              size:    { '小型': 0, '中型': 0, '大型': 0 },
+              race:    { '無形': 0, '不死': 0, '動物': 0, '植物': 0, '昆虫': 0, '魚貝': 0, '悪魔': 0, '人間': 0, '天使': 0, '竜族': 0 },
+              elem:    { '無': 0, '水': 0, '地': 0, '火': 0, '風': 0, '毒': 0, '聖': 0, '闇': 0, '念': 0, '不死': 0 },
+              drain_chance: 0,
+              drain_percent: 0
+            };
             
-            // 9部位のカードから特殊倍率・パッシブを全自動で集計
-            Object.values(character.equips || {}).filter(eq => eq && Array.isArray(eq.cards)).flatMap(eq => eq.cards).forEach(card => {
-              const parseAndSum = (type, target, val, typeKey, targetKey, valKey) => {
-                if (card[typeKey] === 'pct_hp_sp') {
-                  if (card[targetKey] === 'hp_pct') cardCounts.hp_pct += (Number(card[valKey]) || 0);
-                  if (card[targetKey] === 'sp_pct') cardCounts.sp_pct += (Number(card[valKey]) || 0);
-                }
-                if (card[typeKey] === 'damage_size' && card[targetKey]) cardCounts.size_eff[card[targetKey]] = (cardCounts.size_eff[card[targetKey]] || 0) + (Number(card[valKey]) || 0);
-                if (card[typeKey] === 'damage_race' && card[targetKey]) cardCounts.race_eff[card[targetKey]] = (cardCounts.race_eff[card[targetKey]] || 0) + (Number(card[valKey]) || 0);
-                if (card[typeKey] === 'damage_element' && card[targetKey]) cardCounts.elem_eff[card[targetKey]] = (cardCounts.elem_eff[card[targetKey]] || 0) + (Number(card[valKey]) || 0);
-                if (card[typeKey] === 'hp_drain') cardCounts.hp_drain += (Number(card[valKey]) || 0);
-              };
-              parseAndSum(card.card_effect_type, card.card_effect_target, card.card_effect_value, 'card_effect_type', 'card_effect_target', 'card_effect_value');
-              parseAndSum(card.card_effect_type_2, card.card_effect_target_2, card.card_effect_value_2, 'card_effect_type_2', 'card_effect_target_2', 'card_effect_value_2');
-              parseAndSum(card.card_effect_type_3, card.card_effect_target_3, card.card_effect_value_3, 'card_effect_type_3', 'card_effect_target_3', 'card_effect_value_3');
-            });
-
-            // 特効テキストの結合
-            let equipmentDrainPercent = 0;
-            Object.values(character.equips || {}).filter(eq => eq && Array.isArray(eq.cards)).flatMap(eq => eq.cards).forEach(card => {
-              const checkDrain = (type, tgt2) => {
-                if (type === 'hp_drain' && String(tgt2).includes('drain_')) {
-                  // 👑 最大値ではなく、見つかった吸収量をすべて足し算（加算）します
-                  equipmentDrainPercent += Number(String(tgt2).replace('drain_', ''));
-                }
-              };
-              checkDrain(card.card_effect_type, card.card_effect_target_2);
-              checkDrain(card.card_effect_type_2, card.card_effect_target_2);
-              checkDrain(card.card_effect_type_3, card.card_effect_target_3);
-            });
-
-            const specialLabels = [
-              cardCounts.hp_pct ? `MHP+${cardCounts.hp_pct}%` : null,
-              cardCounts.sp_pct ? `MSP+${cardCounts.sp_pct}%` : null,
-              ...Object.entries(cardCounts.size_eff).map(([k, v]) => `${k}特効+${v}%`),
-              ...Object.entries(cardCounts.race_eff).map(([k, v]) => `${k}種族+${v}%`),
-              ...Object.entries(cardCounts.elem_eff).map(([k, v]) => `${k}属性+${v}%`),
-              // 累計確率と累計吸収量を美しくドッキング
-              cardCounts.hp_drain ? `HP吸収 [確率:${cardCounts.hp_drain}% / 吸収量:${equipmentDrainPercent}%]` : null
+            const allEquipmentAndCards = [
+              ...Object.values(character.equips || {}),
+              ...(equippedCards || []).map(slotCard => character.allMasterItemsList?.find(m => m.id === slotCard.card_master_id))
             ].filter(Boolean);
 
+            allEquipmentAndCards.forEach(item => {
+              const scanEffect = (type, target, val, target2) => {
+                const v = Number(val) || 0;
+                if (!type || type === 'none') return;
+                
+                if (type === 'inflict_status' && masterSpecs.inflict[target] !== undefined) masterSpecs.inflict[target] += v;
+                if (type === 'resist_status' && masterSpecs.resist[target] !== undefined)  masterSpecs.resist[target] += v;
+                if (type === 'damage_size' && masterSpecs.size[target] !== undefined)      masterSpecs.size[target] += v;
+                if (type === 'damage_race' && masterSpecs.race[target] !== undefined)      masterSpecs.race[target] += v;
+                if (type === 'damage_element' && masterSpecs.elem[target] !== undefined)   masterSpecs.elem[target] += v;
+                
+                if (type === 'hp_drain') {
+                  masterSpecs.drain_chance += v;
+                  const rawTgt = target2 || target || '';
+                  if (String(rawTgt).includes('drain_')) {
+                    masterSpecs.drain_percent += (Number(String(rawTgt).replace('drain_', '')) || 0);
+                  }
+                }
+              };
+              scanEffect(item.card_effect_type, item.card_effect_target, item.card_effect_value, item.card_effect_target_2);
+              scanEffect(item.card_effect_type_2, item.card_effect_target_2, item.card_effect_value_2, item.card_effect_target_2);
+              scanEffect(item.card_effect_type_3, item.card_effect_target_3, item.card_effect_value_3, item.card_effect_target_3);
+            });
+
+            const subSectionStyle = { fontSize: '0.62rem', color: '#887355', borderBottom: '1px solid #1a130b', paddingBottom: '2px', marginTop: '4px', fontWeight: 'bold', display: 'block' };
+            const badgeStyle = (isActive) => ({
+              fontSize: '0.6rem',
+              fontFamily: 'monospace',
+              background: isActive ? '#1e1b4b' : '#090705',
+              color: isActive ? '#ffd700' : '#475569',
+              border: isActive ? '1px solid #4338ca' : '1px solid #1a130b',
+              padding: '2px 5px',
+              borderRadius: '4px',
+              fontWeight: isActive ? 'bold' : 'normal',
+              transition: 'all 0.2s'
+            });
+
             return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '4px' }}>
-                {/* ─── 基本戦闘パラメータグリッド（MDEFを綺麗に追加した全8枠構成） ─── */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '8px' }}>
+                {/* ─── 基本戦闘パラメータグリッド ─── */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', background: 'linear-gradient(180deg, #161109 0%, #0a0704 100%)', padding: '8px', borderRadius: '8px', border: '1px solid #4a341b' }}>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>❤️最大HP</span><strong style={{ ...miniValueStyle, color: '#34d399' }}>{liveMaxHp}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>💙最大SP</span><strong style={{ ...miniValueStyle, color: '#38bdf8' }}>{liveMaxSp}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>⚔️物理ATK</span><strong style={{ ...miniValueStyle, color: '#fff' }}>{ro.atk}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>⚡速度Aspd</span><strong style={{ ...miniValueStyle, color: '#ffd700' }}>{ro.aspd.toFixed(1)}</strong></div>
-                  <div style={{ ...miniGridStyle }}><span style={miniLabelStyle}>🛡️物理DEF</span><strong style={{ ...miniValueStyle, color: '#a78bfa' }}>+{ro.def}</strong></div>
-                  
-                  {/* 🛡️ 🆕 ご要望の「魔法防御力（MDEF）」をビシッとドッキング！ */}
+                  <div style={miniGridStyle}><span style={miniLabelStyle}>🛡️物理DEF</span><strong style={{ ...miniValueStyle, color: '#a78bfa' }}>+{ro.def}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>🔮魔法MDEF</span><strong style={{ ...miniValueStyle, color: '#f472b6' }}>+{ro.mdef}</strong></div>
-                  
                   <div style={miniGridStyle}><span style={miniLabelStyle}>🎯命中Hit</span><strong style={{ ...miniValueStyle, color: '#fbbf24' }}>{ro.hit}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>💨回避Flee</span><strong style={{ ...miniValueStyle, color: '#eee' }}>{ro.flee}</strong></div>
                 </div>
 
-                {/* ─── 🃏 カード特殊パッシブ・倍率累計カウンター（新規追加） ─── */}
-                <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '6px 12px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                  <div style={{ fontSize: '0.58rem', color: '#38bdf8', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    <span>🃏 カード発動中の特殊効果・パッシブカウンター:</span>
+                {/* ─── 全自動固定マトリクスボード ─── */}
+                <div style={{ background: '#070503', border: '1px solid #23190e', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <span style={subSectionStyle}>🎭 状態異常付与確率 ／ 🛡️ 状態異常防御耐性</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px 10px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      {Object.entries(masterSpecs.inflict).map(([status, val]) => (
+                        <div key={'eq-inf-'+status} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.62rem', color: '#64748b' }}>{status}付与:</span>
+                          <span style={badgeStyle(val > 0)}>{val}%</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      {Object.entries(masterSpecs.resist).map(([status, val]) => (
+                        <div key={'eq-res-'+status} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.62rem', color: '#64748b' }}>{status}耐性:</span>
+                          <span style={badgeStyle(val > 0)}>{val}%</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
-                    {specialLabels.map((lbl, sIdx) => (
-                      <span key={sIdx} style={{ fontSize: '0.62rem', background: '#1e1b4b', color: '#ffd700', border: '1px solid #4338ca', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', fontFamily: 'monospace' }}>
-                        {lbl}
-                      </span>
+
+                  <span style={subSectionStyle}>📏 モンスターサイズ特効倍率補正</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                    {Object.entries(masterSpecs.size).map(([k, v]) => <span key={'eq-sz-'+k} style={badgeStyle(v > 0)}>{k}:+{v}%</span>)}
+                  </div>
+
+                  <span style={subSectionStyle}>🧬 モンスター種族特効倍率補正</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '3px 8px' }}>
+                    {Object.entries(masterSpecs.race).map(([k, v]) => (
+                      <div key={'eq-rc-'+k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.62rem', color: '#64748b' }}>{k}特効:</span>
+                        <span style={badgeStyle(v > 0)}>{v}%</span>
+                      </div>
                     ))}
-                    {specialLabels.length === 0 && (
-                      <span style={{ fontSize: '0.6rem', color: '#475569', fontStyle: 'italic' }}>現在、特効や確率系のカード効果は未発動です</span>
-                    )}
+                  </div>
+
+                  <span style={subSectionStyle}>🔥 モンスター属性特効倍率補正</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '3px 8px' }}>
+                    {Object.entries(masterSpecs.elem).map(([k, v]) => (
+                      <div key={'eq-el-'+k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.62rem', color: '#64748b' }}>{k}属性特効:</span>
+                        <span style={badgeStyle(v > 0)}>{v}%</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <span style={subSectionStyle}>🩸 特殊パッシブ：HPドレイン吸血</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.62rem', color: '#64748b' }}>吸血能力:</span>
+                    <span style={badgeStyle(masterSpecs.drain_chance > 0)}>
+                      {masterSpecs.drain_chance > 0 ? `確率: ${masterSpecs.drain_chance}% ／ 吸収: ${masterSpecs.drain_percent}%` : '未発動 (0%)'}
+                    </span>
                   </div>
                 </div>
               </div>

@@ -97,7 +97,7 @@ const AdventureActive = ({
 
           // 🧪 🎰 【新設】カードに宿る状態異常付与（例: 毒 100%）を事前に引き抜く器
           let totalInflictType = null;
-          let totalInflictChance = 0;
+          let maxInflictChance = 0; // 足し算せず、一番高い確率をホールドする器
 
           // 💡 キャラクターが現在身につけている全装備（武器・防具など）をループ
           if (ch.equips && typeof ch.equips === 'object') {
@@ -116,8 +116,11 @@ const AdventureActive = ({
                     }
                   }
                   if (card.card_effect_type === 'inflict_status') {
-                    totalInflictType = card.card_effect_target; // '毒' や 'スタン'
-                    totalInflictChance += Number(card.card_effect_value || 0);
+                    const chkChance = Number(card.card_effect_value || 0);
+                    if (chkChance > maxInflictChance) {
+                      maxInflictChance = chkChance;
+                      totalInflictType = card.card_effect_target; // '毒' や 'スタン'
+                    }
                   }
 
                   // 2つ目の効果枠をチェック
@@ -129,8 +132,11 @@ const AdventureActive = ({
                     }
                   }
                   if (card.card_effect_type_2 === 'inflict_status') {
-                    totalInflictType = card.card_effect_target_2;
-                    totalInflictChance += Number(card.card_effect_value_2 || 0);
+                    const chkChance = Number(card.card_effect_value_2 || 0);
+                    if (chkChance > maxInflictChance) {
+                      maxInflictChance = chkChance;
+                      totalInflictType = card.card_effect_target_2;
+                    }
                   }
 
                   // 3つ目の効果枠をチェック
@@ -142,8 +148,11 @@ const AdventureActive = ({
                     }
                   }
                   if (card.card_effect_type_3 === 'inflict_status') {
-                    totalInflictType = card.card_effect_target_3;
-                    totalInflictChance += Number(card.card_effect_value_3 || 0);
+                    const chkChance = Number(card.card_effect_value_3 || 0);
+                    if (chkChance > maxInflictChance) {
+                      maxInflictChance = chkChance;
+                      totalInflictType = card.card_effect_target_3;
+                    }
                   }
                 });
               }
@@ -160,8 +169,11 @@ const AdventureActive = ({
                 if (String(tgt).includes('drain_')) totalDrainPercent += Number(String(tgt).replace('drain_', ''));
               }
               if (card.card_effect_type === 'inflict_status') {
-                totalInflictType = card.card_effect_target;
-                totalInflictChance += Number(card.card_effect_value || 0);
+                const chkChance = Number(card.card_effect_value || 0);
+                if (chkChance > maxInflictChance) {
+                  maxInflictChance = chkChance;
+                  totalInflictType = card.card_effect_target;
+                }
               }
             });
           }
@@ -194,11 +206,9 @@ const AdventureActive = ({
             hp_drain_chance: totalDrainChance,
             hp_drain_percent: totalDrainPercent,
 
-            // 🧪 【状態異常付与スペックを完全シンクロバインド！】
-            card_inflict_type: totalInflictType,
-            card_inflict_chance: totalInflictChance
-          };
-        });
+card_inflict_type: totalInflictType,
+            card_inflict_chance: maxInflictChance // 👈 ここを「maxInflictChance」にする！
+          };        });
         partyStateRef.current = loadedParty;
         setParty(loadedParty);
 
@@ -318,32 +328,41 @@ const AdventureActive = ({
       if (enemyAtkTimer.current >= enemyInterval && localEnemy.hp > 0) {
         enemyAtkTimer.current = 0;
 
-        // 💤 【状態異常チェック】敵がスタンまたは凍結状態なら行動不能スキップ！
-        if (localEnemy.state?.currentStatus === 'スタン' || localEnemy.state?.currentStatus === '凍結') {
+        const currentStatus = localEnemy.state?.currentStatus || 'none';
+
+        // 💤 🧠 【新設：行動不能デバフ一斉検知センサー】
+        // スタン、凍結、睡眠、石化のいずれかであれば、敵は完全にカカシ化して行動スキップ！
+        const isActionImmobilized = ['スタン', '凍結', '睡眠', '石化'].includes(currentStatus);
+
+        if (isActionImmobilized) {
           newLogs.push({ 
             id: `e-skip-${Date.now()}-${Math.random()}`, 
-            text: `💤 ${localEnemy.name} は【${localEnemy.state.currentStatus}】状態のため行動できない！`, 
+            text: `💤 ${localEnemy.name} は【${currentStatus}】状態のため行動できない！`, 
             type: "system" 
           });
           
-          // ⏳ ターン持続数を1減らし、0になったら綺麗に解除
+          // ⏳ 持続ターン数を1減らし、0になったら綺麗に解除
           const nextTurns = (localEnemy.state.durationTurns || 1) - 1;
           localEnemy.state.durationTurns = nextTurns;
           if (nextTurns <= 0) {
             newLogs.push({ 
               id: `e-clear-${Date.now()}-${Math.random()}`, 
-              text: `✨ ${localEnemy.name} の【${localEnemy.state.currentStatus}】が解除された！`, 
+              text: `✨ ${localEnemy.name} の【${currentStatus}】が解除された！`, 
               type: "system" 
             });
             localEnemy.state.currentStatus = 'none';
           }
         } else {
-          // ⚔️ 【通常行動ルート】状態異常にかかっていない場合のみここを通る
+          // ⚔️ 【通常行動ルート】動ける状態（または暗闇、沈黙、呪いなど）はここを通る
           const aliveMembers = localParty.filter(p => p.hp > 0);
           if (aliveMembers.length > 0) {
             const target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
             const targetIdx = localParty.findIndex(p => p.id === target.id);
-            const isSkill = Math.random() < 0.25;
+            
+            // 🤐 【沈黙効果の干渉】敵が「沈黙」状態なら、スキル（ナパームビート）の確率を強制0%にして通常攻撃に固定！
+            const isSilenced = currentStatus === '沈黙';
+            const isSkill = isSilenced ? false : (Math.random() < 0.25);
+            
             let dmg = 0;
             let logText = "";
 
@@ -352,49 +371,51 @@ const AdventureActive = ({
               localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
               logText = `🔮 ${localEnemy.name} の【ナパームビート】！ ${target.name} に ${dmg} の魔法ダメージ！`;
             } else {
-              const baseAtk = Math.floor(Math.random() * 10) + 10 + localEnemy.str;
-              dmg = Math.max(1, baseAtk - target.vit);
-              localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-              logText = `💥 ${localEnemy.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+              // 💀 【呪い効果の干渉】敵が「呪い」状態なら、STR（腕力）を半分にして物理ダメージを計算！
+              const isCursed = currentStatus === '呪い';
+              const effectiveStr = isCursed ? Math.floor(localEnemy.str * 0.5) : localEnemy.str;
+
+              const baseAtk = Math.floor(Math.random() * 10) + 10 + effectiveStr;
+              
+              // 🕶️ 【暗闇効果の干渉】敵が「暗闇」状態なら、50%の確率で攻撃がスカ（MISS）る！
+              const isBlinded = currentStatus === '暗闇';
+              if (isBlinded && Math.random() < 0.5) {
+                logText = `🕶️ ${localEnemy.name} は暗闇に包まれて攻撃を外した！ ${target.custom_name || target.name} は鮮やかに回避した！`;
+              } else {
+                dmg = Math.max(1, baseAtk - target.vit);
+                localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                logText = `💥 ${localEnemy.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+              }
             }
 
             // 🧪 【毒効果スリップ処理】行動完了時に毒状態なら最大HPの5%削る
-            const wasPoisonedAtTurnStart = localEnemy.state?.currentStatus === '毒';
+            const wasPoisonedAtTurnStart = currentStatus === '毒';
             if (wasPoisonedAtTurnStart) {
               const poisonDmg = Math.floor(localEnemy.mhp * 0.05);
-              localEnemy.hp = Math.max(1, localEnemy.hp - poisonDmg); // 毒では死なない本家仕様
+              localEnemy.hp = Math.max(1, localEnemy.hp - poisonDmg); 
               logText += ` 🧪 [毒効果] ${localEnemy.name} は毒により ${poisonDmg} のスリップダメージ！`;
             }
 
-            // 👑 唯一の正解：ここで今回の攻撃＋毒ダメージの確定ログを「1回だけ」出力！
+            // 👑 唯一のログ出力
             newLogs.push({ id: `e-${Date.now()}-${Math.random()}`, text: logText, type: "battle" });
 
-            // ⏳ ─── ログ出力が終わった「後」で、安全に持続ターン数を消費・解除判定 ───
-            
-            // 毒状態のターン消費処理
-            if (wasPoisonedAtTurnStart) {
+            // ⏳ ─── ログ出力が終わった「後」で、動けるデバフ（毒、暗闇、沈黙、呪い）の持続ターン数を消費・解除判定 ───
+            if (['毒', '暗闇', '沈黙', '呪い'].includes(currentStatus)) {
               const nextTurns = (localEnemy.state.durationTurns || 1) - 1;
               localEnemy.state.durationTurns = nextTurns;
-              
-              // 3回目の毒スリップを食らい終えた「直後」に、綺麗にシステムログが流れます
               if (nextTurns <= 0) {
-                newLogs.push({ id: `e-clear-p-${Date.now()}`, text: `✨ ${localEnemy.name} の【毒】が消えた`, type: "system" });
+                newLogs.push({ 
+                  id: `e-clear-move-${Date.now()}`, 
+                  text: `✨ ${localEnemy.name} の【${currentStatus}】が切れた。`, 
+                  type: "system" 
+                });
                 localEnemy.state.currentStatus = 'none';
               }
             }
 
-            // 暗闇効果のターン消費処理
-            if (localEnemy.state?.currentStatus === '暗闇') {
-              const nextTurns = (localEnemy.state.durationTurns || 1) - 1;
-              localEnemy.state.durationTurns = nextTurns;
-              if (nextTurns <= 0) {
-                newLogs.push({ id: `e-clear-b-${Date.now()}`, text: `✨ ${localEnemy.name} の【暗闇】が晴れた！`, type: "system" });
-                localEnemy.state.currentStatus = 'none';
-              }
-            }
-          }
-        }
-      }
+          } // <-- aliveMembers の閉じ
+        } // <-- 行動不能・通常行動ルートの条件分岐閉じ
+      } // <-- enemyAtkTimerの閉じ
 
       // 👤 プレイヤー（パーティ）側の行動判定ループへ完全に着地
       localParty.forEach((member, idx) => {
@@ -486,8 +507,13 @@ const myStr = member.str || 10;
 
               // 敵の耐性を計算
               const enemyResist = cardInflictType === '毒' ? (localEnemy.resist_poison || 0) : 
-                                  cardInflictType === 'スタン' ? (localEnemy.resist_stun || 0) : 
-                                  cardInflictType === '凍結' ? (localEnemy.resist_freeze || 0) : 0;
+                    cardInflictType === 'スタン' ? (localEnemy.resist_stun || 0) : 
+                    cardInflictType === '凍結' ? (localEnemy.resist_freeze || 0) : 
+                    cardInflictType === '暗闇' ? (localEnemy.resist_blind || 0) :
+                    cardInflictType === '睡眠' ? (localEnemy.vit || 0) :      // 💤 睡眠はVITで抵抗！
+                    cardInflictType === '沈黙' ? (localEnemy.agi || 0) :      // 🤐 沈黙はAGIで抵抗！
+                    cardInflictType === '呪い' ? (localEnemy.luk || 0) :      // 💀 呪いはLUKで抵抗！
+                    cardInflictType === '石化' ? (localEnemy.vit || 0) : 0;   // 🗿 石化はVITで抵抗！
               
               // 👑 三土手ディレクション：手数職を引き締める「最低保証5%」の数理
               const finalApplyChance = Math.max(5, cardInflictChance - enemyResist);
@@ -584,7 +610,7 @@ const myStr = member.str || 10;
               // ──────────────────────────────────────────────────
               
               // 💤 敵がスタンまたは凍結状態なら、VIT（敵の物理防御）を完全にゼロ化して計算！
-              const isEnemyDebuffed = localEnemy.state?.currentStatus === 'スタン' || localEnemy.state?.currentStatus === '凍結';
+              const isEnemyDebuffed = ['スタン', '凍結', '石化'].includes(localEnemy.state?.currentStatus);
               const effectiveEnemyVit = isEnemyDebuffed ? 0 : (localEnemy.vit || 0);
 
               // 🧪 敵が毒状態なら、そこからさらに防御力（VIT）を25%低下させる
@@ -618,8 +644,13 @@ const myStr = member.str || 10;
                 const cardInflictChance = member.card_inflict_chance;
 
                 const enemyResist = cardInflictType === '毒' ? (localEnemy.resist_poison || 0) : 
-                                    cardInflictType === 'スタン' ? (localEnemy.resist_stun || 0) : 
-                                    cardInflictType === '凍結' ? (localEnemy.resist_freeze || 0) : 0;
+                    cardInflictType === 'スタン' ? (localEnemy.resist_stun || 0) : 
+                    cardInflictType === '凍結' ? (localEnemy.resist_freeze || 0) : 
+                    cardInflictType === '暗闇' ? (localEnemy.resist_blind || 0) :
+                    cardInflictType === '睡眠' ? (localEnemy.vit || 0) :      // 💤 睡眠はVITで抵抗！
+                    cardInflictType === '沈黙' ? (localEnemy.agi || 0) :      // 🤐 沈黙はAGIで抵抗！
+                    cardInflictType === '呪い' ? (localEnemy.luk || 0) :      // 💀 呪いはLUKで抵抗！
+                    cardInflictType === '石化' ? (localEnemy.vit || 0) : 0;   // 🗿 石化はVITで抵抗！
                 
                 // 👑 クリティカル不発時の通常ルートも、しっかり「最低保証5%」へ完全バインド！
                 const finalApplyChance = Math.max(5, cardInflictChance - enemyResist);
