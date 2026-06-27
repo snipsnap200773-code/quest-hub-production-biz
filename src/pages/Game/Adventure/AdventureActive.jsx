@@ -31,6 +31,8 @@ const AdventureActive = ({
   const enemyStateRef = useRef(null);
   const partyAtkTimers = useRef({});
   const enemyAtkTimer = useRef(0);
+  // 🔮 🆕 創世神特注：SP自動回復用の時間累積プールタイマーRef（初期値0秒）
+  const spRegenTimer = useRef(0);
   
   const [droppedItems, setDroppedItems] = useState([]);
   const hasAnnouncedATRef = useRef(false);
@@ -319,6 +321,42 @@ card_inflict_type: totalInflictType,
         return;
       }
 
+      // 🔮 🆕 【創世神の呼吸：SP自動自然回復エンジン】
+      // 100ms（0.1秒）ごとにタイマーを一歩進める
+      spRegenTimer.current += 0.1;
+      
+      // 5秒が経過した瞬間、神の息吹がパーティ全員に降り注ぐ
+      if (spRegenTimer.current >= 5.0) {
+        spRegenTimer.current = 0; // タイマーを美しくリセット
+        
+        localParty = localParty.map(member => {
+          // 死亡しているキャラクターは魂が眠っているためスキップ
+          if (member.hp <= 0) return member;
+          
+          // LUKをベースにした数理設計に基づき、回復パーセンテージを算出（最低1%〜）
+          const lukBonusPct = 1 + Math.floor((member.luk || 10) / 10);
+          // 回復量の実数値を計算（小数点以下切り捨て、最低保証値1）
+          const regenAmount = Math.max(1, Math.floor(((member.msp || 50) * lukBonusPct) / 100));
+          
+          // 最大SPを超えないように安全に加算
+          const nextSp = Math.min(member.msp || 50, member.sp + regenAmount);
+          
+          // 回復が発生した場合のみログにそっと表示させたい場合はここで newLogs に push も可能ですが、
+          // 高速バトルログが埋まるのを防ぐため、内部ステータスを静かに書き換えてUIに同期させます。
+          return {
+            ...member,
+            sp: nextSp
+          };
+        });
+      }
+      if (isPartyDead || localEnemy.hp <= 0) {
+        clearInterval(battleTimer);
+        clearInterval(countTimer);
+        setIsBattleOver(true);
+        setIsTimeUp(true);
+        return;
+      }
+
       const enemyInterval = Math.max(1.0, 4.0 - localEnemy.agi * 0.1) * 1000;
       enemyAtkTimer.current += 100;
 
@@ -435,20 +473,48 @@ card_inflict_type: totalInflictType,
           let finalDmg = 0;
           let logText = "";
 
-const myStr = member.str || 10;
+          const myStr = member.str || 10;
           const myDex = member.dex || 10;
           const minAtk = Math.floor(myStr + (myDex * 0.5));
           const maxAtk = Math.floor(myStr * 2.5 + myDex);
           const randomizedAtk = Math.floor(Math.random() * (maxAtk - minAtk + 1)) + minAtk;
 
           // =============================================================
-          // 📊 1. 【数理リフォーム】酒場直結型・最終致命打率ダイス配線
+          // 🧠 👑 【三土手創世神特注：インテリジェント魔法温存＆ボス戦全力AIエンジン】
           // =============================================================
-          // 酒場画面からそのまま引き継いだ103%を基準に判定。100を超えているため確実にtrueを叩き出します。
+          const activeSkills = member.skillsList || [];
+          
+          // 🔮 覚えている有効な攻撃魔法（またはスキル）を1つピックアップ
+          const playableSkill = activeSkills.length > 0 ? activeSkills[Math.floor(Math.random() * activeSkills.length)] : null;
+          const skillSpCost = playableSkill ? Number(playableSkill.sp_cost || 0) : 0;
+
+          // 🪐 現在の戦場の環境・エネミーがBOSSかどうかを検知
+          const isTargetBoss = localEnemy.is_boss === true;
+
+          // 💙 自分のSP割合をリアルタイム算出（分母 liveMaxSp に対する現在値）
+          const currentSpRatio = (member.sp / (member.msp || 50)) * 100;
+
+          // 📐 【新・第1ステップ判定】魔法をブッ放すかどうかのガンビット条件ダイス
+          let shouldLaunchMagic = false;
+
+          if (playableSkill && member.sp >= skillSpCost) {
+            if (isTargetBoss) {
+              // 🔥 ボス戦：SPが消費分さえ残っていれば、50%以下だろうが100%最優先で全力全開詠唱！
+              shouldLaunchMagic = true;
+            } else {
+              // 🍃 道中（雑魚戦）：SPが50%より多い時だけ撃つ！50%以下になったら通常ルートへ逃がして温存！
+              if (currentSpRatio > 50) {
+                shouldLaunchMagic = true;
+              }
+            }
+          }
+
+          // 🎰 【新・第2ステップ判定用のダイス準備】
+          // 魔法不発時、または温存モード時のみ振られる致命打率ダイス
           const finalCriticalRate = member.final_battle_critical > 0 ? member.final_battle_critical : (member.luk || 10);
           const isCritical = Math.random() * 100 < finalCriticalRate;
 
-          // 📊 2. 総合倍率算出用の共通アタックスペック準備
+          // 📊 総合倍率算出用の共通アタックスペック準備
           const cardSize = member.cardSizeEff || {};
           const cardRace = member.cardRaceEff || {};
           const cardElem = member.cardElemEff || {};
@@ -470,27 +536,70 @@ const myStr = member.str || 10;
           const defenderSpecs = { element: localEnemy.element, race: localEnemy.race, size: localEnemy.size };
           const totalMultiplier = calculateDamageModifier(attackSpecs, defenderSpecs);
 
-          // =============================================================
-          // ⚔️ 3. 新・条件分岐配線（クリティカルが100%超なら常時確定ルート）
-          // =============================================================
-          if (isCritical) {
-            // 💥💥 最優先：CRITICAL HIT!! 確定ルート（スキル判定を完全蹂増）
+          // ─────────────────────────────────────────────────────────────
+          // ⚡⚡ 【作戦行動ツリーへの着地分岐】
+          // ─────────────────────────────────────────────────────────────
+          if (shouldLaunchMagic) {
+            // =============================================================
+            // ✨ 【新・第1ステップ確定ルート】神の詠唱ファイヤーボルト！
+            // =============================================================
+            // 💙 使用した分のSPを肉体から確実に引き算
+            member.sp = Math.max(0, member.sp - skillSpCost);
+
+            const baseValue = Number(playableSkill.effect_value || 0);
+            let calculatedPower = baseValue;
+            if (playableSkill.value_type === 'percent') {
+              calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+            }
+
+            const skillSpecs = {
+              ...attackSpecs,
+              element: playableSkill.element || '無',
+              is_physical: playableSkill.skill_type === 'art'
+            };
+            const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
+
+            // 🔮 魔法ダメージ決着
+            finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
+            localEnemy.hp = Math.max(0, localEnemy.hp - finalDmg);
+
+            // ボス戦か道中かでログの枕詞を豪華に変更
+            const bossModeMsg = isTargetBoss ? `🔥[BOSS決戦・限界突破!!] ` : `🔮`;
+            logText = `${bossModeMsg}${member.name} 【${playableSkill.name}】！ ${localEnemy.name} に ${finalDmg} の魔法ダメージ！(残SP: ${member.sp})`;
+
+            // 🎰 【魔法ヒット時の追加効果判定】
+            if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && localEnemy.hp > 0) {
+              const baseChance = Number(playableSkill.effect_chance || 0);
+              let enemyResistPct = 0;
+              if (playableSkill.effect_type === 'スタン')  enemyResistPct = localEnemy.resist_stun || 0;
+              if (playableSkill.effect_type === '凍結')  enemyResistPct = localEnemy.resist_freeze || 0;
+              if (playableSkill.effect_type === '毒')    enemyResistPct = localEnemy.resist_poison || 0;
+              if (playableSkill.effect_type === '暗闇')  enemyResistPct = localEnemy.resist_blind || 0;
+
+              const finalInflictChance = Math.max(0, baseChance - enemyResistPct);
+              if (Math.random() * 100 < finalInflictChance) {
+                const turns = Number(playableSkill.duration_turns || 3);
+                localEnemy.state = { currentStatus: playableSkill.effect_type, durationTurns: turns };
+                logText += ` ✨ [追加効果] ${localEnemy.name} を【${playableSkill.effect_type}】状態にした！(${turns}ターン)`;
+              }
+            }
+
+          } else if (isCritical) {
+            // =============================================================
+            // 💥💥 【新・第2ステップルート】魔法不発、または温存時の確定致命打
+            // =============================================================
             finalDmg = Math.floor(maxAtk * totalMultiplier);
             if (finalDmg < 1) finalDmg = 1;
-
             localEnemy.hp = Math.max(0, localEnemy.hp - finalDmg);
+
+            const saveMsg = (playableSkill && currentSpRatio <= 50 && !isTargetBoss) ? `🪶[SP温存モード] ` : ``;
+            logText = `💥💥 ${saveMsg}CRITICAL HIT!! ${member.name} が急所を貫いた！ [敵防無視/威力MAX] ➔ ${localEnemy.name} に ${finalDmg} の致命物理ダメージ！`;
             
-            // ─── 🔮 創世神特注：明確な「与えた！回復した！」直撃構文リフォーム ───
-            logText = `💥💥 CRITICAL HIT!! ${member.name} が急所を貫いた！ [敵防無視/威力MAX/確率:${finalCriticalRate}%] ➔ ${localEnemy.name} に ${finalDmg} の致命物理ダメージを与えた！`;
-            
-            // 🩸 【HP吸収判定ダイス】
             if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance) {
               const drainPct = Number(member.hp_drain_percent || 0);
               if (drainPct > 0) {
                 const healAmount = Math.floor((finalDmg * drainPct) / 100);
-                member.hp = Math.min(member.mhp, member.hp + healAmount); // MHPを超えないように回復
-                
-                // ➔ ご要望通りのログ構文を直撃バインド！
+                member.hp = Math.min(member.mhp, member.hp + healAmount);
                 logText += ` 🩸 ${healAmount} 回復した！！ (残HP: ${localEnemy.hp})`;
               } else {
                 logText += ` (残HP: ${localEnemy.hp})`;
@@ -499,23 +608,20 @@ const myStr = member.str || 10;
               logText += ` (残HP: ${localEnemy.hp})`;
             }
 
-            // 🧪 🎰 👑 【新設：クリティカルヒット時・1%状態異常付与ガチャの同期配線】
-            // クリティカルで殴った際にも、重複防止安全弁を効かせつつ、最低1%の確率で毒を叩き込みます！
+            // 🧪 🎰 👑 【クリティカルヒット時・状態異常付与ガチャの最低保証配線】
             if (localEnemy.hp > 0 && member.card_inflict_type && member.card_inflict_chance > 0 && localEnemy.state?.currentStatus !== member.card_inflict_type) {
               const cardInflictType = member.card_inflict_type;
               const cardInflictChance = member.card_inflict_chance;
 
-              // 敵の耐性を計算
               const enemyResist = cardInflictType === '毒' ? (localEnemy.resist_poison || 0) : 
-                    cardInflictType === 'スタン' ? (localEnemy.resist_stun || 0) : 
-                    cardInflictType === '凍結' ? (localEnemy.resist_freeze || 0) : 
-                    cardInflictType === '暗闇' ? (localEnemy.resist_blind || 0) :
-                    cardInflictType === '睡眠' ? (localEnemy.vit || 0) :      // 💤 睡眠はVITで抵抗！
-                    cardInflictType === '沈黙' ? (localEnemy.agi || 0) :      // 🤐 沈黙はAGIで抵抗！
-                    cardInflictType === '呪い' ? (localEnemy.luk || 0) :      // 💀 呪いはLUKで抵抗！
-                    cardInflictType === '石化' ? (localEnemy.vit || 0) : 0;   // 🗿 石化はVITで抵抗！
+                                  cardInflictType === 'スタン' ? (localEnemy.resist_stun || 0) : 
+                                  cardInflictType === '凍結' ? (localEnemy.resist_freeze || 0) : 
+                                  cardInflictType === '暗闇' ? (localEnemy.resist_blind || 0) :
+                                  cardInflictType === '睡眠' ? (localEnemy.vit || 0) : 
+                                  cardInflictType === '沈黙' ? (localEnemy.agi || 0) : 
+                                  cardInflictType === '呪い' ? (localEnemy.luk || 0) : 
+                                  cardInflictType === '石化' ? (localEnemy.vit || 0) : 0;
               
-              // 👑 三土手ディレクション：手数職を引き締める「最低保証5%」の数理
               const finalApplyChance = Math.max(5, cardInflictChance - enemyResist);
 
               if (Math.random() * 100 < finalApplyChance) {
@@ -524,7 +630,6 @@ const myStr = member.str || 10;
                   currentStatus: cardInflictType,
                   durationTurns: 3
                 };
-                // クリティカルログの文末に、美しく追加効果テキストをマージ！
                 logText += ` ✨ [追加効果] ${localEnemy.name} を【${cardInflictType}】状態にした！！`;
               }
             }
@@ -690,9 +795,13 @@ const myStr = member.str || 10;
         setEnemy(localEnemy);
         
         setDisplayedLogs(prev => {
+          // 今回発生した新しいログを後ろに結合
           const combined = [...prev, ...newLogs];
-          if (localEnemy.hp > 0 && localParty.some(p => p.hp > 0)) {
-            return combined.slice(-30);
+          
+          // 👑 三土手神リフォーム：-30件の超圧縮を廃止！
+          // バトル開始からアディショナルタイムまでの歴史を最大500件までたっぷりホールド！
+          if (combined.length > 500) {
+            return combined.slice(-500); // 500件を超えた時だけ古いものを綺麗に押し出す
           }
           return combined;
         });
@@ -812,19 +921,43 @@ const myStr = member.str || 10;
         gridTemplateColumns: `repeat(${party.length}, 1fr)`, 
         gap: '4px', padding: '10px 6px', background: '#0b0f19'
       }}>
-        {party.map(member => (
-          <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '4px', padding: '4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.6rem', fontWeight: 'bold', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {member.name.replace('テスト', '')}
+        {party.map(member => {
+          // リアルタイムに変動するSPの安全な割合を算出（メンバー毎に独立計算）
+          const mspValue = member.msp || 50;
+          const spPercent = Math.min(100, Math.max(0, (member.sp / mspValue) * 100));
+
+          return (
+            <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '6px', padding: '6px 4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center' }}>
+              {/* キャラクター名 */}
+              <div style={{ fontSize: '0.62rem', fontWeight: 'bold', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {member.name.replace('テスト', '')}
+              </div>
+              
+              {/* ❤️ HP数値 */}
+              <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#34d399', marginTop: '3px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
+                <span style={{ fontWeight: 'bold' }}>HP:</span>
+                <span>{member.hp}/{member.mhp}</span>
+              </div>
+              {/* ❤️ HPゲージ */}
+              <div style={{ height: '4px', background: '#451a1a', borderRadius: '2px', marginTop: '1px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${(member.hp / member.mhp) * 100}%`, background: '#ef4444', transition: '0.1s' }}></div>
+              </div>
+
+              {/* 💙 リアルタイム魔力（SP）ステータス数値（HPと同じ両端flex配線に矯正！） */}
+              <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#38bdf8', marginTop: '4px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
+                <span style={{ color: '#887355', fontWeight: 'bold' }}>SP:</span>
+                <span style={{ fontWeight: 'bold' }}>{member.sp}/{mspValue}</span>
+              </div>
+              {/* 💙 高級感のあるミニSPプログレスバー */}
+              <div style={{ width: '100%', height: '3px', background: '#0d0905', borderRadius: '1.5px', overflow: 'hidden', border: '1px solid #23190e', marginTop: '1px' }}>
+                <div style={{ width: `${spPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)', transition: 'width 0.2s ease' }}></div>
+              </div>
             </div>
-            <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#94a3b8', marginTop: '2px' }}>{member.hp}/{member.mhp}</div>
-            <div style={{ height: '3px', background: '#451a1a', borderRadius: '1.5px', marginTop: '3px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${(member.hp / member.mhp) * 100}%`, background: '#ef4444', transition: '0.1s' }}></div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
+      {/* 🎁 戦闘終了時のみポップアップするリザルトモーダル */}
       <QuestResultModal isOpen={showResult} droppedItems={droppedItems} onClose={onReturn} />
     </div>
   );
