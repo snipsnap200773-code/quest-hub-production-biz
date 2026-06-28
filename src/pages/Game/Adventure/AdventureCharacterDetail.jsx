@@ -451,6 +451,23 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
                 {ro.atk} {cardAtkBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardAtkBonus})</span>}
               </span>
             </div>
+
+            {/* 🔮 🆕 【魔法攻撃力 (Matk) インテリジェント配線】 */}
+            {(() => {
+              const liveInt = (character.meta?.stat_int || 1) + localBonuses.int + (ro?.cardStats?.int || 0);
+              const liveDex = (character.meta?.stat_dex || 1) + localBonuses.dex + (ro?.cardStats?.dex || 0);
+              const minMatk = Math.floor(liveInt + (liveDex * 0.2));
+              const maxMatk = Math.floor(liveInt * 2.0 + liveDex);
+              return (
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+                  <span style={{ color: '#38bdf8' }}>魔力 (Matk)</span>
+                  <span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                    {minMatk} 〜 {maxMatk}
+                  </span>
+                </div>
+              );
+            })()}
+
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#34d399' }}>防御力 (Def)</span>
               <span style={{ color: '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>
@@ -750,10 +767,22 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '8px' }}>
                 {/* ─── 基本戦闘パラメータグリッド ─── */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', background: 'linear-gradient(180deg, #161109 0%, #0a0704 100%)', padding: '8px', borderRadius: '8px', border: '1px solid #4a341b' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '5px', background: 'linear-gradient(180deg, #161109 0%, #0a0704 100%)', padding: '8px', borderRadius: '8px', border: '1px solid #4a341b' }}>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>❤️最大HP</span><strong style={{ ...miniValueStyle, color: '#34d399' }}>{liveMaxHp}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>💙最大SP</span><strong style={{ ...miniValueStyle, color: '#38bdf8' }}>{liveMaxSp}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>⚔️物理ATK</span><strong style={{ ...miniValueStyle, color: '#fff' }}>{ro.atk}</strong></div>
+                  
+                  {/* 🔮 🆕 装備変更の上部にも、魔力ダイス幅（例: 42-90）をコンパクトに並列マウント！ */}
+                  {(() => {
+                    const lInt = (character.meta?.stat_int || 1) + localBonuses.int + (ro?.cardStats?.int || 0);
+                    const lDex = (character.meta?.stat_dex || 1) + localBonuses.dex + (ro?.cardStats?.dex || 0);
+                    const miM = Math.floor(lInt + (lDex * 0.2));
+                    const maM = Math.floor(lInt * 2.0 + lDex);
+                    return (
+                      <div style={miniGridStyle}><span style={{ ...miniLabelStyle, color: '#38bdf8' }}>🔮魔法MATK</span><strong style={{ ...miniValueStyle, color: '#38bdf8', fontSize: '0.62rem' }}>{miM}-{maM}</strong></div>
+                    );
+                  })()}
+
                   <div style={miniGridStyle}><span style={miniLabelStyle}>⚡速度Aspd</span><strong style={{ ...miniValueStyle, color: '#ffd700' }}>{ro.aspd.toFixed(1)}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>🛡️物理DEF</span><strong style={{ ...miniValueStyle, color: '#a78bfa' }}>+{ro.def}</strong></div>
                   <div style={miniGridStyle}><span style={miniLabelStyle}>🔮魔法MDEF</span><strong style={{ ...miniValueStyle, color: '#f472b6' }}>+{ro.mdef}</strong></div>
