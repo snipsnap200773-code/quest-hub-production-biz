@@ -621,7 +621,12 @@ card_inflict_type: totalInflictType,
                 const specDefender = { element: enemyItem.element, race: enemyItem.race, size: enemyItem.size };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, specDefender);
 
-                const aoeDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
+                // 🔮 【三土手神リフォーム】敵モンスターのINT（魔法防御力）を算出
+                const enemyMdef = enemyItem.int || enemyItem.stat_int || 0;
+
+                // 💡 算出した魔法ダメージから、敵のMdefをしっかり引き算（最低保証1）！
+                const aoeDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier) - enemyMdef);
+                
                 const nextHp = Math.max(0, enemyItem.hp - aoeDmg);
 
                 let aoeLog = `  ➔ 💥 ${enemyItem.name} に ${aoeDmg} の全体魔法ダメージ！`;
