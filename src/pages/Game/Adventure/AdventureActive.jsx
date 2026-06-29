@@ -16,14 +16,20 @@ const AdventureActive = ({
 }) => {
   const scrollRef = useRef(null);
 
-  const [timeLeft, setTimeLeft] = useState(30);
-  const [isTimeUp, setIsTimeUp] = useState(false);
+  // 🧹 タイム関連（timeLeft, isTimeUp）のStateを綺麗に撤去！
   const [isBattleOver, setIsBattleOver] = useState(false);
   const [showResult, setShowResult] = useState(false);
 
   const [party, setParty] = useState([]); 
   // 😈 単数から複数エネミー用の配列状態へ拡張
   const [enemies, setEnemies] = useState([]); 
+
+  // 🧭 🆕 【三土手ローグライク特注：多層階層ダンジョン進行管理インフラ】
+  const [currentFloor, setCurrentFloor] = useState(1); // 現在の滞在階層 (初期値: 1階)
+  const [remainingBattles, setRemainingBattles] = useState(0); // その階層での残り必要戦闘数
+  const remainingBattlesRef = useRef(0); // ⏱️ 🆕 【超重要】非同期ラグに絶対に負けない内部戦数カウンターRef！
+  const [adventureStatus, setAdventureStatus] = useState('battling');
+  const [accumulatedRewards, setAccumulatedRewards] = useState({ exp: 0, gold: 0 }); // 帰還時に持ち帰れる一時報酬プール 
   const [displayedLogs, setDisplayedLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentQuestState, setCurrentQuestState] = useState(null);
@@ -37,7 +43,7 @@ const AdventureActive = ({
   const spRegenTimer = useRef(0);
   
   const [droppedItems, setDroppedItems] = useState([]);
-  const hasAnnouncedATRef = useRef(false);
+  // 🧹 アディショナルタイム告知フラグ（hasAnnouncedATRef）を撤去！
   
   // 🔮 🆕 セーブ中表示用のローカル状態を増築
   const [isSaving, setIsSaving] = useState(false);
@@ -193,7 +199,7 @@ const AdventureActive = ({
             str: ch.roStatus?.str || ch.str || 10,
             agi: ch.roStatus?.agi || ch.agi || (ch.meta?.stat_agi || 10) + (ch.bonus?.agi || 0),
             vit: ch.roStatus?.vit || ch.vit || (ch.meta?.stat_vit || 10) + (ch.bonus?.vit || 0),
-            dex: ch.roStatus?.dex || ch.dex || (ch.meta?.stat_dex || 10) + (ch.bonus?.vit || 0),
+            dex: ch.roStatus?.dex || ch.dex || (ch.meta?.stat_dex || 10) + (ch.bonus?.dex || 0), // 💡タイポ修正
             luk: ch.roStatus?.luk || ch.luk || 10,
             job: myJob,
             weaponSubtype,
@@ -210,8 +216,17 @@ const AdventureActive = ({
             hp_drain_chance: totalDrainChance,
             hp_drain_percent: totalDrainPercent,
 
-card_inflict_type: totalInflictType,
-            card_inflict_chance: maxInflictChance // 👈 ここを「maxInflictChance」にする！
+            card_inflict_type: totalInflictType,
+            card_inflict_chance: maxInflictChance,
+
+            // 🔮 🆕 【三土手創世神特注：戦闘パラメータ一斉召喚配線】
+            // これにより、後ろの回避判定で target.roStatus.flee (236) が100%読み込めるようになります！
+            roStatus: ch.roStatus || {},
+            flee: ch.roStatus?.flee || 0,
+            hit: ch.roStatus?.hit || 0,
+            mdef: ch.roStatus?.mdef || 0,
+            // 🔮 【追記】酒場で育った本物のAspd（190.0）を戦闘素体へ確実にマウント！
+            aspd: ch.roStatus?.aspd || 150.0 
           };        });
         partyStateRef.current = loadedParty;
         setParty(loadedParty);
@@ -239,51 +254,86 @@ card_inflict_type: totalInflictType,
           console.error("エネミーデータ一括取得エラー:", enemyError);
         }
 
-        // 敵データ配列の初期化と instanceId マッピング
+        // 🛠️ 🆕 【三土手神特注：B1階層コンフィグ連動型ごちゃ混ぜランダム生成エンジン】
+        // クエストデータから現在の階層（まずは1階）のコンフィグをサルベージ
+        const fConfigs = activeQuestData?.floor_configs || [];
+        const currentFloorCfg = fConfigs.find(f => f.floor === 1) || { 
+          battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: enemyIds 
+        };
+
+        // 初期必要戦闘回数をStateに同期
+        setRemainingBattles(currentFloorCfg.battle_count);
+        // 🛠️ 🆕 内部メモリRef側にも、最初の突入時だけダッシュボードの設定数を記憶させる配線を結合！
+        remainingBattlesRef.current = currentFloorCfg.battle_count;
+
+        // 有効な登録モンスターの素材プールを構築
+        const activePoolEnemyIds = (currentFloorCfg.enemy_ids || enemyIds).filter(Boolean);
+        const validEnemyPool = activePoolEnemyIds.map(id => dbEnemies?.find(e => e.id === id)).filter(Boolean);
+
         let loadedEnemies = [];
-        enemyIds.forEach((targetId, index) => {
-          const dbEnemy = dbEnemies?.find(e => e.id === targetId);
-          const isBaphometTarget = String(targetId).toLowerCase().includes('baphomet');
+        
+        if (validEnemyPool.length > 0) {
+          // コンフィグで設定された最小〜最大出現数の間で今回の出現数をダイス決定！
+          const minS = Number(currentFloorCfg.min_spawn || 1);
+          const maxS = Number(currentFloorCfg.max_spawn || 2);
+          const spawnCount = Math.floor(Math.random() * (maxS - minS + 1)) + minS;
 
-          const finalName = dbEnemy?.name || (isBaphometTarget ? "バフォメットJr" : "テストポリンJr");
-          const finalHp = dbEnemy?.hp || dbEnemy?.base_hp || dbEnemy?.max_hp || (isBaphometTarget ? 1800 : 2500);
-          const finalStr = dbEnemy?.str || dbEnemy?.stat_str || (isBaphometTarget ? 35 : 10);
-          const finalAgi = dbEnemy?.agi || dbEnemy?.stat_agi || (isBaphometTarget ? 25 : 15);
-          const finalVit = dbEnemy?.vit || dbEnemy?.stat_vit || (isBaphometTarget ? 10 : 30);
-          const finalSize = dbEnemy?.size || (isBaphometTarget ? '中型' : '小型');
-          const finalRace = dbEnemy?.race || (isBaphometTarget ? '悪魔' : '無形');
-          const finalElement = dbEnemy?.element || (isBaphometTarget ? '闇' : '水');
+          // 出現数ぶんプールからごちゃ混ぜチョイス
+          for (let i = 0; i < spawnCount; i++) {
+            const randomIndex = Math.floor(Math.random() * validEnemyPool.length);
+            const dbEnemy = validEnemyPool[randomIndex];
+            const targetId = dbEnemy.id;
 
-          const instanceId = `${targetId}_slot_${index}_${Date.now()}`;
+            const isBaphometTarget = String(targetId).toLowerCase().includes('baphomet');
+            const finalName = dbEnemy?.name || (isBaphometTarget ? "バフォメットJr" : "テストポリンJr");
+            const finalHp = dbEnemy?.hp || dbEnemy?.base_hp || dbEnemy?.max_hp || (isBaphometTarget ? 1800 : 2500);
+            const finalStr = dbEnemy?.str || dbEnemy?.stat_str || (isBaphometTarget ? 35 : 10);
+            const finalAgi = dbEnemy?.agi || dbEnemy?.stat_agi || (isBaphometTarget ? 25 : 15);
+            const finalVit = dbEnemy?.vit || dbEnemy?.stat_vit || (isBaphometTarget ? 10 : 30);
+            const finalSize = dbEnemy?.size || (isBaphometTarget ? '中型' : '小型');
+            const finalRace = dbEnemy?.race || (isBaphometTarget ? '悪魔' : '無形');
+            const finalElement = dbEnemy?.element || (isBaphometTarget ? '闇' : '水');
 
+            const instanceId = `${targetId}_spawn_${i}_${Date.now()}`;
+
+            loadedEnemies.push({
+              instanceId,
+              id: targetId,
+              name: `${finalName} ${String.fromCharCode(65 + i)}`, // 💡 A, B, Cを付与して識別化
+              mhp: finalHp,
+              hp: finalHp,
+              str: finalStr,
+              agi: finalAgi, 
+              vit: finalVit,
+              size: finalSize,
+              race: finalRace,
+              element: finalElement,
+              exp: Number(activeQuestData?.exp_reward || 50),
+              gold: Number(activeQuestData?.zeny_reward || 1000),
+              state: { currentStatus: 'なし', durationTurns: 0 },
+              resist_stun: Number(dbEnemy?.resist_stun || 0),
+              resist_freeze: Number(dbEnemy?.resist_freeze || 0),
+              resist_poison: Number(dbEnemy?.resist_poison || 0),
+              resist_blind: Number(dbEnemy?.resist_blind || 0),
+              int: dbEnemy?.int || dbEnemy?.stat_int || 10,
+              hit: dbEnemy?.hit || 21,
+              enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null
+            });
+          }
+        } else {
+          // プールが空の時のセーフティフォールバック（テストポリン単騎召喚）
           loadedEnemies.push({
-            instanceId,
-            id: targetId,
-            name: finalName,
-            mhp: finalHp,
-            hp: finalHp,
-            str: finalStr,
-            agi: finalAgi, 
-            vit: finalVit,
-            size: finalSize,
-            race: finalRace,
-            element: finalElement,
-            exp: Number(activeQuestData?.exp_reward || 50),
-            gold: Number(activeQuestData?.zeny_reward || 1000),
-            state: { currentStatus: 'なし', durationTurns: 0 },
-            resist_stun: Number(dbEnemy?.resist_stun || 0),
-            resist_freeze: Number(dbEnemy?.resist_freeze || 0),
-            resist_poison: Number(dbEnemy?.resist_poison || 0),
-            resist_blind: Number(dbEnemy?.resist_blind || 0)
+            instanceId: `fallback_${Date.now()}`, id: 'test_porin_junior', name: 'テストポリンJr A',
+            mhp: 2000, hp: 2000, str: 10, agi: 15, vit: 30, size: '小型', race: '無形', element: '水',
+            exp: 50, gold: 1000, state: { currentStatus: 'なし', durationTurns: 0 }
           });
-        });
+        }
 
-        // 👿 単数Ref・Stateを粉砕し、上位の配列バッファへ完全マウント！
         enemiesStateRef.current = loadedEnemies;
         setEnemies(loadedEnemies);
 
         setDisplayedLogs([
-          { id: 'start', text: `⚔️ 【${activeQuestData?.name || '未知の領域'}】突入：全エネミー一斉交戦開始！`, type: "system" }
+          { id: 'start', text: `⚔️ 【${activeQuestData?.name || '未知の領域'}】B1階 突入：全エネミー一斉交戦開始！`, type: "system" }
         ]);
       } else {
         setDisplayedLogs([{ id: 'err', text: "酒場に冒険者がいません。編成を確認してください。", type: "system" }]);
@@ -292,57 +342,64 @@ card_inflict_type: totalInflictType,
     };
 
     initAdventure();
-  }, [partyCharacterIds, quest, activeQuest, selectedQuest]);
+  }, []);
 
   // 2. 🧠 超軽量・高速カウント保証型戦闘ループ（※この間は通信回数完全に「0」！）
   useEffect(() => {
     if (loading || party.length === 0 || enemies.length === 0 || isBattleOver) return;
 
-    const countTimer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(countTimer);
-          const hasAliveEnemy = enemiesStateRef.current && enemiesStateRef.current.some(e => e.hp > 0);
-          const hasAlivePlayer = partyStateRef.current && partyStateRef.current.some(p => p.hp > 0);
+    // 🔮 🆕 20msのスキャンから1秒（1000ms）を正確に計測するための内部プール変数
+    let msCounter = 0;
 
-          if (hasAliveEnemy && hasAlivePlayer) {
-            if (!hasAnnouncedATRef.current) {
-              hasAnnouncedATRef.current = true;
-              setDisplayedLogs(logs => [
-                ...logs, 
-                { id: `timeup-sec-${Date.now()}`, text: `⏰ 制限時間到達！アディショナルタイム突入`, type: "system" }
-              ]);
-            }
-          } else {
-            setIsTimeUp(true);
-            setIsBattleOver(true);
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
+    // 🔮 【三土手神リフォーム：タイムスケール超精密高解像度エンジン】
+    // 100msのデジタル大雑把処理を粉砕し、20ms（0.02秒）刻みの超精密スキャンへ換装！
     const battleTimer = setInterval(() => {
       let localParty = [...partyStateRef.current];
-      // 👿 旧タイマン仕様の単体オブジェクトを完全粉砕！複数敵配列をメモリバッファから直撃コピー
       let localEnemies = [...enemiesStateRef.current];
 
       const isPartyDead = localParty.every(p => p.hp <= 0);
       const isAllEnemiesDead = localEnemies.every(e => e.hp <= 0);
 
-      // 🪐 パーティが全滅するか、あるいは「すべての敵」のHPが0以下になったらタイマーを最速停止！
-      if (isPartyDead || isAllEnemiesDead) {
+      // 💀 1. 味方が全滅した場合（ハクスラ全滅リスク発動）
+      if (isPartyDead) {
         clearInterval(battleTimer);
-        clearInterval(countTimer);
         setIsBattleOver(true);
-        setIsTimeUp(true);
+        setAdventureStatus('game_over'); // 状態を全滅敗北へ
+        setAccumulatedRewards({ exp: 0, gold: 0 }); // 🚨 それまで獲得した報酬をすべて没収してゼロ化！
+        setDroppedItems([]); // アイテムも無し
+        setDisplayedLogs(prev => [...prev, { id: `lost-${Date.now()}`, text: `💀 警告：全部隊が全滅しました。ベースキャンプへ強制送還されます。獲得したアイテムやEXPはすべて失われました...`, type: "system" }]);
         return;
       }
 
-      // 🔮 🆕 【創世神の呼吸：SP自動自然回復エンジン】
-      // 100ms（0.1秒）ごとにタイマーを一歩進める
-      spRegenTimer.current += 0.1;
+      // 🏆 2. クエスト内のエネミーを全滅させた場合
+      if (isAllEnemiesDead) {
+        clearInterval(battleTimer);
+        
+        // 報酬プールへの合算計算
+        const floorExp = localEnemies.reduce((sum, e) => sum + (e.exp || 0), 0);
+        const floorGold = localEnemies.reduce((sum, e) => sum + (e.gold || 0), 0);
+        setAccumulatedRewards(prev => ({ exp: prev.exp + floorExp, gold: prev.gold + floorGold }));
+
+        // 🛠️ 🆕 StateのタイムラグをRefで完全回避！その場で引き算を決着させる！
+        const nextCount = Math.max(0, remainingBattlesRef.current - 1);
+        remainingBattlesRef.current = nextCount;
+        setRemainingBattles(nextCount); // 画面の「表示数」を更新
+
+        if (nextCount <= 0) {
+          // 残り戦数が0になった ➔ 完璧なタイミングで「階層制圧完了・B2へ進む」のボタンが出現！
+          setAdventureStatus('floor_cleared');
+        } else {
+          // まだ残り回数（2回、1回）が残っている ➔ 索敵続行（探索を続ける）ボタンを点灯！
+          setAdventureStatus('battling');
+          setIsBattleOver(true);
+        }
+        return;
+      }
+
+      // 🧹 タイムカウントダウン（msCounter）の処理ブロックを丸ごと完全撤去！
+
+      // 🔮 SP自然回復用のタイマーも 0.125 秒ではなく 0.02 秒ずつ精密に加算
+      spRegenTimer.current += 0.02;
       
       // 5秒が経過した瞬間、神の息吹がパーティ全員に降り注ぐ
       if (spRegenTimer.current >= 5.0) {
@@ -380,11 +437,18 @@ card_inflict_type: totalInflictType,
       localEnemies = localEnemies.map((enemyItem) => {
         if (enemyItem.hp <= 0) return enemyItem; // 撃破済みのエネミーは行動をスキップ
 
-        // 個体のAGIに基づく個別独立インターバル計算
-        const enemyInterval = Math.max(1.0, 4.0 - enemyItem.agi * 0.1) * 1000;
+        // 🔮 【三土手神リフォーム：敵専用・個別上書き対応型本家RO式ディレイ換算】
+        // データベースから取得した enemy_aspd が存在すればそれを採用、空っぽなら基本値 150.0 をロード！
+        const currentEnemyAspd = enemyItem.enemy_aspd !== null && enemyItem.enemy_aspd !== undefined 
+          ? Number(enemyItem.enemy_aspd) 
+          : 150.0;
+        
+        // 本家RO公式: (200 - Aspd) / 50 × 1000ms
+        // Aspd 193ならピッタリ「140ms（0.14秒）」になり、20ms刻みの時間軸を最速で駆け抜けます！
+        const enemyInterval = ((200 - currentEnemyAspd) / 50) * 1000;
         
         // 固有インスタンスIDキーでタイマーを進める
-        enemiesAtkTimers.current[enemyItem.instanceId] = (enemiesAtkTimers.current[enemyItem.instanceId] || 0) + 100;
+        enemiesAtkTimers.current[enemyItem.instanceId] = (enemiesAtkTimers.current[enemyItem.instanceId] || 0) + 20;
 
         if (enemiesAtkTimers.current[enemyItem.instanceId] >= enemyInterval) {
           enemiesAtkTimers.current[enemyItem.instanceId] = 0;
@@ -422,28 +486,43 @@ card_inflict_type: totalInflictType,
               const targetIdx = localParty.findIndex(p => p.id === target.id);
               
               // 🤐 【沈黙効果の干渉】敵が「沈黙」状態なら、スキル（ナパームビート）の確率を強制0%にして通常攻撃に固定！
-              const isSilenced = currentStatus === '沈黙';
-              const isSkill = isSilenced ? false : (Math.random() < 0.25);
-              
+              // 🔮 【三土手神お掃除完了】ナパームビートのベタ書きテスト配線を完全撤去！
               let dmg = 0;
               let logText = "";
 
-              if (isSkill) {
-                dmg = Math.floor(10 + enemyItem.str * 1.5);
-                localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                logText = `🔮 ${enemyItem.name} の【ナパームビート】！ ${target.name} に ${dmg} の魔法ダメージ！`;
-              } else {
-                // 💀 【呪い効果の干渉】敵が「呪い」状態なら、STR（腕力）を半分にして物理ダメージを計算！
-                const isCursed = currentStatus === '呪い';
-                const effectiveStr = isCursed ? Math.floor(enemyItem.str * 0.5) : enemyItem.str;
+              // 💀 【呪い効果の干渉】敵が「呪い」状態なら、STR（腕力）を半分にして物理ダメージを計算！
+              const isCursed = currentStatus === '呪い';
+              const effectiveStr = isCursed ? Math.floor(enemyItem.str * 0.5) : enemyItem.str;
 
-                const baseAtk = Math.floor(Math.random() * 10) + 10 + effectiveStr;
-                
-                // 🕶️ 【暗闇効果の干渉】敵が「暗闇」状態なら、50%の確率で攻撃がスカ（MISS）る！
-                const isBlinded = currentStatus === '暗闇';
-                if (isBlinded && Math.random() < 0.5) {
-                  logText = `🕶️ ${enemyItem.name} は暗闇に包まれて攻撃を外した！ ${target.custom_name || target.name} は鮮やかに回避した！`;
+              const baseAtk = Math.floor(Math.random() * 10) + 10 + effectiveStr;
+              
+              // 🕶️ 【暗闇効果の干渉】敵が「暗闇」状態なら、50%の確率で攻撃がスカ（MISS）る！
+              const isBlinded = currentStatus === '暗闇';
+              
+              if (isBlinded && Math.random() < 0.5) {
+                logText = `🕶️ ${enemyItem.name} は暗闇に包まれて攻撃を外した！ ${target.custom_name || target.name} は鮮やかに回避した！`;
+              } else {
+                // 🔮 【三土手神リフォーム：RO式・通常物理攻撃のFlee完全回避ジャッジ】
+                // ① 敵モンスターの「Hit（命中値）」をマスターデータから抽出（なければ最低値21）
+                const enemyHit = Number(enemyItem.hit || 21);
+                // ② 狙われている味方プレイヤーの「flee（回避値）」を同期ロード（236を強引に押収した配線）
+                const playerFlee = Number(
+  target.roStatus?.flee || 
+  target.flee || 
+  localParty?.find(p => p.id === target.id)?.roStatus?.flee || 
+  0
+);
+
+                // 📐 本家RO公式: 回避確率(%) = 85 + プレイヤーFlee - 敵Hit
+                const fleeChance = 85 + playerFlee - enemyHit; 
+                const randomRoll = Math.floor(Math.random() * 100); // 0〜99の100面ダイスを振る
+
+                // 💡 算出された回避確率（上限95%）をダイスが上回った場合、または最低命中5%をすり抜けた場合に回避大成功！
+                if (randomRoll < fleeChance && randomRoll < 95) {
+                  // 🎉 避けた！ログに鮮やかな青緑色のMISSを点灯！
+                  logText = `💨 [MISS] ${enemyItem.name} の攻撃をヒラリとかわした！ (敵Hit:${enemyHit} vs 味方Flee:${playerFlee} | 回避率:${Math.min(95, fleeChance)}%)`;
                 } else {
+                  // 💥 回避失敗（または5%の絶対命中枠に引っかかった場合）➔ ダメージ決着処理
                   dmg = Math.max(1, baseAtk - target.vit);
                   localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
                   logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
@@ -492,8 +571,10 @@ card_inflict_type: totalInflictType,
         let aliveEnemies = localEnemies.filter(e => e.hp > 0);
         if (aliveEnemies.length === 0) return; // 敵がいないなら行動しない
 
-        const playerInterval = Math.max(1.0, 4.0 - member.agi * 0.1) * 1000;
-        partyAtkTimers.current[member.id] += 100;
+        const currentPlayerAspd = Number(member.aspd || 150.0);
+        const playerInterval = ((200 - currentPlayerAspd) / 50) * 1000;
+        // 💡 味方側も 20ms ずつ正確に時間を蓄積させます
+        partyAtkTimers.current[member.id] += 20;
 
         if (partyAtkTimers.current[member.id] >= playerInterval) {
           partyAtkTimers.current[member.id] = 0;
@@ -882,9 +963,8 @@ card_inflict_type: totalInflictType,
           if (localEnemies.every(e => e.hp <= 0)) {
             newLogs.push({ id: `win-all-${Date.now()}`, text: `🏆 🎉 クエスト内の全エネミーの掃討完了！完全勝利！`, type: "system" });
             clearInterval(battleTimer);
-            clearInterval(countTimer);
             setIsBattleOver(true);
-            setIsTimeUp(true);
+            // 🧹 クラッシュの原因になっていた古い setIsTimeUp 行を完全撤去！
             setDroppedItems([{ id: 1, name: `${primaryTarget.name}の秘宝`, rarity: "legendary" }]);
           }
         }
@@ -909,10 +989,66 @@ card_inflict_type: totalInflictType,
           return combined;
         });
       }
-    }, 100);
+    }, 20);
 
-    return () => { clearInterval(countTimer); clearInterval(battleTimer); };
+    // 💡 消去した countTimer の解除を綺麗に取り除き、battleTimer だけを安全にクリーンアップ！
+    return () => { clearInterval(battleTimer); };
   }, [loading, party, enemies, isBattleOver]);
+
+  // 🧭 🆕 【三土手ローグライク特注：同一階層内の次戦召喚 ＆ 上の階層への進軍エンジン】
+  const handleNextBattle = (forcedNextFloor = null) => {
+    let nextFloorNum = currentFloor;
+    if (forcedNextFloor) {
+      nextFloorNum = forcedNextFloor;
+      setCurrentFloor(nextFloorNum);
+    }
+
+    const fConfigs = currentQuestState?.floor_configs || [];
+    const targetFloorCfg = fConfigs.find(f => f.floor === nextFloorNum) || { 
+      battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: [] 
+    };
+
+    if (forcedNextFloor) {
+      // 泉が設置されている階層へ進んだ場合、神の慈悲で味方全員のHP・SPを100%全回復！
+      if (targetFloorCfg.has_fountain) {
+        partyStateRef.current = partyStateRef.current.map(p => ({ ...p, hp: p.mhp, sp: p.msp }));
+        setParty(partyStateRef.current);
+        alert(`⛲ 【B${nextFloorNum}階】に設置された「回復の泉」を発見！部隊全員のHP・SPが全回復した！`);
+      }
+      setRemainingBattles(targetFloorCfg.battle_count);
+      // 🛠️ 🆕 上の階に進軍したタイミングで、Refカウンター側も新しい階層の戦闘回数で上書きマウント！
+      remainingBattlesRef.current = targetFloorCfg.battle_count;
+    }
+
+    // 次の戦闘用のエネミーをコンフィグの最小〜最大出現数からランダム生成
+    const minS = Number(targetFloorCfg.min_spawn || 1);
+    const maxS = Number(targetFloorCfg.max_spawn || 2);
+    const spawnCount = Math.floor(Math.random() * (maxS - minS + 1)) + minS;
+
+    const activePoolEnemyIds = (targetFloorCfg.enemy_ids || []).filter(Boolean);
+    
+    let loadedEnemies = [];
+    for (let i = 0; i < spawnCount; i++) {
+      const mockEnemy = enemiesStateRef.current[0] || { id: 'test_porin_junior', name: 'モンスター' };
+      loadedEnemies.push({
+        ...mockEnemy,
+        instanceId: `${mockEnemy.id}_spawn_${i}_${Date.now()}`,
+        name: `${mockEnemy.name.split(' ')[0]} ${String.fromCharCode(65 + i)}`,
+        hp: mockEnemy.mhp
+      });
+    }
+
+    enemiesStateRef.current = loadedEnemies;
+    setEnemies(loadedEnemies);
+    setIsBattleOver(false);
+    setAdventureStatus('battling');
+
+    // 🧹 二重計算の原因になっていた内部での引き算（setRemainingBattles）を完全撤去！
+    // 🧹 Stateのラグによるバグ表示を防ぐため、すでに1減っている状態の「remainingBattles」の数をそのまま素直に表示！
+    const displayCount = forcedNextFloor ? targetFloorCfg.battle_count : remainingBattles;
+
+    setDisplayedLogs(prev => [...prev, { id: `next-${Date.now()}`, text: `⚔️ 【B${nextFloorNum}階】探索継続：新たな魔物群と遭遇！(残り戦闘: ${displayCount}回)`, type: "system" }]);
+  };
 
   // 3. 🔮 🆕 三土手創世神特注：サーバー無風コミットエンジン（これが「最後」の1回だけの通信）
   const handleTownCommit = async () => {
@@ -977,9 +1113,7 @@ card_inflict_type: totalInflictType,
       <div style={{ padding: '12px 15px', borderBottom: '1px solid #1e293b', background: '#0f172a', zIndex: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '0.85rem' }}>🐾 【{currentQuestState?.name || 'クエスト'}】 ({party.length}名編成)</div>
-          <div style={{ fontSize: '0.8rem', color: timeLeft <= 0 ? '#f59e0b' : '#ef4444', fontWeight: 'bold' }}>
-            {timeLeft <= 0 ? '⚠️ AT突入！' : `制限時間: ${timeLeft}秒`}
-          </div>
+          {/* 🧹 右側にあった制限時間の表示コンポーネントをスッキリ完全撤去！ */}
         </div>
       </div>
 
@@ -1005,22 +1139,55 @@ card_inflict_type: totalInflictType,
         ))}
       </div>
 
-      {/* タウンコミット・アクションバー */}
+      {/* 🧭 🆕 【三土手ローグライク専用：アクションゲーム選択バー】 */}
       <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #1e293b', textAlign: 'center' }}>
-        {(isTimeUp && isBattleOver) || enemies.every(e => e.hp <= 0) ? (
-          /* 🔮 🆕 ボタンのonClickを、直撃セーブ機能付きの handleTownCommit へコンバート！ */
-          <button 
-            onClick={handleTownCommit} 
-            disabled={isSaving}
-            style={{ width: '100%', padding: '12px', borderRadius: '12px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#0f172a', border: 'none', fontSize: '0.95rem', fontWeight: '900', cursor: isSaving ? 'not-allowed' : 'pointer', opacity: isSaving ? 0.7 : 1 }}
-          >
-            {isSaving ? '⏳ 冒険ログを同期中...' : '🏆 街へ帰還する'}
+        
+        {/* ① パーティーが全滅した場合 ➔ 没収を受け入れて撤還 */}
+        {adventureStatus === 'game_over' && (
+          <button onClick={onReturn} style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#451a1a', color: '#f43f5e', border: '1px solid #ef4444', fontSize: '0.9rem', fontWeight: 'bold' }}>
+            ☠️ 全滅を受け入れて酒場へ戻る (報酬なし)
           </button>
-        ) : (
+        )}
+
+        {/* ② 1回の戦闘が終わったが、その階にまだ残り必要戦闘回数がある場合 ➔ 次の索敵へ */}
+        {adventureStatus === 'battling' && isBattleOver && remainingBattles > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <button onClick={() => handleNextBattle()} style={{ padding: '12px', borderRadius: '8px', background: '#2563eb', color: '#fff', border: 'none', fontWeight: 'bold', fontSize: '0.82rem' }}>
+              👣 索敵を続ける (残り:{remainingBattles}戦)
+            </button>
+            <button onClick={handleTownCommit} disabled={isSaving} style={{ padding: '12px', borderRadius: '8px', background: '#1e293b', color: '#ffd700', border: '1px solid #ffd70044', fontWeight: 'bold', fontSize: '0.82rem' }}>
+              🏃‍♂️ 諦めて街へ一時帰還 (安全)
+            </button>
+          </div>
+        )}
+
+        {/* ③ その階層を完全に制圧した場合（RemainingBattlesが0になった時） ➔ 帰還か上の階への進軍か選択 */}
+        {adventureStatus === 'floor_cleared' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <span style={{ fontSize: '0.7rem', color: '#34d399', fontWeight: 'bold', display: 'block', marginBottom: '2px' }}>🎉 【B{currentFloor}階】制圧完了！どうしますか？</span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {currentFloor < (currentQuestState?.floors || 1) ? (
+                <button onClick={() => handleNextBattle(currentFloor + 1)} style={{ padding: '12px', borderRadius: '10px', background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)', color: '#fff', border: 'none', fontWeight: '900', fontSize: '0.82rem' }}>
+                  🏰 B{currentFloor + 1}階へ進軍する
+                </button>
+              ) : (
+                <div style={{ padding: '12px', color: '#ffd700', fontSize: '0.8rem', fontWeight: 'bold', border: '1px solid #ffd70033', borderRadius: '10px', background: '#1e1b4b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  🏆 最深部踏破完了！
+                </div>
+              )}
+              <button onClick={handleTownCommit} disabled={isSaving} style={{ padding: '12px', borderRadius: '10px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#0f172a', border: 'none', fontWeight: '900', fontSize: '0.82rem' }}>
+                💰 帰還して報酬を獲得
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ④ 通常戦闘中の場合は、いつでも緊急リタイアできるボタンとして待機 */}
+        {adventureStatus === 'battling' && !isBattleOver && (
           <button onClick={onReturn} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}>
-            🛡️ 酒場へ戻る
+            🛡️ 冒険を中断して酒場へ戻る (今までの報酬はロスト)
           </button>
-        ) }
+        )}
       </div>
 
       <div style={{ 

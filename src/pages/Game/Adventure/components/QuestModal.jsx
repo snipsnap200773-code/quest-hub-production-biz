@@ -33,35 +33,40 @@ const QuestModal = ({ quest, onClose, onStart }) => {
           {/* 👑 三土手神専用：出現モンスターのスペック透視パネル（バフォメットJrにも完全自動対応！） */}
           <div style={{ 
             background: '#0a0d14', 
-            border: quest.enemy_master_id === 'baphomet_junior' ? '1px dashed #f43f5e' : '1px dashed #38bdf8', 
-            padding: '12px', 
-            borderRadius: '12px', 
+            border: '1px dashed #ffd70044', 
+            padding: '14px', 
+            borderRadius: '16px', 
             display: 'flex', 
             flexDirection: 'column', 
-            gap: '6px' 
+            gap: '8px' 
           }}>
-            <span style={{ fontSize: '0.7rem', color: quest.enemy_master_id === 'baphomet_junior' ? '#f43f5e' : '#38bdf8', fontWeight: 'bold' }}>
-              📊 演習ターゲット情報 {quest.enemy_master_id === 'baphomet_junior' ? '⚠️ 警告：魔獣検知' : ''}
+            <span style={{ fontSize: '0.75rem', color: '#ffd700', fontWeight: 'bold' }}>
+              🧭 ローグライクダンジョン内部透視ログ
             </span>
-            <p style={{ fontSize: '0.65rem', color: '#ba9a6f', margin: '0 0 4px 0', lineHeight: '1.4' }}>
-              {quest.description || "洞窟に潜む魔獣を討伐する演習戦。"}
+            <p style={{ fontSize: '0.68rem', color: '#ba9a6f', margin: '0 0 2px 0', lineHeight: '1.4' }}>
+              {quest.description || "未開の階層を突き進むハクスラダンジョン。"}
             </p>
             
-            {quest.enemy_master_id === 'baphomet_junior' ? (
-              /* 👹 バフォメットJrを選んだ時の透視スペック */
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.68rem', fontFamily: 'monospace', borderTop: '1px solid #451a1a', paddingTop: '6px' }}>
-                <div>👾 統一名: <span style={{ color: '#fff', fontWeight: 'bold' }}>バフォメットJr</span></div>
-                <div>🌍 属性: <span style={{ color: '#c084fc' }}>闇属性 (悪魔)</span></div>
-                <div>❤️ HP予測: <span style={{ color: '#f43f5e', fontWeight: 'bold' }}>1800 (高火力速攻型)</span></div>
-                <div>⚔️ 攻撃力: <span style={{ color: '#ef4444' }}>35 (非常に高い)</span></div>
+            {/* 🛠️ データベースから取得した floor_configs 配列をマップ展開して全階層の状態を透視！ */}
+            {quest.floor_configs && Array.isArray(quest.floor_configs) && quest.floor_configs.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', marginTop: '2px' }}>
+                {quest.floor_configs.map((f, idx) => (
+                  <div key={'modal-f-'+f.floor} style={{ fontSize: '0.68rem', background: '#11131c', padding: '6px 10px', borderRadius: '8px', border: '1px solid #1e293b' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px', fontWeight: 'bold', color: idx === quest.floor_configs.length - 1 ? '#a855f7' : '#38bdf8' }}>
+                      <span>🏰 地下 {f.floor} 階 {idx === quest.floor_configs.length - 1 && ' (最深部)'}</span>
+                      <span style={{ color: '#ffd700' }}>⚔️ {f.battle_count}戦 / 🎁 宝箱:{f.chest_count}個</span>
+                    </div>
+                    <div style={{ fontSize: '0.62rem', color: '#64748b' }}>
+                      {f.has_fountain && <span style={{ color: '#34d399', marginRight: '6px' }}>⛲ 回復の泉あり</span>}
+                      <span>ポップ出現数: {f.min_spawn || 1} 〜 {f.max_spawn || 2} 体</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
-              /* 🧪 テストポリンJrを選んだ時の透視スペック */
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: '0.68rem', fontFamily: 'monospace', borderTop: '1px solid #1e293b', paddingTop: '6px' }}>
-                <div>👾 統一名: <span style={{ color: '#fff', fontWeight: 'bold' }}>テストポリンJr</span></div>
-                <div>🌍 属性: <span style={{ color: '#60a5fa' }}>水属性 (小型)</span></div>
-                <div>❤️ HP予測: <span style={{ color: '#34d399', fontWeight: 'bold' }}>2500 (超タフ)</span></div>
-                <div>⚔️ 攻撃力: <span style={{ color: '#f43f5e' }}>10 (極めて微弱)</span></div>
+              /* 古いクエストデータが入ってきた場合のセーフティ互換表示 */
+              <div style={{ fontSize: '0.68rem', color: '#64748b', fontStyle: 'italic', borderTop: '1px solid #222', paddingTop: '6px' }}>
+                ※クラシック形式のエリアデータのため、階層詳細ログを構築できません。
               </div>
             )}
           </div>
