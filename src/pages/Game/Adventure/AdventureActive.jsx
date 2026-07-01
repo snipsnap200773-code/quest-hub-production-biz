@@ -42,6 +42,8 @@ const AdventureActive = ({
   
   // 🚨 ⬇️ 前回のコピペでこの行が消滅してしまっていました！ここに1行復活させてください！
   const enemiesAtkTimers = useRef({}); 
+
+  const masterSkillsRef = useRef([]);
   
   // 🔮 🆕 創世神特注：SP自動回復用の時間累積プールタイマーRef（初期値0秒）
   const spRegenTimer = useRef(0);
@@ -68,6 +70,8 @@ const AdventureActive = ({
       const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
       const { data: dbSkills } = await supabase.from('game_master_skills').select('*');
       const allMasterSkills = dbSkills || [];
+
+      masterSkillsRef.current = allMasterSkills;
 
       if (charList && charList.length > 0) {
         const filteredMembers = charList.filter(ch => partyCharacterIds.includes(ch.id));
@@ -502,82 +506,105 @@ const AdventureActive = ({
               const target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
               const targetIdx = localParty.findIndex(p => p.id === target.id);
               
-              // 🤐 【沈黙効果の干渉】敵が「沈黙」状態なら、スキル（ナパームビート）の確率を強制0%にして通常攻撃に固定！
-              // 🔮 【三土手神お掃除完了】ナパームビートのベタ書きテスト配線を完全撤去！
               let dmg = 0;
               let logText = "";
-
-              // 💀 【呪い効果の干渉】敵が「呪い」状態なら、STR（腕力）を半分にして物理ダメージを計算！
-              const isCursed = currentStatus === '呪い';
-              const effectiveStr = isCursed ? Math.floor(enemyItem.str * 0.5) : enemyItem.str;
-
-              const baseAtk = Math.floor(Math.random() * 10) + 10 + effectiveStr;
               
-              // 🕶️ 【暗闇効果の干渉】敵が「暗闇」状態なら、50%の確率で攻撃がスカ（MISS）る！
-              const isBlinded = currentStatus === '暗闇';
+              // 🔮 🧠 【新規追加：敵の魔法・スキル発動AI】
+              let usedSkill = null;
+              const isSilenced = currentStatus === '沈黙';
+              const enemySkills = enemyItem.activeSkills || [];
               
-              if (isBlinded && Math.random() < 0.5) {
-                logText = `🕶️ ${enemyItem.name} は暗闇に包まれて攻撃を外した！ ${target.custom_name || target.name} は鮮やかに回避した！`;
-              } else {
-                // 🔮 【三土手神リフォーム：RO式・通常物理攻撃のFlee完全回避ジャッジ】
-                // ① 敵モンスターの「Hit（命中値）」をマスターデータから抽出（なければ最低値21）
-                const enemyHit = Number(enemyItem.hit || 21);
-                // ② 狙われている味方プレイヤーの「flee（回避値）」を同期ロード（236を強引に押収した配線）
-                const playerFlee = Number(
-  target.roStatus?.flee || 
-  target.flee || 
-  localParty?.find(p => p.id === target.id)?.roStatus?.flee || 
-  0
-);
+              if (!isSilenced && enemySkills.length > 0 && Math.random() < 0.30) {
+                usedSkill = enemySkills[Math.floor(Math.random() * enemySkills.length)];
+              }
 
-                // 📐 🛠️ 🆕 【三土手神リフォーム：RO本家公式完全同調シミュレート】
-                // 回避確率(%) = 20 + プレイヤーFlee - 敵Hit (必要Flee = 敵Hit + 95 の時にジャスト95%回避になる数理設計)
-                const fleeChance = 20 + playerFlee - enemyHit; 
+              if (usedSkill) {
+                // ✨ 魔法・スキル発動ルート
+                const isMagic = usedSkill.skill_type === 'magic';
+                const baseValue = Number(usedSkill.effect_value || 0);
                 
-                // どんなにFleeを積んでも5%の絶対被弾枠を残すための上限95%キャップ
-                const cappedFleeChance = Math.min(95, fleeChance);
-                
-                const randomRoll = Math.floor(Math.random() * 100); // 0〜99の100面ダイスを振る
+                let calculatedPower = baseValue;
+                if (usedSkill.value_type === 'percent') {
+                  const eInt = enemyItem.int || 10;
+                  const eStr = enemyItem.str || 10;
+                  const baseStat = isMagic ? eInt * 2 : eStr * 2;
+                  calculatedPower = Math.floor((baseStat * baseValue) / 100);
+                }
 
-                // 💡 算出したダイスが回避確率を下回れば、見事に回避成功！
-                if (randomRoll < cappedFleeChance) {
-                  // 🎉 🛠️ 🆕 【主語バグ完全破壊】：狙われた味方の名前（target.name）をログへダイレクト注入！
-                  logText = `💨 [MISS] ${enemyItem.name} が 【${target.name}】 を強襲！しかし、ヒラリとかわされた！ (敵Hit:${enemyHit} vs 味方Flee:${playerFlee} | 回避率:${Math.max(0, cappedFleeChance)}%)`;
-                } else {
-                  // 💥 回避失敗（または5%の絶対命中枠に引っかかった場合）➔ ダメージ決着処理
-                  dmg = Math.max(1, baseAtk - target.vit);
+                if (isMagic) {
+                  const targetMdef = target.mdef || target.roStatus?.mdef || 0;
+                  dmg = Math.max(1, calculatedPower - targetMdef);
                   localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                  logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+                  logText = `🔮 ${enemyItem.name} は 【${usedSkill.name}】 を詠唱！ ➔ ${target.name} に ${dmg} の魔法ダメージ！`;
+                } else {
+                  const targetDef = target.vit || 0;
+                  dmg = Math.max(1, calculatedPower - targetDef);
+                  localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                  logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ ${target.name} に ${dmg} の物理ダメージ！`;
+                }
+
+                // 🎰 追加効果の判定
+                if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
+                  const effectChance = Number(usedSkill.effect_chance || 0);
+                  if (Math.random() * 100 < effectChance) {
+                    localParty[targetIdx].state = {
+                      ...localParty[targetIdx].state,
+                      currentStatus: usedSkill.effect_type,
+                      durationTurns: Number(usedSkill.duration_turns || 3)
+                    };
+                    logText += ` ✨ [追加効果] ${target.name} は【${usedSkill.effect_type}】状態になった！`;
+                  }
+                }
+              } else {
+                // 💀 【従来の通常攻撃ルート】スキルを使わない場合は通常攻撃へ
+                const isCursed = currentStatus === '呪い';
+                const effectiveStr = isCursed ? Math.floor(enemyItem.str * 0.5) : enemyItem.str;
+                const baseAtk = Math.floor(Math.random() * 10) + 10 + effectiveStr;
+                
+                const isBlinded = currentStatus === '暗闇';
+                
+                if (isBlinded && Math.random() < 0.5) {
+                  logText = `🕶️ ${enemyItem.name} は暗闇に包まれて攻撃を外した！ ${target.custom_name || target.name} は鮮やかに回避した！`;
+                } else {
+                  // 🔮 【三土手神リフォーム：RO式・通常物理攻撃のFlee完全回避ジャッジ】
+                  const enemyHit = Number(enemyItem.hit || 21);
+                  const playerFlee = Number(target.roStatus?.flee || target.flee || localParty?.find(p => p.id === target.id)?.roStatus?.flee || 0);
+                  const fleeChance = 20 + playerFlee - enemyHit;
+                  const cappedFleeChance = Math.min(95, fleeChance);
+                  const randomRoll = Math.floor(Math.random() * 100);
+
+                  if (randomRoll < cappedFleeChance) {
+                    logText = `💨 [MISS] ${enemyItem.name} が 【${target.name}】 を強襲！しかし、ヒラリとかわされた！ (回避率:${Math.max(0, cappedFleeChance)}%)`;
+                  } else {
+                    dmg = Math.max(1, baseAtk - target.vit);
+                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                    logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+                  }
                 }
               }
 
-              // 🧪 【毒効果スリップ処理】行動完了時に毒状態なら最大HPの5%削る
+              // 🧪 【毒効果スリップ処理】
               let currentHpAfterPoison = enemyItem.hp;
               const wasPoisonedAtTurnStart = currentStatus === '毒';
               if (wasPoisonedAtTurnStart) {
                 const poisonDmg = Math.floor(enemyItem.mhp * 0.05);
-                currentHpAfterPoison = Math.max(1, currentHpAfterPoison - poisonDmg); 
+                currentHpAfterPoison = Math.max(1, currentHpAfterPoison - poisonDmg);
                 logText += ` 🧪 [毒効果] ${enemyItem.name} は毒により ${poisonDmg} のスリップダメージ！`;
               }
 
               // 👑 唯一のログ出力
               newLogs.push({ id: `e-${Date.now()}-${Math.random()}`, text: logText, type: "battle" });
 
-              // ⏳ ─── ログ出力が終わった「後」で、動けるデバフ（毒、暗闇、沈黙、呪い）の持続ターン数を消費・解除判定 ───
+              // ⏳ 持続ターン数消費判定
               let updatedState = { ...enemyItem.state };
               if (['毒', '暗闇', '沈黙', '呪い'].includes(currentStatus)) {
                 const nextTurns = (enemyItem.state.durationTurns || 1) - 1;
                 updatedState.durationTurns = nextTurns;
                 if (nextTurns <= 0) {
-                  newLogs.push({ 
-                    id: `e-clear-move-${enemyItem.instanceId}-${Date.now()}`, 
-                    text: `✨ ${enemyItem.name} の【${currentStatus}】が切れた。`, 
-                    type: "system" 
-                  });
+                  newLogs.push({ id: `e-clear-move-${enemyItem.instanceId}-${Date.now()}`, text: `✨ ${enemyItem.name} の【${currentStatus}】が切れた。`, type: "system" });
                   updatedState = { currentStatus: 'none', durationTurns: 0 };
                 }
               }
-
               return { ...enemyItem, hp: currentHpAfterPoison, state: updatedState };
             }
           }
@@ -589,48 +616,95 @@ const AdventureActive = ({
       localParty.forEach((member) => {
         if (member.hp <= 0) return;
 
-        // 🎯 【配列スキャン】生存しているエネミーだけを瞬時に抽出
+        // 🎯 生存エネミー確認
         let aliveEnemies = localEnemies.filter(e => e.hp > 0);
-        if (aliveEnemies.length === 0) return; // 敵がいないなら行動しない
+        if (aliveEnemies.length === 0) return;
 
         const currentPlayerAspd = Number(member.aspd || 150.0);
         const playerInterval = ((200 - currentPlayerAspd) / 50) * 1000;
-        // 💡 味方側も 20ms ずつ正確に時間を蓄積させます
         partyAtkTimers.current[member.id] += 20;
 
+        // 💡 攻撃ターンが回ってきた時だけ処理を実行する
         if (partyAtkTimers.current[member.id] >= playerInterval) {
           partyAtkTimers.current[member.id] = 0;
-          
-          if (member.state?.isStunned || member.state?.isFrozen) {
-            newLogs.push({ id: `skip-${member.id}-${Date.now()}`, text: `💤 ${member.name} は行動不能スキップ`, type: "system" });
+
+          // 🧪 1. 状態異常スリップ＆解除判定
+          if (member.state?.currentStatus && member.state.currentStatus !== 'none' && member.state.currentStatus !== 'なし') {
+            if (member.state.currentStatus === '毒') {
+              const poisonDmg = Math.floor(member.mhp * 0.05);
+              member.hp = Math.max(1, member.hp - poisonDmg);
+              newLogs.push({ id: `p-poison-${member.id}-${Date.now()}`, text: `🧪 [毒ダメージ] ${member.name} は毒により ${poisonDmg} のダメージを受けた！`, type: "battle" });
+            }
+            member.state.durationTurns = (member.state.durationTurns || 3) - 1;
+            if (member.state.durationTurns <= 0) {
+              newLogs.push({ id: `p-clear-${member.id}-${Date.now()}`, text: `✨ ${member.name} の【${member.state.currentStatus}】が切れた。`, type: "system" });
+              member.state = { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 };
+            }
+          }
+
+          // 行動不能判定
+          if (['スタン', '石化', '睡眠', '凍結'].includes(member.state?.currentStatus)) {
+            newLogs.push({ id: `skip-${member.id}-${Date.now()}`, text: `💤 ${member.name} は【${member.state.currentStatus}】状態のため行動不能！`, type: "system" });
             return;
           }
 
-          // 通常のターゲットは生存配列の先頭個体をロックオン
-          let primaryTarget = aliveEnemies[0];
+          // 🎯 ターゲット選択
+          let primaryTarget = [...aliveEnemies].sort((a, b) => (a.mhp - b.mhp) || (a.hp - b.hp))[0];
           let targetIdx = localEnemies.findIndex(e => e.instanceId === primaryTarget.instanceId);
 
+          // 🧠 【ここですべての変数を一度だけ宣言！】
+          let shouldLaunchMagic = false;
+          let playableSkill = null;
           let finalDmg = 0;
           let logText = "";
-
+          
           const myStr = member.str || 10;
           const myDex = member.dex || 10;
-          const minAtk = Math.floor(myStr + (myDex * 0.5));
-          const maxAtk = Math.floor(myStr * 2.5 + myDex);
-          const randomizedAtk = Math.floor(Math.random() * (maxAtk - minAtk + 1)) + minAtk;
+          const randomizedAtk = Math.floor(Math.random() * ((myStr * 2.5 + myDex) - (myStr + myDex * 0.5) + 1)) + Math.floor(myStr + myDex * 0.5);
 
-          // =============================================================
-          // 🧠 👑 【三土手創世神特注：インテリジェント魔法温存＆ボス戦全力AIエンジン】
-          // =============================================================
+          // スキル選択AI
           const activeSkills = member.skillsList || [];
-          let playableSkill = activeSkills.length > 0 ? activeSkills[Math.floor(Math.random() * activeSkills.length)] : null;
+          playableSkill = activeSkills.length > 0 ? activeSkills[Math.floor(Math.random() * activeSkills.length)] : null;
           
-          // 🚑 🧠 【三土手神特注：スマート・ドロー救命AI】
-          // 味方にHP70%未満の者がいる場合、ランダム抽選を破棄して「ヒール」を確定で手札に引き込む！
-          const isEmergency = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7);
-          if (isEmergency) {
+          // 🚑 救命・浄化AI判定
+          const hasStatusAilment = localParty.some(p => p.hp > 0 && p.state?.currentStatus && p.state.currentStatus !== 'none' && p.state.currentStatus !== 'なし');
+          const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7);
+
+          if (hasStatusAilment) {
+            const cureSkill = activeSkills.find(sk => sk.effect_type === '状態異常回復');
+            if (cureSkill) { playableSkill = cureSkill; shouldLaunchMagic = true; }
+          } else if (isEmergencyHP) {
             const healSkill = activeSkills.find(sk => sk.target_type === '味方単体' || sk.target_type === '味方全体' || sk.name?.includes('ヒール') || sk.effect_type === '回復');
-            if (healSkill) playableSkill = healSkill; // ヒールを見つけたら強制的にセット
+            if (healSkill) { playableSkill = healSkill; shouldLaunchMagic = true; }
+          } else if (primaryTarget) {
+            // 🔮 🧠 【新規追加：属性弱点スキャン＆エクスプロイトAI】
+            // 命の危機がない場合は、ロックオンした敵の弱点を突く魔法を探す！
+            
+            // RO式 属性相性マップ (敵の属性 -> それに対する弱点属性)
+            const weaknessMap = {
+              '水': ['風', '風属性'],
+              '火': ['水', '水属性'],
+              '地': ['火', '火属性'],
+              '風': ['地', '地属性'],
+              '闇': ['聖', '聖属性'],
+              '不死': ['聖', '聖属性', '火', '火属性'],
+              '聖': ['闇', '闇属性']
+            };
+            
+            // 狙っている敵の属性から、弱点となる属性の配列を取得
+            const weaknesses = weaknessMap[primaryTarget.element] || [];
+            
+            if (weaknesses.length > 0) {
+              // 自分が覚えているスキルの中から、弱点属性かつSPが足りている攻撃スキルを探す
+              const exploitSkill = activeSkills.find(sk => 
+                weaknesses.includes(sk.element) && 
+                member.sp >= Number(sk.sp_cost || 0)
+              );
+              
+              if (exploitSkill) {
+                playableSkill = exploitSkill; // 弱点魔法を見つけたら強制的に手札をすり替える！
+              }
+            }
           }
 
           const skillSpCost = playableSkill ? Number(playableSkill.sp_cost || 0) : 0;
@@ -638,7 +712,6 @@ const AdventureActive = ({
           const currentSpRatio = (member.sp / (member.msp || 50)) * 100;
 
           // 📐 【新・第1ステップ判定】魔法をブッ放すかどうかのガンビット条件ダイス
-          let shouldLaunchMagic = false;
           if (playableSkill && member.sp >= skillSpCost) {
             // 🏥 🆕 【三土手神特注：ヒール温存AIジャッジ完全強化版】
             const isHeal = playableSkill.target_type === '味方単体' || 
@@ -708,7 +781,8 @@ const AdventureActive = ({
             const isHealSkill = playableSkill.target_type === '味方単体' || 
                                 playableSkill.target_type === '味方全体' || 
                                 playableSkill.name?.includes('ヒール') ||
-                                playableSkill.effect_type === '回復';
+                                playableSkill.effect_type === '回復' ||
+                    playableSkill.effect_type === '状態異常回復';
 
             if (isHealSkill) {
               // 🛠️ 🆕 【三土手創世神特注：倍率計算インフラ完全同期】
@@ -783,6 +857,29 @@ const AdventureActive = ({
 
                 logText = `🚑💚 [HEAL] ${member.name} の 【${playableSkill.name}】 が発動！ ➔ ${targetAlly.name} の傷口が癒え、HPが ${actualHealAmount} 回復！ (残SP: ${member.sp})`;
               }
+
+              // 🌟🌟🌟 【ここに追加！】三土手神特注：状態異常の浄化（キュア）処理 🌟🌟🌟
+              if (playableSkill.effect_type === '状態異常回復') {
+                if (isAreaHeal) {
+                  // 全体魔法なら生存メンバー全員のデバフを剥がす
+                  localParty = localParty.map(p => {
+                    if (p.hp <= 0) return p;
+                    return {
+                      ...p,
+                      state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 }
+                    };
+                  });
+                  newLogs.push({ id: `cure-aoe-${member.id}-${Date.now()}`, text: ` ✨ [浄化] まばゆい光が部隊全体の状態異常を完全に打ち払った！`, type: "success" });
+                } else {
+                  // 単体魔法ならターゲットのデバフのみ剥がす
+                  const tIdx = localParty.findIndex(p => p.id === targetAlly.id);
+                  if (tIdx !== -1) {
+                    localParty[tIdx].state = { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 };
+                  }
+                  logText += ` ✨ [浄化] ${targetAlly.name} の状態異常が完全に浄化された！`;
+                }
+              }
+              // 🌟🌟🌟 追加ここまで 🌟🌟🌟
 
             } else {
               // ⚔️ 【従来の攻撃魔法・範囲魔法ルート】（※1行も壊さずそのままここに完全保護格納！）
@@ -1182,6 +1279,10 @@ const AdventureActive = ({
         const isBaphometTarget = String(targetId).toLowerCase().includes('baphomet');
         const finalName = dbEnemy?.name || (isBaphometTarget ? "バフォメットJr" : "テストポリンJr");
         
+        // 🔮 【ここを追加】データベースから取得したスキルIDから、この敵が持つスキルを抽出！
+        const enemySkillIds = [dbEnemy?.skill_01, dbEnemy?.skill_02, dbEnemy?.skill_03].filter(Boolean);
+        const eSkills = masterSkillsRef.current.filter(sk => enemySkillIds.includes(sk.id));
+        
         loadedEnemies.push({
           instanceId: `${targetId}_spawn_${i}_${Date.now()}`,
           id: targetId,
@@ -1203,7 +1304,10 @@ const AdventureActive = ({
           resist_blind: Number(dbEnemy?.resist_blind || 0),
           int: dbEnemy?.int || dbEnemy?.stat_int || 10,
           hit: dbEnemy?.hit || 21,
-          enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null
+          enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null,
+          
+          // 🔮 【ここを追加】抽出したスキルリストを敵のインスタンスにマウント！
+          activeSkills: eSkills 
         });
       }
     }
