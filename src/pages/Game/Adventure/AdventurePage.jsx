@@ -32,41 +32,51 @@ const AdventurePage = () => {
       if (charList && charList.length > 0) {
         setAllCharacters(charList);
         
-        // 現在DBに存在する本物のキャラクターIDだけのリストを作る
         const validIds = charList.map(ch => ch.id);
-        
         const dbParty = [null, null, null, null, null];
         let hasDbParty = false;
 
         charList.forEach(ch => {
           if (ch.party_index !== null && ch.party_index !== undefined && ch.party_index >= 0 && ch.party_index < 5) {
-            dbParty[ch.party_index] = ch.id;
+            // 🛠️ DBの並び順から「前衛」として初期セット
+            dbParty[ch.party_index] = { id: ch.id, position: 'front' }; 
             hasDbParty = true;
           }
         });
 
         if (hasDbParty) {
           setCurrentPartyIds(dbParty);
-          localStorage.setItem('qh_trpg_party_ids', JSON.stringify(dbParty));
         } else {
-          const saved = localStorage.getItem('qh_trpg_party_ids');
-          if (saved) {
-            const rawParty = JSON.parse(saved);
-            
-            // 🎯 ここです！保存されていたIDが、現在DBにいる4人のIDのどれとも一致しない場合は容赦なく null に書き換えます！
+          // 🎯 陣形データ(新) と 互換データ(旧) を両方チェック
+          const savedTactics = localStorage.getItem('mitsudote_tactics_save');
+          const savedLegacy = localStorage.getItem('qh_trpg_party_ids');
+
+          if (savedTactics) {
+            // 新しい陣形データが存在する場合
+            const rawParty = JSON.parse(savedTactics);
+            const cleaned = rawParty.map(slotData => {
+              if (!slotData) return null;
+              const charId = typeof slotData === 'object' ? slotData.id : slotData;
+              if (charId && validIds.includes(charId)) {
+                return typeof slotData === 'object' ? slotData : { id: charId, position: 'front' };
+              }
+              return null;
+            });
+            setCurrentPartyIds(cleaned);
+          } else if (savedLegacy) {
+            // 昔のIDだけのデータが存在する場合（互換性サポート）
+            const rawParty = JSON.parse(savedLegacy);
             const cleaned = rawParty.map(id => {
               if (id && validIds.includes(id)) {
-                return id; // 本物の4人のいずれかなら残す
+                return { id: id, position: 'front' };
               }
-                return null; // 過去の古いIDやゴミは強制的に消去！
+              return null;
             });
-            
             setCurrentPartyIds(cleaned);
-            localStorage.setItem('qh_trpg_party_ids', JSON.stringify(cleaned));
           } else {
-            const defaultParty = [charList[0].id, null, null, null, null];
+            // 完全に空っぽの場合の初期パーティ
+            const defaultParty = [{ id: charList[0].id, position: 'front' }, null, null, null, null];
             setCurrentPartyIds(defaultParty);
-            localStorage.setItem('qh_trpg_party_ids', JSON.stringify(defaultParty));
           }
         }
       }
@@ -76,23 +86,30 @@ const AdventurePage = () => {
 
   // 2. ⭕ パーティ編成が変更されたら、即座にブラウザの記憶に保存する関数
   const handlePartyChange = async (newParty) => {
-    const cleanedParty = newParty.map(id => {
-      if (!id || id === 'EMPTY' || id === 'null' || id === 'undefined' || String(id).trim() === '') {
+    const cleanedParty = newParty.map(slotData => {
+      if (!slotData) return null;
+      const charId = typeof slotData === 'object' ? slotData.id : slotData;
+      if (!charId || charId === 'EMPTY' || charId === 'null' || charId === 'undefined' || String(charId).trim() === '') {
         return null;
       }
-      return id;
+      return slotData; 
     });
 
     setCurrentPartyIds(cleanedParty);
-    localStorage.setItem('qh_trpg_party_ids', JSON.stringify(cleanedParty));
+
+    // 🚨 【超重要】酒場など他の画面がクラッシュしないよう、IDだけの純粋な配列を作って古いキーに保存！
+    const pureIdsForCompatibility = cleanedParty.map(slot => slot ? (typeof slot === 'object' ? slot.id : slot) : null);
+    localStorage.setItem('qh_trpg_party_ids', JSON.stringify(pureIdsForCompatibility));
+
+    // 🆕 前衛・後衛の陣形データは「三土手専用キー」で安全に別保存！
+    localStorage.setItem('mitsudote_tactics_save', JSON.stringify(cleanedParty));
 
     try {
       await Promise.all(
         allCharacters.map(async (ch) => {
-          const slotIndex = cleanedParty.findIndex(id => id === ch.id);
+          const slotIndex = cleanedParty.findIndex(slot => slot && (typeof slot === 'object' ? slot.id === ch.id : slot === ch.id));
           const finalIndex = slotIndex !== -1 ? slotIndex : null;
 
-          // 🎯 修正箇所：gameServices.supabase から「supabase」直博に変更！
           await supabase
             .from('game_characters')
             .update({ party_index: finalIndex })

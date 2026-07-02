@@ -69,12 +69,23 @@ const AdventureActive = ({
 
       const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
       const { data: dbSkills } = await supabase.from('game_master_skills').select('*');
+      const { data: dbItems } = await supabase.from('game_master_items').select('*'); 
+
       const allMasterSkills = dbSkills || [];
+      const allMasterItems = dbItems || [];
+      
+      // 🚨 ⬇️ デバッグ用トラップ1：全アイテムデータを覗き見！
+      console.log("📦 【デバッグ1】取得した全アイテムマスター:", allMasterItems);
 
       masterSkillsRef.current = allMasterSkills;
 
       if (charList && charList.length > 0) {
-        const filteredMembers = charList.filter(ch => partyCharacterIds.includes(ch.id));
+        // 🔮 🆕 三土手神特注：混在ゴーストデータを無力化するIDクレンジング配線！
+        // partyCharacterIds の中身が文字列でもオブジェクトでも、確実に「ID文字列だけ」の配列へ変換します
+        const actualPartyIds = partyCharacterIds.map(p => p && typeof p === 'object' ? p.id : p).filter(Boolean);
+
+        // 綺麗になった実際のID配列（actualPartyIds）を使って、生存メンバーを鉄壁フィルタリング！
+        const filteredMembers = charList.filter(ch => actualPartyIds.includes(ch.id));
 
         // 🚨 【緊急デバッグ】F12のコンソールに生のオブジェクト構造をすべて吐き出す
         console.log("=== 🚨 三土手さん、F12のConsoleでここを確認してください ===");
@@ -103,13 +114,33 @@ const AdventureActive = ({
           const cardSizeEff = isScout ? { '小型': 20 } : {};
           const cardRaceEff = isScout ? { '無形': 20 } : {};
           const cardElemEff = isScout ? { '地': 20, '地属性': 20 } : {};
-          const weaponSubtype = isScout ? '短剣' : (myJob === 'ファイター' ? '剣' : '素手');
-          const weaponElement = isScout ? '地' : '無';
+
+          // 🔮 🆕 三土手神特注：ループの内部でキャラクター毎に個別の装備データを確実に透視！（ここで宣言）
+          const weaponId = ch.equip_right_hand || (ch.equips && ch.equips.equip_right_hand) || null;
+          
+          // 🚨 ⬇️ デバッグ用トラップ2：各キャラの装備IDと照合結果を丸裸にする！
+          console.log(`=== 🕵️ 【デバッグ2】${ch.custom_name} の武器判定 ===`);
+          console.log("・抽出した生の weaponId:", weaponId);
+          console.log("・抽出元の ch データ全体:", ch);
+
+          // 🛡️ 🆕 アイテムマスターから本物の武器データを照合して完全合流（JOIN）！
+          const masterWeapon = allMasterItems.find(item => item.id === weaponId);
+          
+          // 🚨 ⬇️ デバッグ用トラップ2の続き：マッチした結果
+          console.log("・マスターデータとの照合結果 (masterWeapon):", masterWeapon);
+          console.log("=====================================");
+
+          // マスター側に名前があればそれを採用、なければ「素手」
+          const weaponName = masterWeapon?.name || '素手';
+          // 武器小分類（item_subtype：剣・槍など）をマスターデータから抽出
+          const weaponSubtype = masterWeapon?.item_subtype || (myJob === 'ファイター' ? '剣' : '素手');
+          // 武器の固有属性をマスターデータから抽出
+          const weaponElement = masterWeapon?.element || '無';
 
           // 🎰 クリティカル率の引き継ぎ
           const alcoholCritical = ch.roStatus?.critical || ch.roStatus?.crit || ch.roStatus?.final_critical || 0;
 
-// 🩸 【鉄壁リフォーム】ch.equips の中身から装備されている全カードを確実に引っこ抜く
+          // 🩸 【鉄壁リフォーム】ch.equips の中身から装備されている全カードを確実に引っこ抜く
           let totalDrainChance = 0;
           let totalDrainPercent = 0;
 
@@ -120,7 +151,6 @@ const AdventureActive = ({
           // 💡 キャラクターが現在身につけている全装備（武器・防具など）をループ
           if (ch.equips && typeof ch.equips === 'object') {
             Object.values(ch.equips).forEach(equipSlot => {
-              // 装備スロット内に cards 配列が存在するか徹底チェック
               if (equipSlot && Array.isArray(equipSlot.cards)) {
                 equipSlot.cards.forEach(card => {
                   if (!card) return;
@@ -196,18 +226,28 @@ const AdventureActive = ({
             });
           }
 
+          // 🛡️ 👑 【三土手神特注インフラ】配列の中から自分のキャラクターIDを持つスロットデータをピンポイント抽出
+          const slotData = partyCharacterIds.find(p => p && (typeof p === 'object' ? p.id === ch.id : p === ch.id));
+          
+          // 編成画面のトグルスイッチでパチパチ切り替えられた最新の position ('front' または 'back') を全自動上書きマウント！
+          const position = slotData && typeof slotData === 'object' ? slotData.position : 'front';
+
           return {
             id: ch.id,
             name: ch.custom_name,
             level: myLevel,
-            mhp: ch.max_hp || ch.mhp || 424, // 三土手さんの初期HP 424 を完全維持
+            weaponName,
+            // 🛡️ 🆕 キャラクターに武器射程を記憶させる
+            weaponRange: ch.equips?.right_hand?.range || 'S',
+            position,
+            mhp: ch.max_hp || ch.mhp || 424, 
             hp: ch.max_hp || ch.mhp || 424,
             msp: ch.max_sp || ch.msp || 50,
             sp: ch.max_sp || ch.msp || 50,
             str: ch.roStatus?.str || ch.str || 10,
             agi: ch.roStatus?.agi || ch.agi || (ch.meta?.stat_agi || 10) + (ch.bonus?.agi || 0),
             vit: ch.roStatus?.vit || ch.vit || (ch.meta?.stat_vit || 10) + (ch.bonus?.vit || 0),
-            dex: ch.roStatus?.dex || ch.dex || (ch.meta?.stat_dex || 10) + (ch.bonus?.dex || 0), // 💡タイポ修正
+            dex: ch.roStatus?.dex || ch.dex || (ch.meta?.stat_dex || 10) + (ch.bonus?.dex || 0), 
             luk: ch.roStatus?.luk || ch.luk || 10,
             job: myJob,
             weaponSubtype,
@@ -216,26 +256,27 @@ const AdventureActive = ({
             cardRaceEff,
             cardElemEff,
             skillsList: availableSkills,
-            state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0 },
+            state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 },
+            
+            // 🔮 バフ・デバフ用のアクティブ配列プール
+            activeBuffs: [],
 
             final_battle_critical: Number(alcoholCritical),
 
-            // 🩸 装備（ch.equips）から確実に吸い上げた確定値を戦闘素体にインジェクション！
+            // 🩸 装備から吸い上げた吸血値をインジェクション
             hp_drain_chance: totalDrainChance,
             hp_drain_percent: totalDrainPercent,
 
             card_inflict_type: totalInflictType,
             card_inflict_chance: maxInflictChance,
 
-            // 🔮 🆕 【三土手創世神特注：戦闘パラメータ一斉召喚配線】
-            // これにより、後ろの回避判定で target.roStatus.flee (236) が100%読み込めるようになります！
             roStatus: ch.roStatus || {},
             flee: ch.roStatus?.flee || 0,
             hit: ch.roStatus?.hit || 0,
             mdef: ch.roStatus?.mdef || 0,
-            // 🔮 【追記】酒場で育った本物のAspd（190.0）を戦闘素体へ確実にマウント！
             aspd: ch.roStatus?.aspd || 150.0 
-          };        });
+          };
+        });
         partyStateRef.current = loadedParty;
         setParty(loadedParty);
 
@@ -503,7 +544,24 @@ const AdventureActive = ({
             // ⚔️ 【通常行動ルート】動ける状態（または暗闇、沈滅、呪いなど）はここを通る
             const aliveMembers = localParty.filter(p => p.hp > 0);
             if (aliveMembers.length > 0) {
-              const target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
+              
+              // 🔮 🆕 三土手神特注：【前衛・後衛 ＆ 敵遠距離フラグ連動型】ターゲット選定エンジン！
+              let target = null;
+              
+              // 味方の中で、現在「前衛」かつ「生存」している肉体の壁メンバーを抽出
+              const frontLineMembers = aliveMembers.filter(p => p.position === 'front');
+
+              // 🛡️ 条件ジャッジ：
+              // 敵データ自体に「遠距離攻撃（is_range_atk）」のフラグが TRUE で入っている場合、
+              // または、味方の「前衛」がすでに全員力尽きて全滅している場合のみ、後衛を含む全員からランダムスキャン
+              if (enemyItem.is_range_atk === true || frontLineMembers.length === 0) {
+                target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
+              } else {
+                // ⚔️ 通常の近接攻撃エネミーの場合：前衛にいるメンバー（Slot1〜2等で前衛にしたキャラ）からのみランダムチョイス！
+                target = frontLineMembers[Math.floor(Math.random() * frontLineMembers.length)];
+              }
+
+              // ターゲットが確定したら、インデックスをサルベージして通常の計算へ移行
               const targetIdx = localParty.findIndex(p => p.id === target.id);
               
               let dmg = 0;
@@ -519,12 +577,12 @@ const AdventureActive = ({
               }
 
               if (usedSkill) {
-                // ✨ 魔法・スキル発動ルート
+                // ✨ 魔法・スキル発動ルート（大魔法やポイズン等は射程を無視して後衛にも届く！）
                 const isMagic = usedSkill.skill_type === 'magic';
                 const baseValue = Number(usedSkill.effect_value || 0);
                 
                 let calculatedPower = baseValue;
-                if (usedSkill.value_type === 'percent') {
+                if (usedSkill.value_type === 'percent' && enemyItem) {
                   const eInt = enemyItem.int || 10;
                   const eStr = enemyItem.str || 10;
                   const baseStat = isMagic ? eInt * 2 : eStr * 2;
@@ -556,7 +614,7 @@ const AdventureActive = ({
                   }
                 }
               } else {
-                // 💀 【従来の通常攻撃ルート】スキルを使わない場合は通常攻撃へ
+                // 💀 【通常攻撃ルート】スキルを使わない通常攻撃は、上で決まった肉体の壁（前衛）を確実に殴る！
                 const isCursed = currentStatus === '呪い';
                 const effectiveStr = isCursed ? Math.floor(enemyItem.str * 0.5) : enemyItem.str;
                 const baseAtk = Math.floor(Math.random() * 10) + 10 + effectiveStr;
@@ -564,11 +622,11 @@ const AdventureActive = ({
                 const isBlinded = currentStatus === '暗闇';
                 
                 if (isBlinded && Math.random() < 0.5) {
-                  logText = `🕶️ ${enemyItem.name} は暗闇に包まれて攻撃を外した！ ${target.custom_name || target.name} は鮮やかに回避した！`;
+                  logText = `🕶️ ${enemyItem.name} は暗闇に包まれて攻撃を外した！ ${target.name} は鮮やかに回避した！`;
                 } else {
-                  // 🔮 【三土手神リフォーム：RO式・通常物理攻撃のFlee完全回避ジャッジ】
+                  // 🔮 【Flee完全回避ジャッジ】
                   const enemyHit = Number(enemyItem.hit || 21);
-                  const playerFlee = Number(target.roStatus?.flee || target.flee || localParty?.find(p => p.id === target.id)?.roStatus?.flee || 0);
+                  const playerFlee = Number(target.roStatus?.flee || target.flee || 0);
                   const fleeChance = 20 + playerFlee - enemyHit;
                   const cappedFleeChance = Math.min(95, fleeChance);
                   const randomRoll = Math.floor(Math.random() * 100);
@@ -614,19 +672,58 @@ const AdventureActive = ({
 
       // 👤 プレイヤー（パーティ）側の行動判定ループへ完全に着地
       localParty.forEach((member) => {
-        if (member.hp <= 0) return;
+  console.log(`🛡️ ${member.name} の射程: ${member.weaponRange}, 位置: ${member.position}`);
+  if (member.hp <= 0) return;
 
-        // 🎯 生存エネミー確認
-        let aliveEnemies = localEnemies.filter(e => e.hp > 0);
-        if (aliveEnemies.length === 0) return;
+  let aliveEnemies = localEnemies.filter(e => e.hp > 0);
+  if (aliveEnemies.length === 0) return;
 
-        const currentPlayerAspd = Number(member.aspd || 150.0);
-        const playerInterval = ((200 - currentPlayerAspd) / 50) * 1000;
-        partyAtkTimers.current[member.id] += 20;
+  const currentPlayerAspd = Number(member.aspd || 150.0);
+  const playerInterval = ((200 - currentPlayerAspd) / 50) * 1000;
+  partyAtkTimers.current[member.id] += 20;
 
-        // 💡 攻撃ターンが回ってきた時だけ処理を実行する
-        if (partyAtkTimers.current[member.id] >= playerInterval) {
-          partyAtkTimers.current[member.id] = 0;
+  if (partyAtkTimers.current[member.id] >= playerInterval) {
+    partyAtkTimers.current[member.id] = 0;
+
+    // 🆕 【三土手神特注：後衛行動制御ゲート】
+    const isBackRow = member.position === 'back';
+const isShortRange = member.weaponRange === 'S';
+
+if (isBackRow && isShortRange) {
+  // 1. そもそもスキルを持っていないなら待機
+  const hasAnySkill = member.skillsList && member.skillsList.length > 0;
+  
+  // 2. 「今、実行可能なスキルが1つもない」かチェック
+  // 回復が必要ないのに回復スキルしかない場合なども「実行可能」とは言えません
+  const canPerformAnySkill = member.skillsList.some(sk => {
+    // SPが足りているか
+    if (member.sp < Number(sk.sp_cost || 0)) return false;
+    // 回復・解除系の場合、ターゲットが居なければ使えないとみなす
+    if (sk.effect_type === '状態異常回復') {
+      return localParty.some(p => p.hp > 0 && p.state?.currentStatus && ['スタン', '凍結', '毒', '暗闇', '睡眠', '沈滅', '沈黙', '呪い', '石化'].includes(p.state.currentStatus));
+    }
+    if (sk.effect_type === '回復' || sk.name?.includes('ヒール')) {
+      return localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424));
+    }
+    // 攻撃魔法ならOK
+    return true;
+  });
+
+  // 魔法が全く無い、またはSP不足、または今の局面で使える魔法がないなら待機
+  if (!hasAnySkill || !canPerformAnySkill) {
+    // すでに待機ログが出ていたら重複して出さない
+    const alreadyWaiting = displayedLogs.some(l => l.text.includes(member.name + " は後衛から"));
+    if (!alreadyWaiting) {
+      newLogs.push({ id: `wait-${member.id}-${Date.now()}`, text: `🛡️ ${member.name} は後衛から好機を伺い、静かに待機している。`, type: "system" });
+    }
+    return; // 確実に待機させる
+  }
+}
+    // 後衛でSP切れの場合も待機
+    if (isBackRow && member.sp <= 0) {
+      newLogs.push({ id: `wait-sp-${member.id}-${Date.now()}`, text: `💤 ${member.name} は魔力が枯渇し、身を守るのに専念している。`, type: "system" });
+      return; 
+    }
 
           // 🧪 1. 状態異常スリップ＆解除判定
           if (member.state?.currentStatus && member.state.currentStatus !== 'none' && member.state.currentStatus !== 'なし') {
@@ -652,559 +749,363 @@ const AdventureActive = ({
           let primaryTarget = [...aliveEnemies].sort((a, b) => (a.mhp - b.mhp) || (a.hp - b.hp))[0];
           let targetIdx = localEnemies.findIndex(e => e.instanceId === primaryTarget.instanceId);
 
-          // 🧠 【ここですべての変数を一度だけ宣言！】
+          // 🧠 全ての変数を一度だけ宣言
           let shouldLaunchMagic = false;
           let playableSkill = null;
+          let targetAlly = null;
           let finalDmg = 0;
           let logText = "";
           
+          // --- ✂️ ここから追加・修正ブロック ---
+          // 🛡️ 【三土手神特注】後衛キャラ行動制限エンジン
+          if (member.position === 'back') {
+            // 現在使えるスキルを再計算（攻撃対象や回復対象がいなくても使えるか判定）
+            const canUseSkill = member.skillsList.some(sk => member.sp >= Number(sk.sp_cost || 0));
+            
+            // 魔法・スキルが全くない、またはSP不足なら、どんな状況でも通常攻撃は「絶対に」させない
+            if (!playableSkill && !canUseSkill) {
+               newLogs.push({ id: `wait-back-${member.id}-${Date.now()}`, text: `🛡️ ${member.name} は後衛のため、近接攻撃を封印し待機した。`, type: "system" });
+               return; // 攻撃の計算ロジックに到達させない
+            }
+          }
+          // --- ✂️ ここまで追加・修正ブロック ---
+
           const myStr = member.str || 10;
           const myDex = member.dex || 10;
-          const randomizedAtk = Math.floor(Math.random() * ((myStr * 2.5 + myDex) - (myStr + myDex * 0.5) + 1)) + Math.floor(myStr + myDex * 0.5);
+          const minAtk = Math.floor(myStr + (myDex * 0.5));
+          const maxAtk = Math.floor(myStr * 2.5 + myDex);
+          const randomizedAtk = Math.floor(Math.random() * (maxAtk - minAtk + 1)) + minAtk;
 
-          // スキル選択AI
-          const activeSkills = member.skillsList || [];
-          playableSkill = activeSkills.length > 0 ? activeSkills[Math.floor(Math.random() * activeSkills.length)] : null;
+          // 🚑 救命・浄化AI環境スキャン（厳密な8大状態異常検知センサー）
+          const VALID_STATUS_AILMENTS = ['スタン', '凍結', '毒', '暗闇', '睡眠', '沈滅', '沈黙', '呪い', '石化'];
           
-          // 🚑 救命・浄化AI判定
-          const hasStatusAilment = localParty.some(p => p.hp > 0 && p.state?.currentStatus && p.state.currentStatus !== 'none' && p.state.currentStatus !== 'なし');
+          const hasStatusAilment = localParty.some(p => 
+            p.hp > 0 && 
+            p.state?.currentStatus && 
+            VALID_STATUS_AILMENTS.includes(p.state.currentStatus)
+          );
+          
           const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7);
 
+          // 🧠 三土手神特注：スキルプールから「今撃てる有効なスキル」を事前選別
+          const rawSkillsList = member.skillsList || [];
+          const allowedSkills = rawSkillsList.filter(sk => {
+            // 異常者が誰もいないなら、キュア系は選考対象外
+            if (sk.effect_type === '状態異常回復' && !hasStatusAilment) return false;
+            // 瀕死の味方が誰もいないなら、ヒール系も選考対象外
+            if ((sk.effect_type === '回復' || sk.name?.includes('ヒール')) && !isEmergencyHP) return false;
+            return true;
+          });
+
+          // 🚑 回復・解除魔法の最優先発動AI
           if (hasStatusAilment) {
-            const cureSkill = activeSkills.find(sk => sk.effect_type === '状態異常回復');
-            if (cureSkill) { playableSkill = cureSkill; shouldLaunchMagic = true; }
-          } else if (isEmergencyHP) {
-            const healSkill = activeSkills.find(sk => sk.target_type === '味方単体' || sk.target_type === '味方全体' || sk.name?.includes('ヒール') || sk.effect_type === '回復');
-            if (healSkill) { playableSkill = healSkill; shouldLaunchMagic = true; }
-          } else if (primaryTarget) {
-            // 🔮 🧠 【新規追加：属性弱点スキャン＆エクスプロイトAI】
-            // 命の危機がない場合は、ロックオンした敵の弱点を突く魔法を探す！
-            
-            // RO式 属性相性マップ (敵の属性 -> それに対する弱点属性)
-            const weaknessMap = {
-              '水': ['風', '風属性'],
-              '火': ['水', '水属性'],
-              '地': ['火', '火属性'],
-              '風': ['地', '地属性'],
-              '闇': ['聖', '聖属性'],
-              '不死': ['聖', '聖属性', '火', '火属性'],
-              '聖': ['闇', '闇属性']
-            };
-            
-            // 狙っている敵の属性から、弱点となる属性の配列を取得
-            const weaknesses = weaknessMap[primaryTarget.element] || [];
-            
-            if (weaknesses.length > 0) {
-              // 自分が覚えているスキルの中から、弱点属性かつSPが足りている攻撃スキルを探す
-              const exploitSkill = activeSkills.find(sk => 
-                weaknesses.includes(sk.element) && 
-                member.sp >= Number(sk.sp_cost || 0)
-              );
-              
-              if (exploitSkill) {
-                playableSkill = exploitSkill; // 弱点魔法を見つけたら強制的に手札をすり替える！
-              }
+            const cureSkill = allowedSkills.find(sk => sk.effect_type === '状態異常回復' && member.sp >= Number(sk.sp_cost || 0));
+            if (cureSkill) { 
+                playableSkill = cureSkill; 
+                shouldLaunchMagic = true; 
+                targetAlly = localParty.find(p => p.hp > 0 && p.state?.currentStatus && VALID_STATUS_AILMENTS.includes(p.state.currentStatus));
             }
-          }
-
-          const skillSpCost = playableSkill ? Number(playableSkill.sp_cost || 0) : 0;
-          const isTargetBoss = primaryTarget.is_boss === true;
-          const currentSpRatio = (member.sp / (member.msp || 50)) * 100;
-
-          // 📐 【新・第1ステップ判定】魔法をブッ放すかどうかのガンビット条件ダイス
-          if (playableSkill && member.sp >= skillSpCost) {
-            // 🏥 🆕 【三土手神特注：ヒール温存AIジャッジ完全強化版】
-            const isHeal = playableSkill.target_type === '味方単体' || 
-                           playableSkill.target_type === '味方全体' || 
-                           playableSkill.name?.includes('ヒール') || 
-                           playableSkill.effect_type === '回復';
-            
-            if (isHeal) {
-              const hasCriticallyInjuredAlly = localParty.some(ally => {
-                if (ally.hp <= 0) return false;
-                const maxHpVal = ally.mhp || 424;
-                return ally.hp < (maxHpVal * 0.7); 
-              });
-              
-              if (!hasCriticallyInjuredAlly) {
-                // 誰もピンチじゃなければヒールは温存
-                shouldLaunchMagic = false;
-              } else {
-                // 🚑 【修正】HP70%未満の味方がいるなら、ボス戦やSP50%以下の条件を完全無視して絶対発動！
+          } 
+          
+          if (!targetAlly && isEmergencyHP) {
+            const healSkill = allowedSkills.find(sk => sk.target_type === '味方単体' || sk.target_type === '味方全体' || sk.name?.includes('ヒール') || sk.effect_type === '回復');
+            if (healSkill && member.sp >= Number(healSkill.sp_cost || 0)) { 
+                playableSkill = healSkill; 
+                shouldLaunchMagic = true; 
+                targetAlly = localParty.filter(p => p.hp > 0 && p.hp < (p.mhp || 424)).sort((a,b) => a.hp - b.hp)[0] || member;
+            }
+          } 
+          
+          if (!targetAlly && primaryTarget) {
+            // 🔮 弱点属性攻撃スキャン
+            const weaknessMap = {
+              '水': ['風', '風属性'], '火': ['水', '水属性'], '地': ['火', '火属性'],
+              '風': ['地', '地属性'], '闇': ['聖', '聖属性'], '不死': ['聖', '聖属性', '火', '火属性'], '聖': ['闇', '闇属性']
+            };
+            const weaknesses = weaknessMap[primaryTarget.element] || [];
+            if (weaknesses.length > 0) {
+              const exploitSkill = allowedSkills.find(sk => weaknesses.includes(sk.element) && member.sp >= Number(sk.sp_cost || 0));
+              if (exploitSkill) {
+                playableSkill = exploitSkill;
                 shouldLaunchMagic = true;
               }
-            } else {
-              // ⚔️ 攻撃魔法やバフなどは今まで通り、ボス戦以外ではSP50%以上でのみ発動（温存ルール適用）
-              if (isTargetBoss || currentSpRatio > 50) shouldLaunchMagic = true;
             }
           }
 
-          // 🎰 【神の優先度リフォーム】クリティカル判定ダイスを最上部（魔法判定の直下）に引き上げ！
-          // これにより、魔法が撃てない（または温存）の時は、通常スキル抽選(45%)を完全に無視して確定クリティカルが最優先で弾ける！
+          // ─── ここから魔法を撃たなかった場合の通常攻撃／確率特技判定 ───
+          const skillSpCost = playableSkill ? Number(playableSkill.sp_cost || 0) : 0;
+          const isTargetBoss = primaryTarget ? primaryTarget.is_boss === true : false;
+          const currentSpRatio = (member.sp / (member.msp || 50)) * 100;
+
+          // 💡 変数名をactiveSkillsへ安全マウントして変数未定義クラッシュを完全に粉砕！
+          const activeSkills = allowedSkills;
+
+          if (!shouldLaunchMagic && activeSkills.length > 0) {
+            playableSkill = activeSkills[Math.floor(Math.random() * activeSkills.length)];
+          }
+
+          if (playableSkill && !shouldLaunchMagic && member.sp >= Number(playableSkill.sp_cost || 0)) {
+            if (isTargetBoss || currentSpRatio > 50) {
+              shouldLaunchMagic = true;
+            }
+          }
+
           const finalCriticalRate = member.final_battle_critical > 0 ? member.final_battle_critical : (member.luk || 10);
           const isCritical = Math.random() * 100 < finalCriticalRate;
 
-          // 📊 総合倍率算出用の共通アタックスペック準備（ロックオンターゲットの特性を自動走査）
           const cardSize = member.cardSizeEff || {};
           const cardRace = member.cardRaceEff || {};
           const cardElem = member.cardElemEff || {};
           const sizeValue = cardSize['小型'] || 0;
           const raceValue = cardRace['無形'] || 0;
           const elemValue = cardElem['地'] || 0;
-
+          
+          // 🔮 🆕 三土手神特注：初回ロード時に小文字で安全マウントした武器属性（weaponElement）を正確に引き継ぐ
           let currentWeaponElement = member.weaponElement || '無';
           if (elemValue > 0) currentWeaponElement = '地';
 
           const attackSpecs = {
-            element: currentWeaponElement,
-            weapon_subtype: member.weaponSubtype,
+            element: currentWeaponElement, 
+            // 🔮 🆕 ここを修正！初回ロードで魂に刻んだ本物の武器種別（weaponSubtype）をガチッと数理計算室へ投下！
+            weapon_subtype: member.weaponSubtype, 
             is_physical: true,
-            card_size_eff: { [primaryTarget.size]: sizeValue },
-            card_race_eff: { [primaryTarget.race]: raceValue },
-            card_elem_eff: { [primaryTarget.element]: elemValue }
+            card_size_eff: primaryTarget ? { [primaryTarget.size]: sizeValue } : {}, 
+            card_race_eff: primaryTarget ? { [primaryTarget.race]: raceValue } : {}, 
+            card_elem_eff: primaryTarget ? { [primaryTarget.element]: elemValue } : {}
           };
-          const defenderSpecs = { element: primaryTarget.element, race: primaryTarget.race, size: primaryTarget.size };
+          const defenderSpecs = primaryTarget ? { element: primaryTarget.element, race: primaryTarget.race, size: primaryTarget.size } : { element: '無', race: '無形', size: '中型' };
           const totalMultiplier = calculateDamageModifier(attackSpecs, defenderSpecs);
 
-          // ─────────────────────────────────────────────────────────────
-          // ⚡⚡ 【作戦行動ツリーへの着地分岐：完全版】
-          // ─────────────────────────────────────────────────────────────
-          if (shouldLaunchMagic) {
-            // =============================================================
-            // ✨ 【確定第1優先：魔法詠唱ルート】（ヒール等の味方補助＆各種攻撃魔法）
-            // =============================================================
-            member.sp = Math.max(0, member.sp - skillSpCost);
+          // ⚡ 実行ルート
+          if (shouldLaunchMagic && playableSkill) {
+            member.sp = Math.max(0, member.sp - Number(playableSkill.sp_cost || 0));
             const baseValue = Number(playableSkill.effect_value || 0);
             
-            // 🏥 🛠️ 🆕 【三土手神特注：ヒール・味方ターゲット自動識別配線】
-            // target_typeが味方指定、または名前に「ヒール」が含まれるか、効果分類が「回復」の場合
-            const isHealSkill = playableSkill.target_type === '味方単体' || 
-                                playableSkill.target_type === '味方全体' || 
-                                playableSkill.name?.includes('ヒール') ||
-                                playableSkill.effect_type === '回復' ||
-                    playableSkill.effect_type === '状態異常回復';
+            const isCureSkill = playableSkill.effect_type === '状態異常回復';
+            const isHealSkill = playableSkill.target_type === '味方単体' || playableSkill.target_type === '味方全体' || playableSkill.name?.includes('ヒール') || playableSkill.effect_type === '回復';
 
-            if (isHealSkill) {
-              // 🛠️ 🆕 【三土手創世神特注：倍率計算インフラ完全同期】
-              // 🛠️ 🆕 【三土手創世神特注：倍率計算インフラ完全同期】
-              let calculatedHeal = Number(playableSkill.effect_value || playableSkill.base_value || 20);
-              
-              // 🧹 「|| true」を粉砕し、ダッシュボードの設定に完全追従させる！
-              if (playableSkill.value_type === 'percent' || playableSkill.calculation_type === 'percent') {
-                const myInt = member.int || member.stat_int || 10;
-                const myStr = member.str || 10;
-                // 📐 クレリックのステータスと、ダッシュボードの威力を完全結合
-                calculatedHeal = Math.floor((myStr + myInt * 2.5) * (Number(playableSkill.effect_value || 70) / 100));
+            if (isCureSkill || isHealSkill) {
+              let calculatedHeal = 0;
+              if (baseValue > 0) {
+                calculatedHeal = baseValue;
+                if (playableSkill.value_type === 'percent' || playableSkill.calculation_type === 'percent') {
+                  const myInt = member.int || member.stat_int || 10;
+                  calculatedHeal = Math.floor((myStr + myInt * 2.5) * (baseValue / 100));
+                }
+                if (calculatedHeal < 1) calculatedHeal = 1;
               }
-              if (calculatedHeal < 1) calculatedHeal = 1;
 
-              // 🛠️ 🆕 【全体ヒール判定】
               const isAreaHeal = playableSkill.target_type === '味方全体';
 
               if (isAreaHeal) {
-                // 🏰 🔮 【味方全体回復ルート】生存している部隊全員をループ処理
-                logText = `🚑💚 [AREA HEAL] ${member.name} が聖なる讃美歌 【${playableSkill.name}】 を詠唱！光の粒子が部隊全体を包み込む！ (残SP: ${member.sp})`;
+                logText = `🚑✨ [全体発動] ${member.name} が 【${playableSkill.name}】 を詠唱！ (残SP: ${member.sp})`;
                 newLogs.push({ id: `p-heal-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
-
+                
                 localParty = localParty.map(ally => {
                   if (ally.hp <= 0) return ally;
-
-                  const targetMhp = ally.mhp || 424;
-                  const oldHp = ally.hp;
-                  const nextHp = Math.min(targetMhp, ally.hp + calculatedHeal);
-                  const actualHealAmount = nextHp - oldHp;
-
-                  newLogs.push({
-                    id: `p-heal-aoe-hit-${ally.id}-${Date.now()}-${Math.random()}`,
-                    text: `  ➔ ✨ 【${ally.name}】 の傷口が癒え、HPが ${actualHealAmount} 回復！ (${nextHp}/${targetMhp})`,
-                    type: "success"
-                  });
-
-                  return { ...ally, hp: nextHp };
-                });
-
-                logText = ""; 
-
-              } else {
-                // 👤 【味方単体回復ルート】
-                let targetAlly = null;
-                let minHpRatio = 1.1;
-
-                localParty.forEach(ally => {
-                  if (ally.hp > 0) {
-                    const maxHpVal = ally.mhp || 424;
-                    const currentRatio = ally.hp / maxHpVal;
-                    if (currentRatio < minHpRatio) {
-                      minHpRatio = currentRatio;
-                      targetAlly = ally;
-                    }
+                  let updatedAlly = { ...ally };
+                  if (calculatedHeal > 0) {
+                    const targetMhp = ally.mhp || 424;
+                    const oldHp = ally.hp;
+                    const nextHp = Math.min(targetMhp, ally.hp + calculatedHeal);
+                    newLogs.push({ id: `p-heal-aoe-hit-${ally.id}-${Date.now()}`, text: `   ➔ ✨ 【${ally.name}】 のHPが ${nextHp - oldHp} 回復！ (${nextHp}/${targetMhp})`, type: "success" });
+                    updatedAlly.hp = nextHp;
                   }
+                  if (isCureSkill) {
+                    updatedAlly.state = { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 };
+                  }
+                  return updatedAlly;
                 });
-
+                
+                if (isCureSkill) {
+                  newLogs.push({ id: `p-cure-aoe-sys-${member.id}-${Date.now()}`, text: `   ➔ 🌟 聖なる光が部隊全員のバッドステータスを完全に打ち払った！`, type: "success" });
+                }
+                logText = ""; 
+              } else {
                 if (!targetAlly) targetAlly = member;
-
                 const targetMhp = targetAlly.mhp || 424;
                 const oldHp = targetAlly.hp;
                 
-                // 🛠️ 🆕 古い固定値(21)の幽霊を粉砕し、上で計算した「calculatedHeal（24）」を確実に直撃注入！
-                targetAlly.hp = Math.min(targetMhp, targetAlly.hp + calculatedHeal);
-                const actualHealAmount = targetAlly.hp - oldHp;
+                if (calculatedHeal > 0) {
+                  targetAlly.hp = Math.min(targetMhp, targetAlly.hp + calculatedHeal);
+                  logText = `🚑💚 [スキル発動] ${member.name} の 【${playableSkill.name}】！ ➔ ${targetAlly.name} のHPが ${targetAlly.hp - oldHp} 回復！ (残SP: ${member.sp})`;
+                } else {
+                  logText = `✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を唱え、神聖な魔力で 【${targetAlly.name}】 を包み込んだ！ (残SP: ${member.sp})`;
+                }
+
+                if (isCureSkill) {
+                  targetAlly.state = { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 };
+                  logText += ` ➔ 🌟 状態異常が完全に浄化された！`;
+                }
 
                 const partyFindIdx = localParty.findIndex(p => p.id === targetAlly.id);
                 if (partyFindIdx !== -1) {
                   localParty[partyFindIdx].hp = targetAlly.hp;
-                }
-
-                logText = `🚑💚 [HEAL] ${member.name} の 【${playableSkill.name}】 が発動！ ➔ ${targetAlly.name} の傷口が癒え、HPが ${actualHealAmount} 回復！ (残SP: ${member.sp})`;
-              }
-
-              // 🌟🌟🌟 【ここに追加！】三土手神特注：状態異常の浄化（キュア）処理 🌟🌟🌟
-              if (playableSkill.effect_type === '状態異常回復') {
-                if (isAreaHeal) {
-                  // 全体魔法なら生存メンバー全員のデバフを剥がす
-                  localParty = localParty.map(p => {
-                    if (p.hp <= 0) return p;
-                    return {
-                      ...p,
-                      state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 }
-                    };
-                  });
-                  newLogs.push({ id: `cure-aoe-${member.id}-${Date.now()}`, text: ` ✨ [浄化] まばゆい光が部隊全体の状態異常を完全に打ち払った！`, type: "success" });
-                } else {
-                  // 単体魔法ならターゲットのデバフのみ剥がす
-                  const tIdx = localParty.findIndex(p => p.id === targetAlly.id);
-                  if (tIdx !== -1) {
-                    localParty[tIdx].state = { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 };
-                  }
-                  logText += ` ✨ [浄化] ${targetAlly.name} の状態異常が完全に浄化された！`;
+                  localParty[partyFindIdx].state = targetAlly.state;
                 }
               }
-              // 🌟🌟🌟 追加ここまで 🌟🌟🌟
-
             } else {
-              // ⚔️ 【従来の攻撃魔法・範囲魔法ルート】（※1行も壊さずそのままここに完全保護格納！）
-              const isAOE = playableSkill.target_type === '敵全体' || 
-                            playableSkill.target_type === '範囲エネミー' || 
-                            playableSkill.name?.includes('全体') || 
-                            playableSkill.isAreaOfEffect === true;
-
+              // 🔮 攻撃魔法・範囲魔法ルート
+              const isAOE = playableSkill.target_type === '敵全体' || playableSkill.target_type === '範囲エネミー' || playableSkill.name?.includes('全体') || playableSkill.isAreaOfEffect === true;
               if (isAOE) {
                 const isMagic = playableSkill.skill_type === 'magic';
-                logText = isMagic 
-                  ? `🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が戦場全域に炸裂！(残SP: ${member.sp})`
-                  : `⚔️💥 【全体物理特技】${member.name} の【${playableSkill.name}】が一閃！全戦場を巻き込む！(残SP: ${member.sp})`;
-                
+                logText = isMagic ? `🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が炸裂！(残SP: ${member.sp})` : `⚔️💥 【全体特技】${member.name} の【${playableSkill.name}】が一閃！(残SP: ${member.sp})`;
                 newLogs.push({ id: `p-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
-
                 localEnemies = localEnemies.map(enemyItem => {
                   if (enemyItem.hp <= 0) return enemyItem;
-
                   let calculatedPower = baseValue;
                   if (playableSkill.value_type === 'percent') {
                     if (isMagic) {
-                      const myInt = member.int || member.stat_int || 10;
-                      const myDex = member.dex || member.stat_dex || 10;
-                      const minMatk = Math.floor(myInt + (myDex * 0.2));
-                      const maxMatk = Math.floor(myInt * 2.0 + myDex);
-                      const magicBaseAtk = Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk;
-                      calculatedPower = Math.floor((magicBaseAtk * baseValue) / 100);
-                    } else {
-                      calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
-                    }
+                      const myInt = member.int || 10; const minMatk = Math.floor(myInt + (myDex * 0.2)); const maxMatk = Math.floor(myInt * 2.0 + myDex);
+                      calculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
+                    } else { calculatedPower = Math.floor((randomizedAtk * baseValue) / 100); }
                   }
-
-                  const skillSpecs = {
-                    ...attackSpecs,
-                    element: playableSkill.element || '無',
-                    is_physical: playableSkill.skill_type === 'art',
-                    card_size_eff: { [enemyItem.size]: sizeValue },
-                    card_race_eff: { [enemyItem.race]: raceValue },
-                    card_elem_eff: { [enemyItem.element]: elemValue }
-                  };
-                  const specDefender = { element: enemyItem.element, race: enemyItem.race, size: enemyItem.size };
-                  const skillMultiplier = calculateDamageModifier(skillSpecs, specDefender);
-
-                  const enemyMdef = enemyItem.int || enemyItem.stat_int || 0;
+                  const skillSpecs = { ...attackSpecs, element: playableSkill.element || '無', is_physical: !isMagic, card_size_eff: { [enemyItem.size]: sizeValue }, card_race_eff: { [enemyItem.race]: raceValue }, card_elem_eff: { [enemyItem.element]: elemValue } };
+                  const skillMultiplier = calculateDamageModifier(skillSpecs, { element: enemyItem.element, race: enemyItem.race, size: enemyItem.size });
+                  const enemyMdef = enemyItem.int || 0;
                   const aoeDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier) - enemyMdef);
                   const nextHp = Math.max(0, enemyItem.hp - aoeDmg);
-
-                  let aoeLog = `  ➔ 💥 ${enemyItem.name} に ${aoeDmg} の全体魔法ダメージ！`;
-
+                  let aoeLog = `   ➔ 💥 ${enemyItem.name} に ${aoeDmg} の全体ダメージ！`;
                   let nextState = { ...enemyItem.state };
                   if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && nextHp > 0) {
                     const baseChance = Number(playableSkill.effect_chance || 0);
                     const enemyResistPct = enemyItem[`resist_${playableSkill.effect_type === 'スタン' ? 'stun' : playableSkill.effect_type === '凍結' ? 'freeze' : playableSkill.effect_type === '毒' ? 'poison' : 'blind'}`] || 0;
-                    
                     if (Math.random() * 100 < Math.max(0, baseChance - enemyResistPct)) {
                       nextState = { currentStatus: playableSkill.effect_type, durationTurns: Number(playableSkill.duration_turns || 3) };
                       aoeLog += ` ✨ [${playableSkill.effect_type}]状態にした！`;
                     }
                   }
-
                   newLogs.push({ id: `p-aoe-hit-${enemyItem.instanceId}-${Date.now()}-${Math.random()}`, text: aoeLog, type: "success" });
-                  
-                  if (nextHp <= 0) {
-                    newLogs.push({ id: `win-aoe-${enemyItem.instanceId}-${Date.now()}`, text: `🏆 🎉 【${enemyItem.name}】を全体魔法で撃破した！`, type: "system" });
-                  }
-
+                  if (nextHp <= 0) newLogs.push({ id: `win-aoe-${enemyItem.instanceId}-${Date.now()}`, text: `🏆 🎉 【${enemyItem.name}】を全体攻撃で撃破した！`, type: "system" });
                   return { ...enemyItem, hp: nextHp, state: nextState };
                 });
-
                 logText = ""; 
-
               } else {
-                // 【単体魔法ルート】標準のロックオンエネミーに直撃
                 let calculatedPower = baseValue;
-                if (playableSkill.value_type === 'percent') {
-                  calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
-                }
-
+                if (playableSkill.value_type === 'percent') calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
                 const skillSpecs = { ...attackSpecs, element: playableSkill.element || '無', is_physical: playableSkill.skill_type === 'art' };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
-
                 finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-
-                const bossModeMsg = isTargetBoss ? `🔥[BOSS決戦・限界突破!!] ` : `🔮`;
-                logText = `${bossModeMsg}${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！(残SP: ${member.sp})`;
-
+                logText = `${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
                 if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && localEnemies[targetIdx].hp > 0) {
                   const baseChance = Number(playableSkill.effect_chance || 0);
-                  let enemyResistPct = 0;
-                  if (playableSkill.effect_type === 'スタン')  enemyResistPct = primaryTarget.resist_stun || 0;
-                  if (playableSkill.effect_type === '凍結')  enemyResistPct = primaryTarget.resist_freeze || 0;
-                  if (playableSkill.effect_type === '毒')    enemyResistPct = primaryTarget.resist_poison || 0;
-                  if (playableSkill.effect_type === '暗闇')  enemyResistPct = primaryTarget.resist_blind || 0;
-
-                  const finalInflictChance = Math.max(0, baseChance - enemyResistPct);
-                  if (Math.random() * 100 < finalInflictChance) {
+                  const enemyResistPct = playableSkill.effect_type === 'スタン' ? primaryTarget.resist_stun || 0 : playableSkill.effect_type === '凍結' ? primaryTarget.resist_freeze || 0 : playableSkill.effect_type === '毒' ? primaryTarget.resist_poison || 0 : playableSkill.effect_type === '暗闇' ? primaryTarget.resist_blind || 0 : 0;
+                  if (Math.random() * 100 < Math.max(0, baseChance - enemyResistPct)) {
                     const turns = Number(playableSkill.duration_turns || 3);
                     localEnemies[targetIdx].state = { currentStatus: playableSkill.effect_type, durationTurns: turns };
-                    logText += ` ✨ [追加効果] ${primaryTarget.name} を【${playableSkill.effect_type}】状態にした！(${turns}ターン)`;
+                    logText += ` ✨ [追加効果] ${primaryTarget.name} を【${playableSkill.effect_type}】状態にした！`;
                   }
                 }
               }
             }
-
           } else if (isCritical) {
-            // =============================================================
-            // 💥💥 【確定第2優先：LUK動的クリティカル】通常スキルに吸われず100%発動！
-            // =============================================================
+            // 🛡️ 【重要：クリティカル封印パッチ】
+            // 後衛かつSレンジ武器なら、クリティカル攻撃も「絶対に」させない（ログも出さないサイレント仕様）
+            if (member.position === 'back' && member.weaponRange === 'S') {
+               return; // ログを出さずに、ここで処理を終了して通常攻撃へも行かせない
+            }
+
             finalDmg = Math.floor(maxAtk * totalMultiplier);
             if (finalDmg < 1) finalDmg = 1;
             localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-
-            const saveMsg = (playableSkill && currentSpRatio <= 50 && !isTargetBoss) ? `🪶[SP温存モード] ` : ``;
-            logText = `💥💥 ${saveMsg}CRITICAL HIT!! ${member.name} が急所を貫いた！ [敵防無視/威力MAX] ➔ ${primaryTarget.name} に ${finalDmg} の致命物理ダメージ！`;
-            
-            // 🩸 【HP吸収判定ダイス（クリティカルヒット用）】
-            if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance) {
-              const drainPct = Number(member.hp_drain_percent || 0);
-              if (drainPct > 0) {
-                const healAmount = Math.floor((finalDmg * drainPct) / 100);
-                member.hp = Math.min(member.mhp, member.hp + healAmount);
-                logText += ` 🩸 ${healAmount} 回復した！！ (残HP: ${localEnemies[targetIdx].hp})`;
-              } else {
-                logText += ` (残HP: ${localEnemies[targetIdx].hp})`;
-              }
-            } else {
-              logText += ` (残HP: ${localEnemies[targetIdx].hp})`;
+            logText = `💥💥 CRITICAL HIT!! ${member.name} ➔ ${primaryTarget.name} に ${finalDmg} の致命物理ダメージ！`;
+            if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance && Number(member.hp_drain_percent || 0) > 0) {
+              const healAmount = Math.floor((finalDmg * Number(member.hp_drain_percent)) / 100);
+              member.hp = Math.min(member.mhp, member.hp + healAmount);
+              logText += ` 🩸 ${healAmount} 回復した！！`;
             }
-
-            // 🧪 🎰 👑 【クリティカルヒット時・状態異常付与ガチャの最低保証配線】
             if (localEnemies[targetIdx].hp > 0 && member.card_inflict_type && member.card_inflict_chance > 0 && localEnemies[targetIdx].state?.currentStatus !== member.card_inflict_type) {
-              const cardInflictType = member.card_inflict_type;
-              const cardInflictChance = member.card_inflict_chance;
-
-              const enemyResist = cardInflictType === '毒' ? (primaryTarget.resist_poison || 0) : 
-                                  cardInflictType === 'スタン' ? (primaryTarget.resist_stun || 0) : 
-                                  cardInflictType === '凍結' ? (primaryTarget.resist_freeze || 0) : 
-                                  cardInflictType === '暗闇' ? (primaryTarget.resist_blind || 0) :
-                                  cardInflictType === '睡眠' ? (primaryTarget.vit || 0) : 
-                                  cardInflictType === '沈黙' ? (primaryTarget.agi || 0) : 
-                                  cardInflictType === '呪い' ? (primaryTarget.luk || 0) : 
-                                  cardInflictType === '石化' ? (primaryTarget.vit || 0) : 0;
-              
-              const finalApplyChance = Math.max(5, cardInflictChance - enemyResist);
-
-              if (Math.random() * 100 < finalApplyChance) {
-                localEnemies[targetIdx].state = { 
-                  ...localEnemies[targetIdx].state,
-                  currentStatus: cardInflictType,
-                  durationTurns: 3
-                };
-                logText += ` ✨ [追加効果] ${primaryTarget.name} を【${cardInflictType}】状態にした！！`;
+              const res = member.card_inflict_type === '毒' ? primaryTarget.resist_poison || 0 : member.card_inflict_type === 'スタン' ? primaryTarget.resist_stun || 0 : 0;
+              if (Math.random() * 100 < Math.max(5, member.card_inflict_chance - res)) {
+                localEnemies[targetIdx].state = { ...localEnemies[targetIdx].state, currentStatus: member.card_inflict_type, durationTurns: 3 };
+                logText += ` ✨ [追加効果] ${primaryTarget.name} を【${member.card_inflict_type}】状態にした！！`;
               }
             }
-
           } else {
-            // =============================================================
-            // 🎲 【第3優先：通常確率スキル ＆ 通常攻撃ルート】
-            // =============================================================
             let useSkill = activeSkills.length > 0 && Math.random() < 0.45;
             let skillToUse = null;
-
             if (useSkill) {
               skillToUse = activeSkills[Math.floor(Math.random() * activeSkills.length)];
-              const skillSpCost = Number(skillToUse.sp_cost || 0);
-
-              // 🛑 【原因③の修正】SPが足りない場合はスキルを不発にし、通常攻撃へ流す
-              if (member.sp < skillSpCost) {
-                useSkill = false;
-              } else {
-                // 🛑 【原因①②の修正】第3優先のランダム発動でも、ヒールの場合はHP70%未満の味方がいるか判定
+              if (member.sp < Number(skillToUse.sp_cost || 0)) useSkill = false;
+              else {
                 const isHeal = skillToUse.target_type === '味方単体' || skillToUse.target_type === '味方全体' || skillToUse.name?.includes('ヒール') || skillToUse.effect_type === '回復';
-                if (isHeal) {
-                  const hasCriticallyInjured = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7);
-                  if (!hasCriticallyInjured) {
-                    useSkill = false; // 誰もHP70%未満でなければヒールの暴発を防ぎ、通常攻撃へ
-                  }
-                } else {
-                  // 🛑 🧠 【今回追加する箇所：すり抜け温存ガード】
-                  // 回復魔法以外の攻撃/バフスキルを引いた場合、ボス戦以外でSPが50%以下なら「温存」して通常攻撃へ！
-                  const currentSpRatio = (member.sp / (member.msp || 50)) * 100;
-                  if (!isTargetBoss && currentSpRatio <= 50) {
-                    useSkill = false;
-                  }
-                }
+                if (isHeal && !localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7)) useSkill = false;
+                else if (!isTargetBoss && currentSpRatio <= 50) useSkill = false;
               }
             }
-
             if (useSkill && skillToUse) {
-              // ✨ スキル発動ルート
-              const skill = skillToUse;
-              const skillSpCost = Number(skill.sp_cost || 0);
-              member.sp = Math.max(0, member.sp - skillSpCost); // 🛑 【原因③の修正】SPを確実に消費させる！
-
-              const baseValue = Number(skill.effect_value || 0);
-              
+              member.sp = Math.max(0, member.sp - Number(skillToUse.sp_cost || 0));
+              const baseValue = Number(skillToUse.effect_value || 0);
               let calculatedPower = baseValue;
-              // ここも calculation_type を追加して判定を強化！
-              if (skill.value_type === 'percent' || skill.calculation_type === 'percent') {
-                calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
-              }
-
-              if (skill.target_type === '味方単体' || skill.target_type === '味方全体') {
+              if (skillToUse.value_type === 'percent' || skillToUse.calculation_type === 'percent') calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+              
+              if (skillToUse.target_type === '味方単体' || skillToUse.target_type === '味方全体') {
                 const injured = localParty.filter(p => p.hp > 0 && p.hp < p.mhp).sort((a,b) => a.hp - b.hp);
-                const healTarget = injured[0] || member;
-                const hIdx = localParty.findIndex(p => p.id === healTarget.id);
-                
+                const hIdx = localParty.findIndex(p => p.id === (injured[0] || member).id);
                 localParty[hIdx].hp = Math.min(localParty[hIdx].mhp, localParty[hIdx].hp + calculatedPower);
-                // 💡 ログにもSP残量を表示して、しっかり減っているか確認できるようにしました
-                logText = `✨ ${member.name} 【${skill.name}】発動！ ${localParty[hIdx].name} のHPを ${calculatedPower} 回復 (残SP: ${member.sp})`;
+                logText = `✨ ${member.name} 【${skillToUse.name}】！ ${localParty[hIdx].name} を ${calculatedPower} 回復`;
               } else {
-                const skillSpecs = {
-                  ...attackSpecs,
-                  element: skill.element || '無',
-                  is_physical: skill.skill_type === 'art'
-                };
+                const skillSpecs = { ...attackSpecs, element: skillToUse.element || '無', is_physical: skillToUse.skill_type === 'art' };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
-
-                if (skill.skill_type === 'art') {
+                if (skillToUse.skill_type === 'art') {
                   finalDmg = Math.max(1, Math.floor((calculatedPower * skillMultiplier) - primaryTarget.vit));
-                  logText = `⚔️ ${member.name} 【${skill.name}】！ ${primaryTarget.name} に ${finalDmg} の物理ダメージ！`;
-                  
-                  // 🩸 【HP吸収判定ダイス（物理スキル用）】
-                  if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance) {
-                    const drainPct = Number(member.hp_drain_percent || 0);
-                    if (drainPct > 0) {
-                      const healAmount = Math.floor((finalDmg * drainPct) / 100);
-                      member.hp = Math.min(member.mhp, member.hp + healAmount);
-                      logText += ` 🩸 ${healAmount} 回復した！！`;
-                    }
+                  logText = `⚔️ ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の物理ダメージ！`;
+                  if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance && Number(member.hp_drain_percent || 0) > 0) {
+                    const healAmount = Math.floor((finalDmg * Number(member.hp_drain_percent)) / 100);
+                    member.hp = Math.min(member.mhp, member.hp + healAmount);
+                    logText += ` 🩸 ${healAmount} 回復！`;
                   }
                 } else {
-                  // 🔮 魔法スキルルートのダメージ決着
                   finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
-                  logText = `🔮 ${member.name} 【${skill.name}】！ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！`;
+                  logText = `🔮 ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！`;
                 }
-
-                // 💥 敵のHPを実際に減少させる処理
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-
-                // 🎰 【スキルヒット時の追加効果判定】
-                if (skill.effect_type && skill.effect_type !== 'なし' && localEnemies[targetIdx].hp > 0) {
-                  const baseChance = Number(skill.effect_chance || 0);
-                  
-                  let enemyResistPct = 0;
-                  if (skill.effect_type === 'スタン')  enemyResistPct = primaryTarget.resist_stun || 0;
-                  if (skill.effect_type === '凍結')  enemyResistPct = primaryTarget.resist_freeze || 0;
-                  if (skill.effect_type === '毒')    enemyResistPct = primaryTarget.resist_poison || 0;
-                  if (skill.effect_type === '暗闇')  enemyResistPct = primaryTarget.resist_blind || 0;
-
-                  const finalInflictChance = Math.max(0, baseChance - enemyResistPct);
-
-                  if (Math.random() * 100 < finalInflictChance) {
-                    const turns = Number(skill.duration_turns || 3);
-                    localEnemies[targetIdx].state = {
-                      currentStatus: skill.effect_type,
-                      durationTurns: turns
-                    };
-                    logText += ` ✨ [追加効果] ${primaryTarget.name} を【${skill.effect_type}】状態にした！(${turns}ターン)`;
+                if (skillToUse.effect_type && skillToUse.effect_type !== 'なし' && localEnemies[targetIdx].hp > 0) {
+                  const res = skillToUse.effect_type === 'スタン' ? primaryTarget.resist_stun || 0 : skillToUse.effect_type === '毒' ? primaryTarget.resist_poison || 0 : 0;
+                  if (Math.random() * 100 < Math.max(0, Number(skillToUse.effect_chance || 0) - res)) {
+                    localEnemies[targetIdx].state = { currentStatus: skillToUse.effect_type, durationTurns: Number(skillToUse.duration_turns || 3) };
+                    logText += ` ✨ [追加効果] ${primaryTarget.name} を【${skillToUse.effect_type}】状態にした！`;
                   }
                 }
               }
             } else {
-              // ⚔️ 純粋通常攻撃ルート 【状態異常による敵防低下・干渉配線】
+              // 🛡️ 【三土手神特注：通常攻撃の物理封印】
+              // 後衛かつSレンジ武器なら、通常攻撃は「絶対に」実行させない
+              if (member.position === 'back' && member.weaponRange === 'S') {
+                 // 攻撃せずログだけ出して終了
+                 return; 
+              }
               const isEnemyDebuffed = ['スタン', '凍結', '石化'].includes(primaryTarget.state?.currentStatus);
               const effectiveEnemyVit = isEnemyDebuffed ? 0 : (primaryTarget.vit || 0);
-
               const isEnemyPoisoned = primaryTarget.state?.currentStatus === 'poison' || primaryTarget.state?.currentStatus === '毒';
               const finalEnemyVit = isEnemyPoisoned ? Math.floor(effectiveEnemyVit * 0.75) : effectiveEnemyVit;
-
               const baseDmg = Math.max(1, randomizedAtk - finalEnemyVit);
               finalDmg = Math.floor(baseDmg * totalMultiplier);
               if (finalDmg < 1) finalDmg = 1;
-
               localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-              
               const debuffMsg = isEnemyDebuffed ? `[敵防完全喪失!]` : (isEnemyPoisoned ? `[敵防25%低下!]` : '');
-              logText = `⚔️ ${member.name}の通常攻撃[${attackSpecs.weapon_subtype}/${attackSpecs.element}属性] ➔ (ダイス${randomizedAtk}-敵防${finalEnemyVit})${debuffMsg} × 総合倍率:${totalMultiplier.toFixed(2)}倍 ➔ ${finalDmg} の物理ダメージを与えた！`;
               
-              // 🩸 【HP吸収判定ダイス（通常攻撃用）】
-              if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance) {
-                const drainPct = Number(member.hp_drain_percent || 0);
-                if (drainPct > 0) {
-                  const healAmount = Math.floor((finalDmg * drainPct) / 100);
-                  member.hp = Math.min(member.mhp, member.hp + healAmount);
-                  logText += ` 🩸 ${healAmount} 回復した！！`;
-                }
+              // 🔮 🆕 通常攻撃ログに、実際に装備している【本物の武器名】を美しくライトアップ！
+              logText = `⚔️ ${member.name} が 【${member.weaponName}】 で通常攻撃！[${attackSpecs.weapon_subtype}/${attackSpecs.element}属性] ➔ (ダイス${randomizedAtk}-敵防${finalEnemyVit})${debuffMsg} × 総合倍率:${totalMultiplier.toFixed(2)}倍 ➔ ${finalDmg} の物理ダメージを与えた！`;
+              
+              if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance && Number(member.hp_drain_percent || 0) > 0) {
+                const healAmount = Math.floor((finalDmg * Number(member.hp_drain_percent)) / 100);
+                member.hp = Math.min(member.mhp, member.hp + healAmount);
+                logText += ` 🩸 ${healAmount} 回復！`;
               }
-
-              // 🧪 🎰 👑 【通常攻撃ヒット時・カード専用状態異常付与ガチャの最低保証配線】
               if (localEnemies[targetIdx].hp > 0 && member.card_inflict_type && member.card_inflict_chance > 0 && localEnemies[targetIdx].state?.currentStatus !== member.card_inflict_type) {
-                const cardInflictType = member.card_inflict_type;
-                const cardInflictChance = member.card_inflict_chance;
-
-                const enemyResist = cardInflictType === '毒' ? (primaryTarget.resist_poison || 0) : 
-                                    cardInflictType === 'スタン' ? (primaryTarget.resist_stun || 0) : 
-                                    cardInflictType === '凍結' ? (primaryTarget.resist_freeze || 0) : 
-                                    cardInflictType === '暗闇' ? (primaryTarget.resist_blind || 0) :
-                                    cardInflictType === '睡眠' ? (primaryTarget.vit || 0) : 
-                                    cardInflictType === '沈黙' ? (primaryTarget.agi || 0) : 
-                                    cardInflictType === '呪い' ? (primaryTarget.luk || 0) : 
-                                    cardInflictType === '石化' ? (primaryTarget.vit || 0) : 0;
-                
-                const finalApplyChance = Math.max(5, cardInflictChance - enemyResist);
-
-                if (Math.random() * 100 < finalApplyChance) {
-                  localEnemies[targetIdx].state = { 
-                    ...localEnemies[targetIdx].state,
-                    currentStatus: cardInflictType,
-                    durationTurns: 3
-                  };
-                  logText += ` ✨ [追加効果] ${primaryTarget.name} を【${cardInflictType}】状態にした！！`;
+                const res = member.card_inflict_type === '毒' ? primaryTarget.resist_poison || 0 : member.card_inflict_type === 'スタン' ? primaryTarget.resist_stun || 0 : 0;
+                if (Math.random() * 100 < Math.max(5, member.card_inflict_chance - res)) {
+                  localEnemies[targetIdx].state = { ...localEnemies[targetIdx].state, currentStatus: member.card_inflict_type, durationTurns: 3 };
+                  logText += ` ✨ [追加効果] ${primaryTarget.name} を【${member.card_inflict_type}】状態にした！`;
                 }
               }
             }
           }
 
-          // ログ書き出し＆撃破判定
-          if (logText) {
-            newLogs.push({ id: `p-${member.id}-${Date.now()}-${Math.random()}`, text: logText, type: "success" });
-          }
-
-          if (logText && localEnemies[targetIdx].hp <= 0) {
+          if (logText) newLogs.push({ id: `p-${member.id}-${Date.now()}-${Math.random()}`, text: logText, type: "success" });
+          if (logText && localEnemies[targetIdx] && localEnemies[targetIdx].hp <= 0) {
             newLogs.push({ id: `win-single-${localEnemies[targetIdx].instanceId}-${Date.now()}`, text: `🏆 🎉 【${localEnemies[targetIdx].name}】撃破！`, type: "system" });
           }
         }
