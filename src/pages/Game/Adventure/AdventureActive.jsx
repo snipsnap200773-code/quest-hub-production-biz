@@ -45,6 +45,9 @@ const AdventureActive = ({
 
   const masterSkillsRef = useRef([]);
   
+  // 🛡️ 🆕 追加：敵の武器データを逆引きするためにアイテムマスターを保持する器
+  const masterItemsRef = useRef([]); 
+  
   // 🔮 🆕 創世神特注：SP自動回復用の時間累積プールタイマーRef（初期値0秒）
   const spRegenTimer = useRef(0);
   
@@ -78,6 +81,8 @@ const AdventureActive = ({
       console.log("📦 【デバッグ1】取得した全アイテムマスター:", allMasterItems);
 
       masterSkillsRef.current = allMasterSkills;
+      // 🛡️ 🆕 追加：ここでアイテム一覧を保存！
+      masterItemsRef.current = allMasterItems; 
 
       if (charList && charList.length > 0) {
         // 🔮 🆕 三土手神特注：混在ゴーストデータを無力化するIDクレンジング配線！
@@ -355,6 +360,12 @@ const AdventureActive = ({
 
             const instanceId = `${targetId}_spawn_${i}_${Date.now()}`;
 
+            // 🔮 🆕 【三土手神特注】敵の右手装備IDから本物の武器データを逆引き！
+            const enemyWeaponId = dbEnemy?.equip_right_hand;
+            const enemyWeapon = masterItemsRef.current.find(item => item.id === enemyWeaponId);
+            const eWeaponRange = enemyWeapon?.weapon_range || 'S'; // 指定がなければ近接(S)
+            const isRanged = eWeaponRange === 'L';
+
             loadedEnemies.push({
               instanceId,
               id: targetId,
@@ -377,7 +388,13 @@ const AdventureActive = ({
               int: dbEnemy?.int || dbEnemy?.stat_int || 10,
               hit: dbEnemy?.hit || 21,
               enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null,
-              activeSkills: eSkills // 🔮 🆕 1戦目の個体にも、生まれた瞬間からAIスキルリストをガキッとマウント！
+              
+              // 🏹 🆕 逆引きした本物の武器射程を完全にマウント！
+              is_range_atk: isRanged,
+              is_range_weapon: isRanged,
+              weaponRange: eWeaponRange,
+
+              activeSkills: eSkills
             });
           }
         } else {
@@ -504,6 +521,9 @@ const AdventureActive = ({
       localEnemies = localEnemies.map((enemyItem) => {
         if (enemyItem.hp <= 0) return enemyItem; // 撃破済みのエネミーは行動をスキップ
 
+        // 🚨 ⬇️ 【三土手神特注デバッグ】敵が動くたびに射程と遠隔フラグをF12へ出力！
+        console.log(`😈 敵【${enemyItem.name}】の射程データ ➔ is_range_atk: ${enemyItem.is_range_atk}, is_range_weapon: ${enemyItem.is_range_weapon}, weaponRange: ${enemyItem.weaponRange}`);
+
         // 🔮 【三土手神リフォーム：敵専用・個別上書き対応型本家RO式ディレイ換算】
         // データベースから取得した enemy_aspd が存在すればそれを採用、空っぽなら基本値 150.0 をロード！
         const currentEnemyAspd = enemyItem.enemy_aspd !== null && enemyItem.enemy_aspd !== undefined 
@@ -556,20 +576,14 @@ const AdventureActive = ({
               // 味方の中で、現在「前衛」かつ「生存」している肉体の壁メンバーを抽出
               const frontLineMembers = aliveMembers.filter(p => p.position === 'front');
 
-              // 🛡️ 条件ジャッジ：
-              // 敵データ自体に「遠距離攻撃（is_range_atk）」のフラグが TRUE で入っている場合、
-              // または、味方の「前衛」がすでに全員力尽きて全滅している場合のみ、後衛を含む全員からランダムスキャン
-              if (enemyItem.is_range_atk === true || frontLineMembers.length === 0) {
-                target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
-              } else {
-                // ⚔️ 通常の近接攻撃エネミーの場合：前衛にいるメンバー（Slot1〜2等で前衛にしたキャラ）からのみランダムチョイス！
-                target = frontLineMembers[Math.floor(Math.random() * frontLineMembers.length)];
-              }
+              // 🏹 🆕 【三土手神特注】モンスター素体フラグ、または「装備した武器の射程」を検知して全域解放
+              const isEnemyLongRange = enemyItem.is_range_atk === true || enemyItem.weaponRange === 'L' || enemyItem.is_range_weapon === true;
 
-              // ターゲットが確定したら、インデックスをサルベージして通常の計算へ移行
-              if (enemyItem.is_range_atk === true || frontLineMembers.length === 0) {
+              if (isEnemyLongRange || frontLineMembers.length === 0) {
+                // 弓などのLレンジ武器、または元から遠隔タイプなら後衛含む全員からランダム
                 target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
               } else {
+                // ⚔️ 近接武器の場合は前衛の壁キャラを確実にロック
                 target = frontLineMembers[Math.floor(Math.random() * frontLineMembers.length)];
               }
 
@@ -671,10 +685,35 @@ if (usedSkill) {
                     const eStr = enemyItem.str || 10;
                     calculatedPower = Math.floor((eStr * 2) * baseValue / 100);
                   }
+
+                  // 🛡️ 🆕 【三土手神特注】被弾側のバフ効果（物理DEF増幅）をリアルタイム計算
+                  let bonusDef = 0;
+                  const activeBuffs = target.activeBuffs || [];
+                  activeBuffs.forEach(b => {
+                    if (b.effect_type === '物理DEF増幅') {
+                      if (b.buff_value_type === 'fixed') bonusDef += b.buff_value;
+                      else if (b.buff_value_type === 'percent') bonusDef += Math.floor((target.vit || 0) * b.buff_value / 100);
+                    }
+                  });
+
                   const targetDef = target.vit || 0;
-                  dmg = Math.max(1, calculatedPower - targetDef);
+                  dmg = Math.max(1, calculatedPower - (targetDef + bonusDef));
+
+                  // 🏹 🆕 遠距離物理ダメージカット（ディフェンダー等）の干渉ジャッジ
+                  let defenderLog = "";
+                  const isLongRangeAttack = usedSkill.skill_range === 'L';
+                  if (isLongRangeAttack) {
+                    activeBuffs.forEach(b => {
+                      if (b.is_range_damage_cut && b.range_damage_cut_pct > 0) {
+                        const cutAmount = Math.floor(dmg * b.range_damage_cut_pct / 100);
+                        dmg = Math.max(0, dmg - cutAmount);
+                        defenderLog = ` 🛡️[DF効果:${b.range_damage_cut_pct}%遮断]`;
+                      }
+                    });
+                  }
+
                   localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                  logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ ${target.name} に ${dmg} の物理ダメージ！`;
+                  logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ ${target.name} に ${dmg} の物理ダメージ！${defenderLog}`;
 
                   if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
                     const effectChance = Number(usedSkill.effect_chance || 0);
@@ -709,9 +748,33 @@ if (usedSkill) {
                   if (randomRoll < cappedFleeChance) {
                     logText = `💨 [MISS] ${enemyItem.name} が 【${target.name}】 を強襲！しかし、ヒラリとかわされた！ (回避率:${Math.max(0, cappedFleeChance)}%)`;
                   } else {
-                    dmg = Math.max(1, baseAtk - target.vit);
+                    // 🛡️ 🆕 通常攻撃時のバフ効果（物理DEF増幅）の集計
+                    let bonusDef = 0;
+                    const activeBuffs = target.activeBuffs || [];
+                    activeBuffs.forEach(b => {
+                      if (b.effect_type === '物理DEF増幅') {
+                        if (b.buff_value_type === 'fixed') bonusDef += b.buff_value;
+                        else if (b.buff_value_type === 'percent') bonusDef += Math.floor((target.vit || 0) * b.buff_value / 100);
+                      }
+                    });
+
+                    dmg = Math.max(1, baseAtk - (target.vit + bonusDef));
+
+                    // 🏹 🆕 【通常物理遠隔カット】エネミーが弓などのLレンジ武器を装備しているか判定
+                    let defenderLog = "";
+                    const isEnemyRangedWeapon = enemyItem.is_range_atk === true || enemyItem.weaponRange === 'L' || enemyItem.is_range_weapon === true;
+                    if (isEnemyRangedWeapon) {
+                      activeBuffs.forEach(b => {
+                        if (b.is_range_damage_cut && b.range_damage_cut_pct > 0) {
+                          const cutAmount = Math.floor(dmg * b.range_damage_cut_pct / 100);
+                          dmg = Math.max(0, dmg - cutAmount);
+                          defenderLog = ` 🛡️[DF効果:${b.range_damage_cut_pct}%遮断]`;
+                        }
+                      });
+                    }
+
                     localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                    logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+                    logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！${defenderLog}`;
                   }
                 }
               }
@@ -800,6 +863,17 @@ if (isBackRow && isShortRange) {
       return; 
     }
 
+          // 🛡️ 🆕 【三土手神特注】アクティブバフの持続ターン自動減算消費エンジン
+          if (member.activeBuffs && member.activeBuffs.length > 0) {
+            member.activeBuffs = member.activeBuffs.map(buff => {
+              const nextTurns = buff.duration_turns - 1;
+              if (nextTurns <= 0) {
+                newLogs.push({ id: `buff-clear-${member.id}-${buff.id}-${Date.now()}`, text: `✨ ${member.name} の【${buff.name}】の効果が静かに切れた。`, type: "system" });
+              }
+              return { ...buff, duration_turns: nextTurns };
+            }).filter(buff => buff.duration_turns > 0);
+          }
+
           // 🧪 1. 状態異常スリップ＆解除判定
           if (member.state?.currentStatus && member.state.currentStatus !== 'none' && member.state.currentStatus !== 'なし') {
             if (member.state.currentStatus === '毒') {
@@ -881,6 +955,20 @@ if (isBackRow && isShortRange) {
             if ((sk.effect_type === '回復' || sk.name?.includes('ヒール')) && !isEmergencyHP) return false;
             return true;
           });
+
+          // 🛡️ 🆕 【三土手神特注】バフ・支援特技の自動ガンビットスキャン回路
+          if (!targetAlly) {
+            const buffSkill = allowedSkills.find(sk => ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
+            if (buffSkill) {
+              // まだそのスキルIDのバフが体にかかっていない生存メンバーを前線からチョイス
+              const unbuffedAlly = localParty.find(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === buffSkill.id));
+              if (unbuffedAlly) {
+                playableSkill = buffSkill;
+                shouldLaunchMagic = true;
+                targetAlly = unbuffedAlly; // ターゲットを味方にロックオン！
+              }
+            }
+          }
 
           // 🚑 回復・解除魔法の最優先発動AI
           if (hasStatusAilment) {
@@ -969,6 +1057,9 @@ if (isBackRow && isShortRange) {
             const isCureSkill = playableSkill.effect_type === '状態異常回復';
             const isHealSkill = playableSkill.target_type === '味方単体' || playableSkill.target_type === '味方全体' || playableSkill.name?.includes('ヒール') || playableSkill.effect_type === '回復';
 
+            // 🛡️ 🆕 バフ支援系の特技かどうかのトグル判別
+            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(playableSkill.effect_type);
+
             if (isCureSkill || isHealSkill) {
               let calculatedHeal = 0;
               if (baseValue > 0) {
@@ -993,7 +1084,7 @@ if (isBackRow && isShortRange) {
                     const targetMhp = ally.mhp || 424;
                     const oldHp = ally.hp;
                     const nextHp = Math.min(targetMhp, ally.hp + calculatedHeal);
-                    newLogs.push({ id: `p-heal-aoe-hit-${ally.id}-${Date.now()}`, text: `   ➔ ✨ 【${ally.name}】 のHPが ${nextHp - oldHp} 回復！ (${nextHp}/${targetMhp})`, type: "success" });
+                    newLogs.push({ id: `p-heal-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ ✨ 【${ally.name}】 のHPが ${nextHp - oldHp} 回復！ (${nextHp}/${targetMhp})`, type: "success" });
                     updatedAlly.hp = nextHp;
                   }
                   if (isCureSkill) {
@@ -1003,7 +1094,7 @@ if (isBackRow && isShortRange) {
                 });
                 
                 if (isCureSkill) {
-                  newLogs.push({ id: `p-cure-aoe-sys-${member.id}-${Date.now()}`, text: `   ➔ 🌟 聖なる光が部隊全員のバッドステータスを完全に打ち払った！`, type: "success" });
+                  newLogs.push({ id: `p-cure-aoe-sys-${member.id}-${Date.now()}`, text: `    ➔ 🌟 聖なる光が部隊全員のバッドステータスを完全に打ち払った！`, type: "success" });
                 }
                 logText = ""; 
               } else {
@@ -1027,6 +1118,51 @@ if (isBackRow && isShortRange) {
                 if (partyFindIdx !== -1) {
                   localParty[partyFindIdx].hp = targetAlly.hp;
                   localParty[partyFindIdx].state = targetAlly.state;
+                }
+              }
+            } else if (isBuffSkill) {
+              // 🛡️ 🆕 【三土手神特注】戦術支援・バフ効果バインドエンジン
+              const bValue = Number(playableSkill.buff_value || 0);
+              const bValueType = playableSkill.buff_value_type || 'percent';
+              const isRangeCut = playableSkill.is_range_damage_cut === true;
+              const rangeCutPct = Number(playableSkill.range_damage_cut_pct || 0);
+              const turns = Number(playableSkill.duration_turns || 3);
+
+              const newBuff = {
+                id: playableSkill.id,
+                name: playableSkill.name,
+                effect_type: playableSkill.effect_type,
+                buff_value: bValue,
+                buff_value_type: bValueType,
+                is_range_damage_cut: isRangeCut,
+                range_damage_cut_pct: rangeCutPct,
+                duration_turns: turns
+              };
+
+              const isAreaBuff = playableSkill.target_type === '味方全体';
+
+              if (isAreaBuff) {
+                logText = `🙌✨ [全体支援] ${member.name} は 【${playableSkill.name}】 を発動！全部隊を一斉ライトアップ！ (残SP: ${member.sp})`;
+                newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
+
+                localParty = localParty.map(ally => {
+                  if (ally.hp <= 0) return ally;
+                  const currentBuffs = ally.activeBuffs || [];
+                  const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id); // 重複上書き処理
+                  newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 に強化効果【${playableSkill.name}】が宿った！ (${turns}T)`, type: "success" });
+                  return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
+                });
+                logText = "";
+              } else {
+                // 単体支援バフ発動（ディフェンダー等）
+                if (!targetAlly) targetAlly = member;
+                const targetFindIdx = localParty.findIndex(p => p.id === targetAlly.id);
+                if (targetFindIdx !== -1) {
+                  const currentBuffs = localParty[targetFindIdx].activeBuffs || [];
+                  const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
+                  localParty[targetFindIdx].activeBuffs = [...filteredBuffs, newBuff];
+                  
+                  logText = `🛡️✨ [支援発動] ${member.name} の 【${playableSkill.name}】！ ➔ 【${targetAlly.name}】 に絶対防御フィールド展開！ (${turns}T / 残SP: ${member.sp})`;
                 }
               }
             } else {
@@ -1269,6 +1405,12 @@ if (isBackRow && isShortRange) {
         const enemySkillIds = [dbEnemy?.skill_01, dbEnemy?.skill_02, dbEnemy?.skill_03].filter(Boolean);
         const eSkills = masterSkillsRef.current.filter(sk => enemySkillIds.includes(sk.id));
         
+        // 🔮 🆕 【三土手神特注】敵の右手装備IDから本物の武器データを逆引き！
+        const enemyWeaponId = dbEnemy?.equip_right_hand;
+        const enemyWeapon = masterItemsRef.current.find(item => item.id === enemyWeaponId);
+        const eWeaponRange = enemyWeapon?.weapon_range || 'S'; // 指定がなければ近接(S)
+        const isRanged = eWeaponRange === 'L';
+
         loadedEnemies.push({
           instanceId: `${targetId}_spawn_${i}_${Date.now()}`,
           id: targetId,
@@ -1291,6 +1433,11 @@ if (isBackRow && isShortRange) {
           int: dbEnemy?.int || dbEnemy?.stat_int || 10,
           hit: dbEnemy?.hit || 21,
           enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null,
+          
+          // 🏹 🆕 逆引きした本物の武器射程を完全にマウント！
+          is_range_atk: isRanged,
+          is_range_weapon: isRanged,
+          weaponRange: eWeaponRange,
           
           // 🔮 【ここを追加】抽出したスキルリストを敵のインスタンスにマウント！
           activeSkills: eSkills 
