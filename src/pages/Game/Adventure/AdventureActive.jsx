@@ -339,6 +339,10 @@ const AdventureActive = ({
             const dbEnemy = validEnemyPool[randomIndex];
             const targetId = dbEnemy.id;
 
+            // 🔮 🆕 【三土手神特注】1戦目のエネミーにも、初回ロード済みの allMasterSkills からスキルを完全合流させる！
+            const enemySkillIds = [dbEnemy?.skill_01, dbEnemy?.skill_02, dbEnemy?.skill_03].filter(Boolean);
+            const eSkills = allMasterSkills.filter(sk => enemySkillIds.includes(sk.id));
+
             const isBaphometTarget = String(targetId).toLowerCase().includes('baphomet');
             const finalName = dbEnemy?.name || (isBaphometTarget ? "バフォメットJr" : "テストポリンJr");
             const finalHp = dbEnemy?.hp || dbEnemy?.base_hp || dbEnemy?.max_hp || (isBaphometTarget ? 1800 : 2500);
@@ -372,7 +376,8 @@ const AdventureActive = ({
               resist_blind: Number(dbEnemy?.resist_blind || 0),
               int: dbEnemy?.int || dbEnemy?.stat_int || 10,
               hit: dbEnemy?.hit || 21,
-              enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null
+              enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null,
+              activeSkills: eSkills // 🔮 🆕 1戦目の個体にも、生まれた瞬間からAIスキルリストをガキッとマウント！
             });
           }
         } else {
@@ -562,11 +567,12 @@ const AdventureActive = ({
               }
 
               // ターゲットが確定したら、インデックスをサルベージして通常の計算へ移行
-              const targetIdx = localParty.findIndex(p => p.id === target.id);
-              
-              let dmg = 0;
-              let logText = "";
-              
+              if (enemyItem.is_range_atk === true || frontLineMembers.length === 0) {
+                target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
+              } else {
+                target = frontLineMembers[Math.floor(Math.random() * frontLineMembers.length)];
+              }
+
               // 🔮 🧠 【新規追加：敵の魔法・スキル発動AI】
               let usedSkill = null;
               const isSilenced = currentStatus === '沈黙';
@@ -576,41 +582,110 @@ const AdventureActive = ({
                 usedSkill = enemySkills[Math.floor(Math.random() * enemySkills.length)];
               }
 
+              // 🏹 🆕 【三土手神特注】敵スキルのレンジ別ターゲット完全制御インフラ
+if (usedSkill) {
+                if (usedSkill.skill_range === 'S' && frontLineMembers.length > 0) {
+                  // ① Sレンジスキルなら、敵のタイプに関わらず「前衛」に強制ロック！
+                  target = frontLineMembers[Math.floor(Math.random() * frontLineMembers.length)];
+                } else if (usedSkill.skill_range === 'L') {
+                  // ② Lレンジスキル（大魔法など）なら、通常攻撃のヘイトを無視して「前衛・後衛の全員」からランダム再スキャン！
+                  target = aliveMembers[Math.floor(Math.random() * aliveMembers.length)];
+                }
+              }
+
+              // 🌟 【鉄壁の着着】ターゲットが完全に確定したあとで、安全に1度だけインデックスを取り出す！
+              const targetIdx = localParty.findIndex(p => p.id === target.id);
+              
+              let dmg = 0;
+              let logText = "";
+
               if (usedSkill) {
-                // ✨ 魔法・スキル発動ルート（大魔法やポイズン等は射程を無視して後衛にも届く！）
+                // ✨ 魔法・スキル発動ルート
                 const isMagic = usedSkill.skill_type === 'magic';
                 const baseValue = Number(usedSkill.effect_value || 0);
-                
-                let calculatedPower = baseValue;
-                if (usedSkill.value_type === 'percent' && enemyItem) {
-                  const eInt = enemyItem.int || 10;
-                  const eStr = enemyItem.str || 10;
-                  const baseStat = isMagic ? eInt * 2 : eStr * 2;
-                  calculatedPower = Math.floor((baseStat * baseValue) / 100);
-                }
 
                 if (isMagic) {
-                  const targetMdef = target.mdef || target.roStatus?.mdef || 0;
-                  dmg = Math.max(1, calculatedPower - targetMdef);
-                  localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                  logText = `🔮 ${enemyItem.name} は 【${usedSkill.name}】 を詠唱！ ➔ ${target.name} に ${dmg} の魔法ダメージ！`;
+                  // 🌍 🆕 【三土手神特注】敵の全体・範囲魔法判別インフラ
+                  const isAOE = usedSkill.target_type === '敵全体' || usedSkill.target_type === '範囲エネミー' || usedSkill.name?.includes('全体') || usedSkill.isAreaOfEffect === true;
+
+                  if (isAOE) {
+                    // 🎆 【全体魔法ルート】味方全部隊を巻き込む一斉爆撃！
+                    logText = `🔮✨ 【敵全体大魔法】${enemyItem.name} の【${usedSkill.name}】が炸裂！我が部隊を強襲！`;
+                    newLogs.push({ id: `e-aoe-${enemyItem.instanceId}-${Date.now()}`, text: logText, type: "battle" });
+
+                    localParty = localParty.map(member => {
+                      if (member.hp <= 0) return member; // 死亡者はスキップ
+
+                      let calculatedPower = baseValue;
+                      if (usedSkill.value_type === 'percent') {
+                        const eInt = enemyItem.int || 10;
+                        calculatedPower = Math.floor((eInt * 2) * baseValue / 100);
+                      }
+
+                      const targetMdef = member.mdef || member.roStatus?.mdef || 0;
+                      const aoeDmg = Math.max(1, calculatedPower - targetMdef);
+                      const nextHp = Math.max(0, member.hp - aoeDmg);
+
+                      let aoeLog = ` ➔ 💥 ${member.name} に ${aoeDmg} の全体魔法ダメージ！`;
+                      let nextState = { ...member.state };
+
+                      // 全体魔法の追加異常判定
+                      if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && nextHp > 0) {
+                        const baseChance = Number(usedSkill.effect_chance || 0);
+                        if (Math.random() * 100 < baseChance) {
+                          nextState = { ...member.state, currentStatus: usedSkill.effect_type, durationTurns: Number(usedSkill.duration_turns || 3) };
+                          aoeLog += ` ✨ [${usedSkill.effect_type}]状態になった！`;
+                        }
+                      }
+
+                      newLogs.push({ id: `e-aoe-hit-${member.id}-${Date.now()}-${Math.random()}`, text: aoeLog, type: "battle" });
+                      return { ...member, hp: nextHp, state: nextState };
+                    });
+
+                    logText = ""; // 固有ログを newLogs に切り分けたので、メインの末尾結合用ログは空にする
+                  } else {
+                    // 🎯 【単体魔法ルート】従来の単体着弾ロジック
+                    let calculatedPower = baseValue;
+                    if (usedSkill.value_type === 'percent') {
+                      const eInt = enemyItem.int || 10;
+                      calculatedPower = Math.floor((eInt * 2) * baseValue / 100);
+                    }
+                    const targetMdef = target.mdef || target.roStatus?.mdef || 0;
+                    dmg = Math.max(1, calculatedPower - targetMdef);
+                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                    logText = `🔮 ${enemyItem.name} は 【${usedSkill.name}】 を詠唱！ ➔ ${target.name} に ${dmg} の魔法ダメージ！`;
+
+                    if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
+                      const baseChance = Number(usedSkill.effect_chance || 0);
+                      if (Math.random() * 100 < baseChance) {
+                        const turns = Number(usedSkill.duration_turns || 3);
+                        localParty[targetIdx].state = { ...localParty[targetIdx].state, currentStatus: usedSkill.effect_type, durationTurns: turns };
+                        logText += ` ✨ [追加効果] ${target.name} は【${usedSkill.effect_type}】状態になった！`;
+                      }
+                    }
+                  }
                 } else {
+                  // 💥 物理特技スキルルート
+                  let calculatedPower = baseValue;
+                  if (usedSkill.value_type === 'percent') {
+                    const eStr = enemyItem.str || 10;
+                    calculatedPower = Math.floor((eStr * 2) * baseValue / 100);
+                  }
                   const targetDef = target.vit || 0;
                   dmg = Math.max(1, calculatedPower - targetDef);
                   localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
                   logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ ${target.name} に ${dmg} の物理ダメージ！`;
-                }
 
-                // 🎰 追加効果の判定
-                if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
-                  const effectChance = Number(usedSkill.effect_chance || 0);
-                  if (Math.random() * 100 < effectChance) {
-                    localParty[targetIdx].state = {
-                      ...localParty[targetIdx].state,
-                      currentStatus: usedSkill.effect_type,
-                      durationTurns: Number(usedSkill.duration_turns || 3)
-                    };
-                    logText += ` ✨ [追加効果] ${target.name} は【${usedSkill.effect_type}】状態になった！`;
+                  if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
+                    const effectChance = Number(usedSkill.effect_chance || 0);
+                    if (Math.random() * 100 < effectChance) {
+                      localParty[targetIdx].state = {
+                        ...localParty[targetIdx].state,
+                        currentStatus: usedSkill.effect_type,
+                        durationTurns: Number(usedSkill.duration_turns || 3)
+                      };
+                      logText += ` ✨ [追加効果] ${target.name} は【${usedSkill.effect_type}】状態になった！`;
+                    }
                   }
                 }
               } else {
@@ -758,7 +833,7 @@ if (isBackRow && isShortRange) {
           
           // --- ✂️ ここから追加・修正ブロック ---
           // 🛡️ 【三土手神特注】後衛キャラ行動制限エンジン
-          if (member.position === 'back') {
+          if (member.position === 'back' && member.weaponRange === 'S') {
             // 現在使えるスキルを再計算（攻撃対象や回復対象がいなくても使えるか判定）
             const canUseSkill = member.skillsList.some(sk => member.sp >= Number(sk.sp_cost || 0));
             
@@ -776,8 +851,18 @@ if (isBackRow && isShortRange) {
           const maxAtk = Math.floor(myStr * 2.5 + myDex);
           const randomizedAtk = Math.floor(Math.random() * (maxAtk - minAtk + 1)) + minAtk;
 
+          // 🏹 🆕 【三土手神特注】後衛時におけるSレンジスキルの暴発封印ゲート（ここで1度だけ宣言）
+          const rawSkillsList = member.skillsList || [];
+          const rangeFilteredSkills = rawSkillsList.filter(sk => {
+            // キャラが後衛（back）かつ、スキルの設定射程がSレンジ（S）なら除外
+            if (member.position === 'back' && sk.skill_range === 'S') {
+              return false; 
+            }
+            return true;
+          });
+
           // 🚑 救命・浄化AI環境スキャン（厳密な8大状態異常検知センサー）
-          const VALID_STATUS_AILMENTS = ['スタン', '凍結', '毒', '暗闇', '睡眠', '沈滅', '沈黙', '呪い', '石化'];
+          const VALID_STATUS_AILMENTS = ['スタン', '凍結', '毒', '暗闇', '睡眠', '沈滅', '沈録', '呪い', '石化'];
           
           const hasStatusAilment = localParty.some(p => 
             p.hp > 0 && 
@@ -788,8 +873,8 @@ if (isBackRow && isShortRange) {
           const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7);
 
           // 🧠 三土手神特注：スキルプールから「今撃てる有効なスキル」を事前選別
-          const rawSkillsList = member.skillsList || [];
-          const allowedSkills = rawSkillsList.filter(sk => {
+          // 💡 射程フィルターを通過した「rangeFilteredSkills」を対象にして、2回目の重複宣言を粉砕！
+          const allowedSkills = rangeFilteredSkills.filter(sk => {
             // 異常者が誰もいないなら、キュア系は選考対象外
             if (sk.effect_type === '状態異常回復' && !hasStatusAilment) return false;
             // 瀕死の味方が誰もいないなら、ヒール系も選考対象外

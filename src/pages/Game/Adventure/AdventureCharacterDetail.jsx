@@ -628,66 +628,84 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
           <div style={{ background: '#070503', border: '1px dashed #4a341b', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
             {(() => {
               const currentJob = character.meta?.job || 'ノービス';
-              const currentLv = character.level || 1;
 
-              // 🔮 未定義エラー回避仕様：存在しないskills変数を見に行きません
-              const activeSkillsSource = character.allMasterItemsList || [];
-              const finalLearnedList = activeSkillsSource.filter(s => {
-                // スキルデータ（sp_costを持っている等）かつ、条件一致のものをフィルタリング
-                if (s.sp_cost === undefined) return false;
-                const jobReq = s.job_requirement || '全職業';
-                const lvReq = Number(s.level_requirement) || 1;
-                return (jobReq === '全職業' || jobReq === currentJob) && currentLv >= lvReq;
-              });
+              // 💡 ⚙️ 【三土手神連動リフォーム】
+              // 画面側での重複フィルターを粉砕！心臓部がすでに最高ランクに絞り込んでくれた「character.skillsList」をそのまま直撃マウント！
+              const finalLearnedList = character.skillsList || [];
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  {finalLearnedList.map((sk) => (
-                    <div key={sk.id} style={{ background: '#0e0b07', border: '1px solid #23190e', padding: '10px 12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, paddingRight: '8px' }}>
-                        {/* ─── 1行目：スキル名 ＆ 分類バッジ ─── */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '0.52rem', background: sk.skill_type === 'magic' ? '#1e3a8a' : '#311005', color: sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
-                            {sk.skill_type === 'magic' ? '魔法' : '特技'}
-                          </span>
-                          <strong style={{ fontSize: '0.8rem', color: '#ffd700' }}>{sk.name}</strong>
-                          <span style={{ fontSize: '0.55rem', color: '#887055' }}>(必要Lv.{sk.level_requirement})</span>
-                        </div>
-                        
-                        {/* ─── 2行目：🆕 創世神拡張・オリジナル高度戦術スペックバッジ ─── */}
-                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '1px' }}>
-                          <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>
-                            🎯 {sk.target_type || '単体エネミー'}
-                          </span>
-                          <span style={{ fontSize: '0.55rem', background: '#1a130b', border: '1px solid #5a3d1b', color: '#ffb834', padding: '1px 5px', borderRadius: '3px' }}>
-                            🔥 {sk.element || '無'}属性
-                          </span>
-                          {sk.effect_type && sk.effect_type !== 'なし' && (
-                            <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
-                              ✨ {sk.effect_type} ({sk.effect_chance}% / {sk.duration_turns}T)
+                  {finalLearnedList.map((sk) => {
+                    // 🔮 🆕 【三土手神特注】同名スキル内ランク（スキルLv）全自動算出エンジン
+                    const masterList = character.allMasterItemsList || [];
+                    
+                    // 同じ職業制限（または共通）かつ、全く同じ名前のスキルをすべて抽出して必要Lv順にソート
+                    const siblingSkills = masterList
+                      .filter(s => s.sp_cost !== undefined && s.name === sk.name && (s.job_requirement === '全職業' || s.job_requirement === character.meta?.job))
+                      .sort((a, b) => Number(a.level_requirement) - Number(b.level_requirement));
+                    
+                    // ソートした配列の中で、自分が何番目にいるか（インデックス + 1 = 現在のスキルLv）
+                    const mySkillRank = siblingSkills.findIndex(s => s.id === sk.id) + 1;
+                    const isMaxRank = mySkillRank === siblingSkills.length && siblingSkills.length > 1;
+
+                    return (
+                      <div key={sk.id} style={{ background: '#0e0b07', border: '1px solid #23190e', padding: '10px 12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, paddingRight: '8px' }}>
+                          {/* ─── 1行目：スキル名 ＆ 分類バッジ ─── */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.52rem', background: sk.skill_type === 'magic' ? '#1e3a8a' : '#311005', color: sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
+                              {sk.skill_type === 'magic' ? '魔法' : '特技'}
                             </span>
-                          )}
-                          {sk.use_condition === '魔物調教' && (
-                            <span style={{ fontSize: '0.55rem', background: '#0a1a14', border: '1px solid #14402f', color: '#34d399', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
-                              🐾 調教モード
+                            <span style={{ fontSize: '0.52rem', background: sk.skill_range === 'L' ? '#064e3b' : '#3f3f46', color: sk.skill_range === 'L' ? '#34d399' : '#e4e4e7', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
+                              {sk.skill_range === 'L' ? 'Lレンジ' : 'Sレンジ'}
                             </span>
-                          )}
+                            {/* 💡 ⚙️ スキル名の後ろに自動計算した [Lv.X] をドッキング！最上位なら極上ライトアップ！ */}
+                            <strong style={{ fontSize: '0.8rem', color: '#ffd700' }}>
+                              {sk.name} <span style={{ color: isMaxRank ? '#34d399' : '#38bdf8', fontSize: '0.75rem', fontFamily: 'monospace' }}>[Lv.{mySkillRank}]</span>
+                            </strong>
+                            {isMaxRank && (
+                              <span style={{ fontSize: '0.52rem', background: '#223311', border: '1px solid #446622', color: '#a3e635', padding: '0px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
+                                MASTER
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.55rem', color: '#887055' }}>(必要Lv.{sk.level_requirement})</span>
+                          </div>
+
+                          {/* ─── 2行目：🆕 創世神拡張・オリジナル高度戦術スペックバッジ ─── */}
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '1px' }}>
+                            <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>
+                              🎯 {sk.target_type || '単体エネミー'}
+                            </span>
+                            <span style={{ fontSize: '0.55rem', background: '#1a130b', border: '1px solid #5a3d1b', color: '#ffb834', padding: '1px 5px', borderRadius: '3px' }}>
+                              🔥 {sk.element || '無'}属性
+                            </span>
+                            {sk.effect_type && sk.effect_type !== 'なし' && (
+                              <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
+                                ✨ {sk.effect_type} ({sk.effect_chance}% / {sk.duration_turns}T)
+                              </span>
+                            )}
+                            {sk.use_condition === '魔物調教' && (
+                              <span style={{ fontSize: '0.55rem', background: '#0a1a14', border: '1px solid #14402f', color: '#34d399', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
+                                🐾 調教モード
+                              </span>
+                            )}
+                          </div>
+
+                          {/* ─── 3行目：説明文 ─── */}
+                          <p style={{ margin: '2px 0 0 0', fontSize: '0.65rem', color: '#887355', lineHeight: '1.2' }}>{sk.description}</p>
                         </div>
 
-                        {/* ─── 3行目：説明文 ─── */}
-                        <p style={{ margin: '2px 0 0 0', fontSize: '0.65rem', color: '#887355', lineHeight: '1.2' }}>{sk.description}</p>
-                      </div>
-
-                      {/* ─── 右側：SP消費 ＆ 威力・回復量表示（単位の全自動判定マージ） ─── */}
-                      <div style={{ textAlign: 'right', fontSize: '0.65rem', fontFamily: 'monospace', minWidth: '75px' }}>
-                        <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>消費SP: {sk.sp_cost}</div>
-                        <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
-                          {sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} 
-                          <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span>
+                        {/* ─── 右側：SP消費 ＆ 威力・回復量表示 ─── */}
+                        <div style={{ textAlign: 'right', fontSize: '0.65rem', fontFamily: 'monospace', minWidth: '75px' }}>
+                          <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>消費SP: {sk.sp_cost}</div>
+                          <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
+                            {sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} 
+                            <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {finalLearnedList.length === 0 && (
                     <div style={{ fontSize: '0.65rem', color: '#5a4531', textAlign: 'center', padding: '10px', fontStyle: 'italic' }}>
                       現在のレベル、または【{currentJob}】の職業で習得できるスキル知識がまだありません。
@@ -1062,7 +1080,11 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
                               </div>
                               {/* 🔮 🆕 武具選択ポップアップ直撃：ATKやDEFを色鮮やかにハイライト強調して視認性爆上げ！ */}
                               <div style={{ fontSize: '0.58rem', color: '#887355', marginTop: '1px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                {masterItem.atk ? <span style={{ color: '#f43f5e', fontWeight: 'bold' }}>⚔️ATK:{masterItem.atk}</span> : null}
+  {/* 🏹 🆕 レンジ表示を追加 */}
+  <span style={{ color: masterItem.weapon_range === 'L' ? '#34d399' : '#f59e0b', fontWeight: 'bold' }}>
+    {masterItem.weapon_range === 'L' ? '🏹Lレンジ' : '🗡️Sレンジ'}
+  </span>
+  {masterItem.atk ? <span style={{ color: '#f43f5e', fontWeight: 'bold' }}>⚔️ATK:{masterItem.atk}</span> : null}
                                 {masterItem.def ? <span style={{ color: '#34d399', fontWeight: 'bold' }}>🛡️DEF:+{masterItem.def}</span> : null}
                                 {masterItem.mdef ? <span style={{ color: '#38bdf8', fontWeight: 'bold' }}>🔮MDEF:+{masterItem.mdef}</span> : null}
                                 <span style={{ color: '#64748b' }}>({masterItem.description})</span>
@@ -1120,9 +1142,18 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
               if (!item || inv.count <= 0) return null;
               return (
                 <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#130e09', padding: '6px 10px', borderRadius: '6px', fontSize: '0.7rem' }}>
-                  <span>{item.name} [{item.slot_count}] <span style={{ color: '#887355' }}>({item.item_subtype})</span></span>
-                  <span style={{ color: '#34d399', fontWeight: 'bold', fontFamily: 'monospace' }}>✕ {inv.count}個</span>
-                </div>
+  <span>
+    {item.name} [{item.slot_count}] 
+    <span style={{ color: '#887355', marginLeft: '4px' }}>({item.item_subtype})</span>
+    {/* 🏹 🆕 武器ならレンジを表示 */}
+    {item.item_type === 'weapon' && (
+      <span style={{ color: item.weapon_range === 'L' ? '#34d399' : '#f59e0b', marginLeft: '6px', fontWeight: 'bold' }}>
+        [{item.weapon_range}レンジ]
+      </span>
+    )}
+  </span>
+  <span style={{ color: '#34d399', fontWeight: 'bold', fontFamily: 'monospace' }}>✕ {inv.count}個</span>
+</div>
               );
             })}
             {guildInventory.filter(inv => inv.game_master_items && inv.count > 0).length === 0 && (
