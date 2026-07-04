@@ -699,21 +699,26 @@ if (usedSkill) {
                   const targetDef = target.vit || 0;
                   dmg = Math.max(1, calculatedPower - (targetDef + bonusDef));
 
-                  // 🏹 🆕 遠距離物理ダメージカット（ディフェンダー等）の干渉ジャッジ
-                  let defenderLog = "";
-                  const isLongRangeAttack = usedSkill.skill_range === 'L';
-                  if (isLongRangeAttack) {
-                    activeBuffs.forEach(b => {
-                      if (b.is_range_damage_cut && b.range_damage_cut_pct > 0) {
-                        const cutAmount = Math.floor(dmg * b.range_damage_cut_pct / 100);
-                        dmg = Math.max(0, dmg - cutAmount);
-                        defenderLog = ` 🛡️[DF効果:${b.range_damage_cut_pct}%遮断]`;
-                      }
-                    });
-                  }
+                  // 🛡️ 🆕 【三土手神特注：物理スキル被弾時のディボーション割り込みセンサー】
+                  const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.range_damage_cut_pct === 100 && b.duration_turns > 0);
+                  const casterMember = devotionBuff ? localParty.find(m => m.id === devotionBuff.casterId && m.hp > 0) : null;
 
-                  localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                  logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ ${target.name} に ${dmg} の物理ダメージ！${defenderLog}`;
+                  if (devotionBuff && casterMember) {
+                    const transferredDmg = dmg; // 転送する元のダメージを記憶
+                    dmg = 0; // 本人の被弾実数値は完全無効（0）化！
+                    
+                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                    
+                    // 術者（ファイター）のインデックスを探して身代わり減算
+                    const casterIdx = localParty.findIndex(m => m.id === casterMember.id);
+                    localParty[casterIdx].hp = Math.max(0, localParty[casterIdx].hp - transferredDmg);
+                    
+                    logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が ${target.name} を庇って代わりに ${transferredDmg} のダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
+                  } else {
+                    // 通常の着弾
+                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                    logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ ${target.name} に ${dmg} の物理ダメージ！`;
+                  }
 
                   if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
                     const effectChance = Number(usedSkill.effect_chance || 0);
@@ -760,21 +765,26 @@ if (usedSkill) {
 
                     dmg = Math.max(1, baseAtk - (target.vit + bonusDef));
 
-                    // 🏹 🆕 【通常物理遠隔カット】エネミーが弓などのLレンジ武器を装備しているか判定
-                    let defenderLog = "";
-                    const isEnemyRangedWeapon = enemyItem.is_range_atk === true || enemyItem.weaponRange === 'L' || enemyItem.is_range_weapon === true;
-                    if (isEnemyRangedWeapon) {
-                      activeBuffs.forEach(b => {
-                        if (b.is_range_damage_cut && b.range_damage_cut_pct > 0) {
-                          const cutAmount = Math.floor(dmg * b.range_damage_cut_pct / 100);
-                          dmg = Math.max(0, dmg - cutAmount);
-                          defenderLog = ` 🛡️[DF効果:${b.range_damage_cut_pct}%遮断]`;
-                        }
-                      });
-                    }
+                    // 🛡️ 🆕 【三土手神特注：通常攻撃被弾時のディボーション割り込みセンサー】
+                    const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.range_damage_cut_pct === 100 && b.duration_turns > 0);
+                    const casterMember = devotionBuff ? localParty.find(m => m.id === devotionBuff.casterId && m.hp > 0) : null;
 
-                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                    logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！${defenderLog}`;
+                    if (devotionBuff && casterMember) {
+                      const transferredDmg = dmg; // 肩代わりするダメージ
+                      dmg = 0; // 本人の被弾は 0 に！
+                      
+                      localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                      
+                      // 術者（ファイター）のHPを引き算
+                      const casterIdx = localParty.findIndex(m => m.id === casterMember.id);
+                      localParty[casterIdx].hp = Math.max(0, localParty[casterIdx].hp - transferredDmg);
+                      
+                      logText = `💥 ${enemyItem.name} の攻撃！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が身を挺して ${target.name} を庇い、代わりに ${transferredDmg} の物理ダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
+                    } else {
+                      // 通常の通常攻撃着弾処理
+                      localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                      logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+                    }
                   }
                 }
               }
@@ -1054,13 +1064,13 @@ if (isBackRow && isShortRange) {
             member.sp = Math.max(0, member.sp - Number(playableSkill.sp_cost || 0));
             const baseValue = Number(playableSkill.effect_value || 0);
             
+            // 🛡️ 👑 【三土手神特注】古いガバガバ判定をここで完全粉砕！バフと回復を100%厳密に仕分ける定義
             const isCureSkill = playableSkill.effect_type === '状態異常回復';
-            const isHealSkill = playableSkill.target_type === '味方単体' || playableSkill.target_type === '味方全体' || playableSkill.name?.includes('ヒール') || playableSkill.effect_type === '回復';
-
-            // 🛡️ 🆕 バフ支援系の特技かどうかのトグル判別
+            const isHealSkill = playableSkill.effect_type === '回復' || playableSkill.name?.includes('ヒール');
             const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(playableSkill.effect_type);
 
             if (isCureSkill || isHealSkill) {
+              // 🧪 ① 純粋な回復・キュア魔法専用ルート
               let calculatedHeal = 0;
               if (baseValue > 0) {
                 calculatedHeal = baseValue;
@@ -1092,10 +1102,6 @@ if (isBackRow && isShortRange) {
                   }
                   return updatedAlly;
                 });
-                
-                if (isCureSkill) {
-                  newLogs.push({ id: `p-cure-aoe-sys-${member.id}-${Date.now()}`, text: `    ➔ 🌟 聖なる光が部隊全員のバッドステータスを完全に打ち払った！`, type: "success" });
-                }
                 logText = ""; 
               } else {
                 if (!targetAlly) targetAlly = member;
@@ -1121,48 +1127,65 @@ if (isBackRow && isShortRange) {
                 }
               }
             } else if (isBuffSkill) {
-              // 🛡️ 🆕 【三土手神特注】戦術支援・バフ効果バインドエンジン
-              const bValue = Number(playableSkill.buff_value || 0);
-              const bValueType = playableSkill.buff_value_type || 'percent';
-              const isRangeCut = playableSkill.is_range_damage_cut === true;
-              const rangeCutPct = Number(playableSkill.range_damage_cut_pct || 0);
-              const turns = Number(playableSkill.duration_turns || 3);
+              // 🛡️ ② 特注：戦術支援・物理特技「かばう（ディボーション）」専用ルート
+              const successRoll = Math.random() * 100;
+              const effChance = Number(playableSkill.effect_chance !== undefined ? playableSkill.effect_chance : 100);
 
-              const newBuff = {
-                id: playableSkill.id,
-                name: playableSkill.name,
-                effect_type: playableSkill.effect_type,
-                buff_value: bValue,
-                buff_value_type: bValueType,
-                is_range_damage_cut: isRangeCut,
-                range_damage_cut_pct: rangeCutPct,
-                duration_turns: turns
-              };
+              if (!targetAlly || targetAlly.id === member.id) {
+                // 自分をかばうのを禁止！生存している自分以外の仲間（クレリック等）を強制ロックオン
+                targetAlly = localParty.find(p => p.hp > 0 && p.id !== member.id) || member;
+              }
 
-              const isAreaBuff = playableSkill.target_type === '味方全体';
-
-              if (isAreaBuff) {
-                logText = `🙌✨ [全体支援] ${member.name} は 【${playableSkill.name}】 を発動！全部隊を一斉ライトアップ！ (残SP: ${member.sp})`;
-                newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
-
-                localParty = localParty.map(ally => {
-                  if (ally.hp <= 0) return ally;
-                  const currentBuffs = ally.activeBuffs || [];
-                  const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id); // 重複上書き処理
-                  newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 に強化効果【${playableSkill.name}】が宿った！ (${turns}T)`, type: "success" });
-                  return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
-                });
-                logText = "";
+              if (successRoll > effChance) {
+                logText = `⚠️ [スキル失敗] ${member.name} は 【${playableSkill.name}】 を発動しようとしたが、失敗した！`;
               } else {
-                // 単体支援バフ発動（ディフェンダー等）
-                if (!targetAlly) targetAlly = member;
-                const targetFindIdx = localParty.findIndex(p => p.id === targetAlly.id);
-                if (targetFindIdx !== -1) {
-                  const currentBuffs = localParty[targetFindIdx].activeBuffs || [];
-                  const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
-                  localParty[targetFindIdx].activeBuffs = [...filteredBuffs, newBuff];
-                  
-                  logText = `🛡️✨ [支援発動] ${member.name} の 【${playableSkill.name}】！ ➔ 【${targetAlly.name}】 に絶対防御フィールド展開！ (${turns}T / 残SP: ${member.sp})`;
+                const bValue = Number(playableSkill.buff_value || 0);
+                const bValueType = playableSkill.buff_value_type || 'percent';
+                const isRangeCut = playableSkill.is_range_damage_cut === true;
+                const rangeCutPct = Number(playableSkill.range_damage_cut_pct || 0);
+                const turns = Number(playableSkill.duration_turns || 3);
+
+                // 🌟 【超重要】内部オブジェクトのキー名をタイマー・AI側と100%シンクロ！
+                const newBuff = {
+                  id: playableSkill.id,
+                  name: playableSkill.name,
+                  effect_type: playableSkill.effect_type,
+                  buff_value: bValue,
+                  buff_value_type: bValueType,
+                  is_range_damage_cut: isRangeCut,
+                  range_damage_cut_pct: rangeCutPct,
+                  duration_turns: turns,
+                  casterId: member.id // 術者のファイターID
+                };
+
+                const isAreaBuff = playableSkill.target_type === '味方全体';
+
+                if (isAreaBuff) {
+                  logText = `🙌✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！`;
+                  newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
+
+                  localParty = localParty.map(ally => {
+                    if (ally.hp <= 0) return ally;
+                    const currentBuffs = ally.activeBuffs || [];
+                    const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
+                    newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 に強化効果【${playableSkill.name}】が宿った！ (${turns}T)`, type: "success" });
+                    return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
+                  });
+                  logText = "";
+                } else {
+                  // 単体バフ・ディボーション（献身）の確実なバインド（activeBuffsに統一）
+                  const targetFindIdx = localParty.findIndex(p => p.id === targetAlly.id);
+                  if (targetFindIdx !== -1) {
+                    const currentBuffs = localParty[targetFindIdx].activeBuffs || [];
+                    const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
+                    localParty[targetFindIdx].activeBuffs = [...filteredBuffs, newBuff];
+                    
+                    if (isRangeCut && rangeCutPct === 100) {
+                      logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 と命の絆を結んだ！ (${turns}T / 残SP: ${member.sp})`;
+                    } else {
+                      logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 の物理防御が上昇した！ (${turns}T / 残SP: ${member.sp})`;
+                    }
+                  }
                 }
               }
             } else {

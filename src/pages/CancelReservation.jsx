@@ -33,6 +33,12 @@ function CancelReservation() {
         return;
       }
 
+      // 🚨 【追加】すでに施術・会計処理が完了している場合はキャンセル画面を出さずに弾く
+      if (data.status === 'completed') {
+        showError("このご予約はすでに施術・会計処理が完了しているため、キャンセル手続きは行えません。");
+        return;
+      }
+
       setReservation(data);
       setView('confirm');
     } catch (err) {
