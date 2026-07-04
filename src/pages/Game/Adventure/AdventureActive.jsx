@@ -680,11 +680,20 @@ if (usedSkill) {
                   }
                 } else {
                   // 💥 物理特技スキルルート
-                  let calculatedPower = baseValue;
-                  if (usedSkill.value_type === 'percent') {
-                    const eStr = enemyItem.str || 10;
-                    calculatedPower = Math.floor((eStr * 2) * baseValue / 100);
+                  // ⚔️ 👑 【三土手神特注：物理スキル用・物理ATKバフ動的加算エンジン】
+                  let bonusAtk = 0;
+                  if (member.activeBuffs && member.activeBuffs.length > 0) {
+                    member.activeBuffs.forEach(b => {
+                      if (b.effect_type === '物理ATK増幅') {
+                        if (b.buff_value_type === 'fixed') bonusAtk += b.buff_value;
+                        else if (b.buff_value_type === 'percent') bonusAtk += Math.floor(randomizedAtk * b.buff_value / 100);
+                      }
+                    });
                   }
+
+                  const totalBaseAtk = randomizedAtk + bonusAtk;
+                  let calculatedPower = baseValue;
+                  if (playableSkill.value_type === 'percent') calculatedPower = Math.floor((totalBaseAtk * baseValue) / 100);
 
                   // 🛡️ 🆕 【三土手神特注】被弾側のバフ効果（物理DEF増幅）をリアルタイム計算
                   let bonusDef = 0;
@@ -699,21 +708,32 @@ if (usedSkill) {
                   const targetDef = target.vit || 0;
                   dmg = Math.max(1, calculatedPower - (targetDef + bonusDef));
 
-                  // 🛡️ 🆕 【三土手神特注：物理スキル被弾時のディボーション割り込みセンサー】
-                  const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.range_damage_cut_pct === 100 && b.duration_turns > 0);
+                  // 🛡️ 👑 【三土手神特注：物理スキル被弾時のバフ値連動型ディボーションセンサー】
+                  // 100%縛りを撤廃し、持続ターンが残っているディボーションバフを検知
+                  const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.duration_turns > 0);
                   const casterMember = devotionBuff ? localParty.find(m => m.id === devotionBuff.casterId && m.hp > 0) : null;
 
                   if (devotionBuff && casterMember) {
-                    const transferredDmg = dmg; // 転送する元のダメージを記憶
-                    dmg = 0; // 本人の被弾実数値は完全無効（0）化！
+                    // 🛡️ 👑 【三土手神特注：物理スキル被弾時のバフ値連動型ディボーションセンサー】
+                    // buff_valueではなく、新しく格納した range_damage_cut_pct から「50%」を正しく取得！
+                    const cutPct = Number(devotionBuff.range_damage_cut_pct !== undefined ? devotionBuff.range_damage_cut_pct : 100);
                     
-                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                    // 数理設計に基づき、設定された％の分だけダメージを正確に分散
+                    const transferredDmg = Math.floor(dmg * (cutPct / 100)); // ファイターが肩代わりする分
+                    const originalRemainingDmg = Math.max(0, dmg - transferredDmg); // クレリックが受ける残り分
                     
-                    // 術者（ファイター）のインデックスを探して身代わり減算
+                    // クレリック側のHPを減算
+                    localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
+                    
+                    // 術者（ファイター）のHPを減算
                     const casterIdx = localParty.findIndex(m => m.id === casterMember.id);
                     localParty[casterIdx].hp = Math.max(0, localParty[casterIdx].hp - transferredDmg);
                     
-                    logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が ${target.name} を庇って代わりに ${transferredDmg} のダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
+                    if (cutPct >= 100) {
+                      logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が ${target.name} を完全に庇って代わりに ${transferredDmg} のダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
+                    } else {
+                      logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ 🛡️[絆の分散発動!] ${casterMember.name} がダメージの ${cutPct}% (${transferredDmg}) を肩代わり！ ${target.name} は残りの ${originalRemainingDmg} ダメージに抑えた！`;
+                    }
                   } else {
                     // 通常の着弾
                     localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
@@ -766,20 +786,29 @@ if (usedSkill) {
                     dmg = Math.max(1, baseAtk - (target.vit + bonusDef));
 
                     // 🛡️ 🆕 【三土手神特注：通常攻撃被弾時のディボーション割り込みセンサー】
-                    const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.range_damage_cut_pct === 100 && b.duration_turns > 0);
+                    const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.duration_turns > 0);
                     const casterMember = devotionBuff ? localParty.find(m => m.id === devotionBuff.casterId && m.hp > 0) : null;
 
                     if (devotionBuff && casterMember) {
-                      const transferredDmg = dmg; // 肩代わりするダメージ
-                      dmg = 0; // 本人の被弾は 0 に！
+                      // 🛡️ 👑 【三土手神特注：通常攻撃被弾時のバフ値連動型ディボーションセンサー】
+                      // 通常攻撃被弾側も同様に range_damage_cut_pct から「50%」を取り出す設計に変更！
+                      const cutPct = Number(devotionBuff.range_damage_cut_pct !== undefined ? devotionBuff.range_damage_cut_pct : 100);
                       
-                      localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
+                      // 通常攻撃ダメージを割合で分配計算
+                      const transferredDmg = Math.floor(dmg * (cutPct / 100)); // ファイター側
+                      const originalRemainingDmg = Math.max(0, dmg - transferredDmg); // クレリック側
                       
-                      // 術者（ファイター）のHPを引き算
+                      // 各キャラクターのHPを引き算
+                      localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
+                      
                       const casterIdx = localParty.findIndex(m => m.id === casterMember.id);
                       localParty[casterIdx].hp = Math.max(0, localParty[casterIdx].hp - transferredDmg);
                       
-                      logText = `💥 ${enemyItem.name} の攻撃！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が身を挺して ${target.name} を庇い、代わりに ${transferredDmg} の物理ダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
+                      if (cutPct >= 100) {
+                        logText = `💥 ${enemyItem.name} の攻撃！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が身を挺して ${target.name} を庇い、代わりに ${transferredDmg} の物理ダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
+                      } else {
+                        logText = `💥 ${enemyItem.name} の攻撃！ ➔ 🛡️[絆の分散発動!] ${casterMember.name} がダメージの ${cutPct}% (${transferredDmg}) を身代わり！ ${target.name} は残りの ${originalRemainingDmg} の物理ダメージを受けた！`;
+                      }
                     } else {
                       // 通常の通常攻撃着弾処理
                       localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
@@ -824,11 +853,24 @@ if (usedSkill) {
   if (member.hp <= 0) return;
 
   let aliveEnemies = localEnemies.filter(e => e.hp > 0);
-  if (aliveEnemies.length === 0) return;
+        if (aliveEnemies.length === 0) return member;
 
-  const currentPlayerAspd = Number(member.aspd || 150.0);
-  const playerInterval = ((200 - currentPlayerAspd) / 50) * 1000;
-  partyAtkTimers.current[member.id] += 20;
+        // 💨 👑 【三土手神特注：ASPDバフのリアルタイム加算エンジン】
+        let bonusAspd = 0;
+        if (member.activeBuffs && member.activeBuffs.length > 0) {
+          member.activeBuffs.forEach(b => {
+            if (b.effect_type === '行動速度Aspd増幅') {
+              if (b.buff_value_type === 'fixed') bonusAspd += b.buff_value;
+              else if (b.buff_value_type === 'percent') bonusAspd += Math.floor((member.aspd || 150) * b.buff_value / 100);
+            }
+          });
+        }
+
+        // 素のASPDにバフを加算（本家の最大ASPD193でキャップをかける安全設計！）
+        const currentTotalAspd = Math.min(193.0, Number(member.aspd || 150.0) + bonusAspd);
+        const playerInterval = ((200 - currentTotalAspd) / 50) * 1000;
+        
+        partyAtkTimers.current[member.id] += 20;
 
   if (partyAtkTimers.current[member.id] >= playerInterval) {
     partyAtkTimers.current[member.id] = 0;
@@ -869,20 +911,27 @@ if (isBackRow && isShortRange) {
 }
     // 後衛でSP切れの場合も待機
     if (isBackRow && member.sp <= 0) {
-      newLogs.push({ id: `wait-sp-${member.id}-${Date.now()}`, text: `💤 ${member.name} は魔力が枯渇し、身を守るのに専念している。`, type: "system" });
-      return; 
-    }
-
-          // 🛡️ 🆕 【三土手神特注】アクティブバフの持続ターン自動減算消費エンジン
-          if (member.activeBuffs && member.activeBuffs.length > 0) {
-            member.activeBuffs = member.activeBuffs.map(buff => {
-              const nextTurns = buff.duration_turns - 1;
-              if (nextTurns <= 0) {
-                newLogs.push({ id: `buff-clear-${member.id}-${buff.id}-${Date.now()}`, text: `✨ ${member.name} の【${buff.name}】の効果が静かに切れた。`, type: "system" });
-              }
-              return { ...buff, duration_turns: nextTurns };
-            }).filter(buff => buff.duration_turns > 0);
+            newLogs.push({ id: `wait-sp-${member.id}-${Date.now()}`, text: `💤 ${member.name} は魔力が枯渇し、身を守るのに専念している。`, type: "system" });
+            return; 
           }
+
+          // 🛡️ 👑 【三土手神特注：術者行動ベースのバフ消費エンジン】
+          // 自分が行動したタイミングで、パーティ全員にかかっている「自分がかけたバフ」のターンを1減らす！
+          localParty.forEach(ally => {
+            if (ally.activeBuffs && ally.activeBuffs.length > 0) {
+              ally.activeBuffs = ally.activeBuffs.map(buff => {
+                // このバフをかけたのが「今行動しようとしているキャラ（member）」ならターンを減らす
+                if (buff.casterId === member.id) {
+                  const nextTurns = buff.duration_turns - 1;
+                  if (nextTurns <= 0) {
+                    newLogs.push({ id: `buff-clear-${ally.id}-${buff.id}-${Date.now()}-${Math.random()}`, text: `✨ ${ally.name} の【${buff.name}】の効果が静かに切れた。`, type: "system" });
+                  }
+                  return { ...buff, duration_turns: nextTurns };
+                }
+                return buff; // 自分がかけたバフじゃない（他人がかけたバフ）場合はそのまま維持
+              }).filter(buff => buff.duration_turns > 0);
+            }
+          });
 
           // 🧪 1. 状態異常スリップ＆解除判定
           if (member.state?.currentStatus && member.state.currentStatus !== 'none' && member.state.currentStatus !== 'なし') {
@@ -967,20 +1016,7 @@ if (isBackRow && isShortRange) {
           });
 
           // 🛡️ 🆕 【三土手神特注】バフ・支援特技の自動ガンビットスキャン回路
-          if (!targetAlly) {
-            const buffSkill = allowedSkills.find(sk => ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
-            if (buffSkill) {
-              // まだそのスキルIDのバフが体にかかっていない生存メンバーを前線からチョイス
-              const unbuffedAlly = localParty.find(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === buffSkill.id));
-              if (unbuffedAlly) {
-                playableSkill = buffSkill;
-                shouldLaunchMagic = true;
-                targetAlly = unbuffedAlly; // ターゲットを味方にロックオン！
-              }
-            }
-          }
-
-          // 🚑 回復・解除魔法の最優先発動AI
+          // 🚑 1. 【最優先】状態異常回復（キュア）AI
           if (hasStatusAilment) {
             const cureSkill = allowedSkills.find(sk => sk.effect_type === '状態異常回復' && member.sp >= Number(sk.sp_cost || 0));
             if (cureSkill) { 
@@ -990,12 +1026,27 @@ if (isBackRow && isShortRange) {
             }
           } 
           
+          // 💉 2. 【次点】緊急HP回復（ヒール）AI：HP70%未満で即座にロックオン
           if (!targetAlly && isEmergencyHP) {
-            const healSkill = allowedSkills.find(sk => sk.target_type === '味方単体' || sk.target_type === '味方全体' || sk.name?.includes('ヒール') || sk.effect_type === '回復');
+            const healSkill = allowedSkills.find(sk => sk.target_type === '味方単体' || sk.target_type === '味方全体' || sk.name?.includes('ヒール' ) || sk.effect_type === '回復');
             if (healSkill && member.sp >= Number(healSkill.sp_cost || 0)) { 
                 playableSkill = healSkill; 
                 shouldLaunchMagic = true; 
+                // 最もHPの低い味方を優先してターゲット
                 targetAlly = localParty.filter(p => p.hp > 0 && p.hp < (p.mhp || 424)).sort((a,b) => a.hp - b.hp)[0] || member;
+            }
+          } 
+
+          // 🛡️ 3. 【さらに次点】バフ・支援特技（速度増加など）AI：誰も死にかけていない時だけかける
+          if (!targetAlly) {
+            const buffSkill = allowedSkills.find(sk => ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
+            if (buffSkill) {
+              const unbuffedAlly = localParty.find(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === buffSkill.id));
+              if (unbuffedAlly) {
+                playableSkill = buffSkill;
+                shouldLaunchMagic = true;
+                targetAlly = unbuffedAlly;
+              }
             }
           } 
           
@@ -1030,6 +1081,19 @@ if (isBackRow && isShortRange) {
           if (playableSkill && !shouldLaunchMagic && member.sp >= Number(playableSkill.sp_cost || 0)) {
             if (isTargetBoss || currentSpRatio > 50) {
               shouldLaunchMagic = true;
+            }
+          }
+
+          // 🛡️ 【三土手神特注：バフ・かばう（ディボーション）重複発動封印パッチ】
+          // 決定されたスキルがバフ・支援系（物理DEF増幅など）の場合の重複チェック
+          if (shouldLaunchMagic && playableSkill && ['物理DEF増幅', '物理ATK増幅', '行動速度Aspd増幅'].includes(playableSkill.effect_type)) {
+            // パーティの中に、すでにこのスキルIDのバフが有効ターン数残っているメンバーがいるか全走査
+            const isAlreadyBuffed = localParty.some(p => p.hp > 0 && (p.activeBuffs || []).some(b => b.id === playableSkill.id));
+            
+            if (isAlreadyBuffed) {
+              // すでにバフ（かばうの命の絆）が存在するため、今ターンのスキル発動を完全キャンセル
+              shouldLaunchMagic = false;
+              playableSkill = null;
             }
           }
 
@@ -1139,24 +1203,31 @@ if (isBackRow && isShortRange) {
               if (successRoll > effChance) {
                 logText = `⚠️ [スキル失敗] ${member.name} は 【${playableSkill.name}】 を発動しようとしたが、失敗した！`;
               } else {
-                const bValue = Number(playableSkill.buff_value || 0);
+                const bValue = Number(playableSkill.buff_value || 0); // 物理DEF増幅の数値 (20)
                 const bValueType = playableSkill.buff_value_type || 'percent';
                 const isRangeCut = playableSkill.is_range_damage_cut === true;
-                const rangeCutPct = Number(playableSkill.range_damage_cut_pct || 0);
+                
+                // 🌍 🆕 データベースの「range_damage_cut_pct」カラムから本来の請負い％（50）をロード！
+                const rangeCutPct = Number(playableSkill.range_damage_cut_pct !== undefined ? playableSkill.range_damage_cut_pct : 100);
                 const turns = Number(playableSkill.duration_turns || 3);
 
-                // 🌟 【超重要】内部オブジェクトのキー名をタイマー・AI側と100%シンクロ！
                 const newBuff = {
                   id: playableSkill.id,
                   name: playableSkill.name,
                   effect_type: playableSkill.effect_type,
-                  buff_value: bValue,
+                  buff_value: bValue, // DEFバフ用に 20 をそのまま記憶
                   buff_value_type: bValueType,
                   is_range_damage_cut: isRangeCut,
-                  range_damage_cut_pct: rangeCutPct,
+                  range_damage_cut_pct: rangeCutPct, // 🛡️ 肩代わり率専用キーに本来の 50 を格納！
                   duration_turns: turns,
-                  casterId: member.id // 術者のファイターID
+                  casterId: member.id
                 };
+
+                // スキルの効果タイプを判別して、ログの文字列を切り替える！
+                let buffMsg = "ステータスが上昇した！";
+                if (playableSkill.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
+                else if (playableSkill.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
+                else if (playableSkill.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
 
                 const isAreaBuff = playableSkill.target_type === '味方全体';
 
@@ -1166,9 +1237,16 @@ if (isBackRow && isShortRange) {
 
                   localParty = localParty.map(ally => {
                     if (ally.hp <= 0) return ally;
+                    
+                    // 🛡️ 【三土手神特注：セルフかばう無限ループ封印センサー】
+                    if (isRangeCut && ally.id === member.id) {
+                      return ally; // 自分自身はスキップしてバフを付与しない
+                    }
+
                     const currentBuffs = ally.activeBuffs || [];
-                    const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
-                    newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 に強化効果【${playableSkill.name}】が宿った！ (${turns}T)`, type: "success" });
+                    const filteredBuffs = currentBuffs.filter(b => b.id === playableSkill.id);
+                    // 🌟 ここ！ "強化効果【...】が宿った！" の代わりに、作った buffMsg を使う
+                    newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
                     return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
                   });
                   logText = "";
@@ -1180,10 +1258,11 @@ if (isBackRow && isShortRange) {
                     const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
                     localParty[targetFindIdx].activeBuffs = [...filteredBuffs, newBuff];
                     
-                    if (isRangeCut && rangeCutPct === 100) {
+                    if (isRangeCut) {
                       logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 と命の絆を結んだ！ (${turns}T / 残SP: ${member.sp})`;
                     } else {
-                      logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 の物理防御が上昇した！ (${turns}T / 残SP: ${member.sp})`;
+                      // 🌟 ここ！ "物理防御が上昇した！" 固定ではなく、作った buffMsg を使う
+                      logText = `✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
                     }
                   }
                 }
@@ -1324,7 +1403,21 @@ if (isBackRow && isShortRange) {
               const effectiveEnemyVit = isEnemyDebuffed ? 0 : (primaryTarget.vit || 0);
               const isEnemyPoisoned = primaryTarget.state?.currentStatus === 'poison' || primaryTarget.state?.currentStatus === '毒';
               const finalEnemyVit = isEnemyPoisoned ? Math.floor(effectiveEnemyVit * 0.75) : effectiveEnemyVit;
-              const baseDmg = Math.max(1, randomizedAtk - finalEnemyVit);
+
+              // ⚔️ 👑 【三土手神特注：通常攻撃用・物理ATKバフ動的加算エンジン】
+              let bonusAtk = 0;
+              if (member.activeBuffs && member.activeBuffs.length > 0) {
+                member.activeBuffs.forEach(b => {
+                  if (b.effect_type === '物理ATK増幅') {
+                    if (b.buff_value_type === 'fixed') bonusAtk += b.buff_value;
+                    else if (b.buff_value_type === 'percent') bonusAtk += Math.floor(randomizedAtk * b.buff_value / 100);
+                  }
+                });
+              }
+
+              // ダイス値にATKバフを合算して最終ベースダメージを算出
+              const finalTotalAtk = randomizedAtk + bonusAtk;
+              const baseDmg = Math.max(1, finalTotalAtk - finalEnemyVit);
               finalDmg = Math.floor(baseDmg * totalMultiplier);
               if (finalDmg < 1) finalDmg = 1;
               localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
