@@ -918,20 +918,23 @@ if (isBackRow && isShortRange) {
           // 🛡️ 👑 【三土手神特注：術者行動ベースのバフ消費エンジン】
           // 自分が行動したタイミングで、パーティ全員にかかっている「自分がかけたバフ」のターンを1減らす！
           localParty.forEach(ally => {
-            if (ally.activeBuffs && ally.activeBuffs.length > 0) {
-              ally.activeBuffs = ally.activeBuffs.map(buff => {
-                // このバフをかけたのが「今行動しようとしているキャラ（member）」ならターンを減らす
-                if (buff.casterId === member.id) {
-                  const nextTurns = buff.duration_turns - 1;
-                  if (nextTurns <= 0) {
-                    newLogs.push({ id: `buff-clear-${ally.id}-${buff.id}-${Date.now()}-${Math.random()}`, text: `✨ ${ally.name} の【${buff.name}】の効果が静かに切れた。`, type: "system" });
-                  }
-                  return { ...buff, duration_turns: nextTurns };
-                }
-                return buff; // 自分がかけたバフじゃない（他人がかけたバフ）場合はそのまま維持
-              }).filter(buff => buff.duration_turns > 0);
-            }
-          });
+  if (ally.activeBuffs && ally.activeBuffs.length > 0) {
+    ally.activeBuffs = ally.activeBuffs.map(buff => {
+      if (buff.casterId === member.id) {
+        // かけたばかりのターンは引き算をスキップして保護する
+        if (buff.isNew) {
+          return { ...buff, isNew: false };
+        }
+        const nextTurns = buff.duration_turns - 1;
+        if (nextTurns <= 0) {
+          newLogs.push({ id: `buff-clear-${ally.id}-${buff.id}-${Date.now()}-${Math.random()}`, text: `✨ ${ally.name} の【${buff.name}】の効果が静かに切れた。`, type: "system" });
+        }
+        return { ...buff, duration_turns: nextTurns };
+      }
+      return buff;
+    }).filter(buff => buff.duration_turns > 0);
+  }
+});
 
           // 🧪 1. 状態異常スリップ＆解除判定
           if (member.state?.currentStatus && member.state.currentStatus !== 'none' && member.state.currentStatus !== 'なし') {
@@ -1003,7 +1006,7 @@ if (isBackRow && isShortRange) {
             VALID_STATUS_AILMENTS.includes(p.state.currentStatus)
           );
           
-          const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7);
+          const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.9);
 
           // 🧠 三土手神特注：スキルプールから「今撃てる有効なスキル」を事前選別
           // 💡 射程フィルターを通過した「rangeFilteredSkills」を対象にして、2回目の重複宣言を粉砕！
@@ -1028,7 +1031,7 @@ if (isBackRow && isShortRange) {
           
           // 💉 2. 【次点】緊急HP回復（ヒール）AI：HP70%未満で即座にロックオン
           if (!targetAlly && isEmergencyHP) {
-            const healSkill = allowedSkills.find(sk => sk.target_type === '味方単体' || sk.target_type === '味方全体' || sk.name?.includes('ヒール' ) || sk.effect_type === '回復');
+            const healSkill = allowedSkills.find(sk => sk.name?.includes('ヒール' ) || sk.effect_type === '回復');
             if (healSkill && member.sp >= Number(healSkill.sp_cost || 0)) { 
                 playableSkill = healSkill; 
                 shouldLaunchMagic = true; 
@@ -1039,16 +1042,38 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 3. 【さらに次点】バフ・支援特技（速度増加など）AI：誰も死にかけていない時だけかける
           if (!targetAlly) {
-            const buffSkill = allowedSkills.find(sk => ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
-            if (buffSkill) {
-              const unbuffedAlly = localParty.find(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === buffSkill.id));
-              if (unbuffedAlly) {
-                playableSkill = buffSkill;
-                shouldLaunchMagic = true;
-                targetAlly = unbuffedAlly;
-              }
-            }
-          } 
+  // バフ効果を持つスキルを抽出
+  const buffSkill = allowedSkills.find(sk => ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
+  
+  if (buffSkill) {
+    // まだこのバフがかかっていない生存メンバーをスキャン
+    let filteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === buffSkill.id));
+    const priorityJobs = buffSkill.target_priority_jobs || [];
+
+    if (priorityJobs.length > 0) {
+      // 🔮 👑 【三土手神特注：ダッシュボード連動型・動的優先度スキャンエンジン】
+      // 設定された優先職業順位（例：['ファイター', 'スカウト']）を上から順番に精査
+      for (let jobRequirement of priorityJobs) {
+        // 仲間の名前（name）またはシステム職業（job）にその文字が含まれているかチェック
+        targetAlly = filteredAllies.find(p => p.name.includes(jobRequirement) || p.job === jobRequirement) || null;
+        if (targetAlly) break; // 最も優先度の高い仲間が見つかった瞬間にロックオンしてループ脱出！
+      }
+    } else {
+      // ダッシュボードで優先職が一切指定されていない汎用スキルの場合は、今まで通り先頭の仲間へ
+      targetAlly = filteredAllies[0] || null;
+    }
+
+    // 🎯 ターゲットが「確実に存在する場合だけ」確定発動ゲートを開く！
+    if (targetAlly) {
+      playableSkill = buffSkill;
+      shouldLaunchMagic = true;
+    } else {
+      // 条件に合う仲間が一人もいない場合は、発動をキャンセルしてスルーさせる
+      playableSkill = null;
+      shouldLaunchMagic = false;
+    }
+  }
+} 
           
           if (!targetAlly && primaryTarget) {
             // 🔮 弱点属性攻撃スキャン
@@ -1074,28 +1099,60 @@ if (isBackRow && isShortRange) {
           // 💡 変数名をactiveSkillsへ安全マウントして変数未定義クラッシュを完全に粉砕！
           const activeSkills = allowedSkills;
 
+          // 🎲 スキル非確定時のランダム選出処理
           if (!shouldLaunchMagic && activeSkills.length > 0) {
             playableSkill = activeSkills[Math.floor(Math.random() * activeSkills.length)];
           }
 
+          // ランダムに選ばれたスキルを撃つかどうかの最終チェック
           if (playableSkill && !shouldLaunchMagic && member.sp >= Number(playableSkill.sp_cost || 0)) {
-            if (isTargetBoss || currentSpRatio > 50) {
+            // 🔮 👑 【三土手神特注：ランダム暴発ルート完全封印センサー】
+            const isBuffType = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
+            
+            if (isBuffType) {
+              const rPriorityJobs = playableSkill.target_priority_jobs || [];
+              let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === playableSkill.id));
+              let foundValidTarget = false;
+
+              if (rPriorityJobs.length > 0) {
+                // 優先職の中に生きている該当者がいるかチェック
+                for (let jobReq of rPriorityJobs) {
+                  if (rFilteredAllies.some(p => p.name.includes(jobReq) || p.job === jobReq)) {
+                    foundValidTarget = true;
+                    break;
+                  }
+                }
+              } else {
+                // 優先職指定がないバフなら誰に撃ってもOK
+                foundValidTarget = rFilteredAllies.length > 0;
+              }
+
+              // 対象者がいないなら、ランダム暴発を完全に防ぐためにスキル使用を不発（通常攻撃へスルー）にする
+              if (!foundValidTarget) {
+                playableSkill = null;
+                shouldLaunchMagic = false;
+              }
+            }
+
+            // バフの対象チェックを無事通過、または攻撃スキルの場合は通常通り発動ジャッジへ
+            if (playableSkill && (isTargetBoss || currentSpRatio > 50)) {
               shouldLaunchMagic = true;
             }
           }
 
           // 🛡️ 【三土手神特注：バフ・かばう（ディボーション）重複発動封印パッチ】
           // 決定されたスキルがバフ・支援系（物理DEF増幅など）の場合の重複チェック
-          if (shouldLaunchMagic && playableSkill && ['物理DEF増幅', '物理ATK増幅', '行動速度Aspd増幅'].includes(playableSkill.effect_type)) {
-            // パーティの中に、すでにこのスキルIDのバフが有効ターン数残っているメンバーがいるか全走査
-            const isAlreadyBuffed = localParty.some(p => p.hp > 0 && (p.activeBuffs || []).some(b => b.id === playableSkill.id));
-            
-            if (isAlreadyBuffed) {
-              // すでにバフ（かばうの命の絆）が存在するため、今ターンのスキル発動を完全キャンセル
-              shouldLaunchMagic = false;
-              playableSkill = null;
-            }
-          }
+          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type)) {
+  
+  // 🎯 今回魔法をかける予定の「targetAlly」だけを狙い撃ちして、同じバフIDを持っているかチェック！
+  const isAlreadyBuffed = (targetAlly.activeBuffs || []).some(b => b.id === playableSkill.id);
+  
+  if (isAlreadyBuffed) {
+    // この仲間はすでにそのバフがかかっているので、今ターンのスキル発動を安全にキャンセル
+    shouldLaunchMagic = false;
+    playableSkill = null;
+  }
+}
 
           const finalCriticalRate = member.final_battle_critical > 0 ? member.final_battle_critical : (member.luk || 10);
           const isCritical = Math.random() * 100 < finalCriticalRate;
@@ -1131,7 +1188,7 @@ if (isBackRow && isShortRange) {
             // 🛡️ 👑 【三土手神特注】古いガバガバ判定をここで完全粉砕！バフと回復を100%厳密に仕分ける定義
             const isCureSkill = playableSkill.effect_type === '状態異常回復';
             const isHealSkill = playableSkill.effect_type === '回復' || playableSkill.name?.includes('ヒール');
-            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅'].includes(playableSkill.effect_type);
+            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
 
             if (isCureSkill || isHealSkill) {
               // 🧪 ① 純粋な回復・キュア魔法専用ルート
@@ -1220,14 +1277,16 @@ if (isBackRow && isShortRange) {
                   is_range_damage_cut: isRangeCut,
                   range_damage_cut_pct: rangeCutPct, // 🛡️ 肩代わり率専用キーに本来の 50 を格納！
                   duration_turns: turns,
-                  casterId: member.id
+                  casterId: member.id,
+  isNew: true
                 };
 
                 // スキルの効果タイプを判別して、ログの文字列を切り替える！
                 let buffMsg = "ステータスが上昇した！";
-                if (playableSkill.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
-                else if (playableSkill.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
-                else if (playableSkill.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
+if (playableSkill.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
+else if (playableSkill.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
+else if (playableSkill.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
+else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が大幅に上昇した！"; // 👈 これを追加！
 
                 const isAreaBuff = playableSkill.target_type === '味方全体';
 
@@ -1274,22 +1333,61 @@ if (isBackRow && isShortRange) {
                 const isMagic = playableSkill.skill_type === 'magic';
                 logText = isMagic ? `🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が炸裂！(残SP: ${member.sp})` : `⚔️💥 【全体特技】${member.name} の【${playableSkill.name}】が一閃！(残SP: ${member.sp})`;
                 newLogs.push({ id: `p-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
+
+                // 🔮 👑 【三土手神特注：全体魔法・特技用 バフ完全同期ベースパワー算出ゲート】
+                let finalCalculatedPower = baseValue;
+
+                if (playableSkill.value_type === 'percent') {
+                  if (isMagic) {
+                    const myInt = member.int || 10; 
+                    let minMatk = Math.floor(myInt + (myDex * 0.2)); 
+                    let maxMatk = Math.floor(myInt * 2.0 + myDex);
+
+                    // リアルタイムに魔力バフ（1000%など）をこのダイス幅に完全乗算！
+                    if (member.activeBuffs && member.activeBuffs.length > 0) {
+                      member.activeBuffs.forEach(b => {
+                        if (b.effect_type === '魔力Matk増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            minMatk += b.buff_value;
+                            maxMatk += b.buff_value;
+                          } else if (b.buff_value_type === 'percent') {
+                            minMatk += Math.floor(minMatk * b.buff_value / 100);
+                            maxMatk += Math.floor(maxMatk * b.buff_value / 100);
+                          }
+                        }
+                      });
+                    }
+                    // バフが上乗せされた最強の魔力幅から、今回のダイス威力を決定！
+                    finalCalculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
+                  } else {
+                    // 物理特技スキルの場合は、通常攻撃ダイスを参照
+                    finalCalculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+                  }
+                }
+
+                // 確定した最強の威力を引っ提げて、敵全員のHPを消し飛ばすループへ突入！
                 localEnemies = localEnemies.map(enemyItem => {
                   if (enemyItem.hp <= 0) return enemyItem;
-                  let calculatedPower = baseValue;
-                  if (playableSkill.value_type === 'percent') {
-                    if (isMagic) {
-                      const myInt = member.int || 10; const minMatk = Math.floor(myInt + (myDex * 0.2)); const maxMatk = Math.floor(myInt * 2.0 + myDex);
-                      calculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
-                    } else { calculatedPower = Math.floor((randomizedAtk * baseValue) / 100); }
-                  }
-                  const skillSpecs = { ...attackSpecs, element: playableSkill.element || '無', is_physical: !isMagic, card_size_eff: { [enemyItem.size]: sizeValue }, card_race_eff: { [enemyItem.race]: raceValue }, card_elem_eff: { [enemyItem.element]: elemValue } };
+                  
+                  const skillSpecs = { 
+                    ...attackSpecs, 
+                    element: playableSkill.element || '無', 
+                    is_physical: !isMagic, 
+                    card_size_eff: { [enemyItem.size]: sizeValue }, 
+                    card_race_eff: { [enemyItem.race]: raceValue }, 
+                    card_elem_eff: { [enemyItem.element]: elemValue } 
+                  };
+                  
                   const skillMultiplier = calculateDamageModifier(skillSpecs, { element: enemyItem.element, race: enemyItem.race, size: enemyItem.size });
                   const enemyMdef = enemyItem.int || 0;
-                  const aoeDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier) - enemyMdef);
+                  
+                  // 上で計算した finalCalculatedPower をそのまま使用してダメージ算出！
+                  const aoeDmg = Math.max(1, Math.floor(finalCalculatedPower * skillMultiplier) - enemyMdef);
                   const nextHp = Math.max(0, enemyItem.hp - aoeDmg);
+                  
                   let aoeLog = `   ➔ 💥 ${enemyItem.name} に ${aoeDmg} の全体ダメージ！`;
                   let nextState = { ...enemyItem.state };
+                  
                   if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && nextHp > 0) {
                     const baseChance = Number(playableSkill.effect_chance || 0);
                     const enemyResistPct = enemyItem[`resist_${playableSkill.effect_type === 'スタン' ? 'stun' : playableSkill.effect_type === '凍結' ? 'freeze' : playableSkill.effect_type === '毒' ? 'poison' : 'blind'}`] || 0;
@@ -1298,17 +1396,56 @@ if (isBackRow && isShortRange) {
                       aoeLog += ` ✨ [${playableSkill.effect_type}]状態にした！`;
                     }
                   }
+                  
                   newLogs.push({ id: `p-aoe-hit-${enemyItem.instanceId}-${Date.now()}-${Math.random()}`, text: aoeLog, type: "success" });
                   if (nextHp <= 0) newLogs.push({ id: `win-aoe-${enemyItem.instanceId}-${Date.now()}`, text: `🏆 🎉 【${enemyItem.name}】を全体攻撃で撃破した！`, type: "system" });
+                  
                   return { ...enemyItem, hp: nextHp, state: nextState };
                 });
                 logText = ""; 
               } else {
                 let calculatedPower = baseValue;
-                if (playableSkill.value_type === 'percent') calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+                const isMagic = playableSkill.skill_type === 'magic';
+
+                if (playableSkill.value_type === 'percent') {
+                  if (isMagic) {
+                    // 🔮 👑 【三土手神特注：単体魔法専用・魔力バフ動的乗算インジェクション】
+                    const myInt = member.int || 10; 
+                    let minMatk = Math.floor(myInt + (myDex * 0.2)); 
+                    let maxMatk = Math.floor(myInt * 2.0 + myDex);
+
+                    // メイジの魂に宿る「魔力Matk増幅」をスキャンしてダイス幅を引き上げる！
+                    if (member.activeBuffs && member.activeBuffs.length > 0) {
+                      member.activeBuffs.forEach(b => {
+                        if (b.effect_type === '魔力Matk増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            minMatk += b.buff_value;
+                            maxMatk += b.buff_value;
+                          } else if (b.buff_value_type === 'percent') {
+                            minMatk += Math.floor(minMatk * b.buff_value / 100);
+                            maxMatk += Math.floor(maxMatk * b.buff_value / 100);
+                          }
+                        }
+                      });
+                    }
+                    // バフが乗った最強の魔力から、今回の威力をダイス決定！
+                    calculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
+                  } else {
+                    // 物理スキルの場合は通常通り攻撃力ダイスを参照
+                    calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+                  }
+                }
+
                 const skillSpecs = { ...attackSpecs, element: playableSkill.element || '無', is_physical: playableSkill.skill_type === 'art' };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
-                finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
+                
+                // 物理スキルの場合は敵のVIT防御を引き算する
+                if (playableSkill.skill_type === 'art') {
+                  finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier) - (primaryTarget.vit || 0));
+                } else {
+                  finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
+                }
+
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
                 logText = `${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
                 if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && localEnemies[targetIdx].hp > 0) {
@@ -1352,7 +1489,7 @@ if (isBackRow && isShortRange) {
               skillToUse = activeSkills[Math.floor(Math.random() * activeSkills.length)];
               if (member.sp < Number(skillToUse.sp_cost || 0)) useSkill = false;
               else {
-                const isHeal = skillToUse.target_type === '味方単体' || skillToUse.target_type === '味方全体' || skillToUse.name?.includes('ヒール') || skillToUse.effect_type === '回復';
+                const isHeal = skillToUse.name?.includes('ヒール') || skillToUse.effect_type === '回復';
                 if (isHeal && !localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7)) useSkill = false;
                 else if (!isTargetBoss && currentSpRatio <= 50) useSkill = false;
               }
@@ -1363,12 +1500,23 @@ if (isBackRow && isShortRange) {
               let calculatedPower = baseValue;
               if (skillToUse.value_type === 'percent' || skillToUse.calculation_type === 'percent') calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
               
-              if (skillToUse.target_type === '味方単体' || skillToUse.target_type === '味方全体') {
-                const injured = localParty.filter(p => p.hp > 0 && p.hp < p.mhp).sort((a,b) => a.hp - b.hp);
-                const hIdx = localParty.findIndex(p => p.id === (injured[0] || member).id);
-                localParty[hIdx].hp = Math.min(localParty[hIdx].mhp, localParty[hIdx].hp + calculatedPower);
-                logText = `✨ ${member.name} 【${skillToUse.name}】！ ${localParty[hIdx].name} を ${calculatedPower} 回復`;
-              } else {
+              if (isHeal || skillToUse.target_type === '味方単体' || skillToUse.target_type === '味方全体') {
+  if (skillToUse.target_type === '味方全体') {
+    // 🚑 全体回復の処理
+    localParty.forEach(p => {
+      if (p.hp > 0) {
+        p.hp = Math.min(p.mhp || 424, p.hp + calculatedPower);
+      }
+    });
+    logText = `🚑✨ [全体発動] ${member.name} 【${skillToUse.name}】！ 味方全員を ${calculatedPower} 回復！`;
+  } else {
+    // 🚑 単体回復の処理
+    const injured = localParty.filter(p => p.hp > 0 && p.hp < p.mhp).sort((a,b) => a.hp - b.hp);
+    const hIdx = localParty.findIndex(p => p.id === (injured[0] || member).id);
+    localParty[hIdx].hp = Math.min(localParty[hIdx].mhp, localParty[hIdx].hp + calculatedPower);
+    logText = `✨ ${member.name} 【${skillToUse.name}】！ ${localParty[hIdx].name} を ${calculatedPower} 回復`;
+  }
+} else {
                 const skillSpecs = { ...attackSpecs, element: skillToUse.element || '無', is_physical: skillToUse.skill_type === 'art' };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
                 if (skillToUse.skill_type === 'art') {
