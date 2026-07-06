@@ -278,6 +278,38 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
 };
 const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
+// 🔮 👑 【三土手創世神特注：常時発動型パッシブスキル・詳細画面リアルタイム同期インジェクション】
+let passiveFleeBonus = 0;
+let passiveCritBonus = 0;
+let passiveAtkBonus = 0;
+let passiveMatkBonus = 0;
+let passiveDefBonus = 0;   // 👈 🆕 Def用のボーナス受け皿を新設！
+let passiveMdefBonus = 0;
+let passiveHpMultiplier = 1.0;
+let passiveSpMultiplier = 1.0;
+
+const characterSkills = character.skillsList || [];
+
+characterSkills.forEach(sk => {
+  if (sk.skill_type === 'passive') {
+    if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
+    if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
+    if (sk.effect_type === 'パッシブATK増幅') passiveAtkBonus += Number(sk.effect_value || 0);
+    if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
+    if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);  // 👈 🆕 データベースからDefをスキャン！
+    if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0); // 👈 🆕 データベースからMdefをスキャン！
+    if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
+    if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
+  }
+});
+
+// 各戦闘能力値・最大値へパッシブの恩恵をダイレクト上書き合流！
+ro.flee = ro.flee + passiveFleeBonus;
+ro.critical = ro.critical + passiveCritBonus;
+ro.atk = ro.atk + passiveAtkBonus;
+ro.def = ro.def + passiveDefBonus;     // 👈 🆕 計算後の最終Defにパッシブを直撃合流！
+ro.mdef = ro.mdef + passiveMdefBonus;
+
   // 🔮 🆕 カード効果による「純粋なVIT・INTの上昇値」をエンジン内部の最終Atk/Def等から逆引き計算して完全連動化！
   // エンジン内で str や vit を計算した後の最終合算値から、Base値と手振りBonus値を引き算してカード分のVITを特定します
   const cardAddedVit = (ro.def - Math.floor((character.meta?.stat_armor || 0))) - (character.meta?.stat_vit || 1) - currentTempCharForCalc.bonus.vit;
@@ -287,8 +319,8 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
   // 💡 最も確実かつタイポのない鉄壁の2重連動配線
   // 計算エンジンが算出した「最終Atk/Def」の元となった、カード合算後の純粋なVIT・INTをベースにHP/SPを完全シンクロ！
   // 今挿してあるカードが持つ固定HP加算（card_hp）に加え、VIT増幅分（VIT * 10）も1ミリの漏れなく自動追従します
-  const liveMaxHp = (character.meta?.base_hp || 100) + (((ro.def - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.def || 0), 0)) * 2) * 10) + (ro.card_hp || 0);
-  const liveMaxSp = (character.meta?.base_sp || 10) + (((ro.mdef - Object.values(character.equips || {}).reduce((sum, eq) => sum + (sum?.mdef || 0), 0)) * 2) * 2) + (ro.card_sp || 0);
+  const liveMaxHp = Math.floor(((character.meta?.base_hp || 100) + (((ro.def - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.def || 0), 0)) * 2) * 10) + (ro.card_hp || 0)) * passiveHpMultiplier);
+const liveMaxSp = Math.floor(((character.meta?.base_sp || 10) + (((ro.mdef - Object.values(character.equips || {}).reduce((sum, eq) => sum + (sum?.mdef || 0), 0)) * 2) * 2) + (ro.card_sp || 0)) * passiveSpMultiplier);
 
   // 👑 三土手神仕様：酒場・拠点（非戦闘時）に滞在しているため、現在のHP/SPは常に完全全回復（MAXバインド）！
   const currentLiveHp = liveMaxHp;
@@ -447,8 +479,9 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             {/* 🔮 👑 三土手神特注：カードが乗っている戦闘スペックに、鮮やかな赤色のカッコ内訳 (+X) を同時点灯！ */}
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#887355' }}>攻撃力 (Atk)</span>
-              <span style={{ color: '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                {ro.atk} {cardAtkBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardAtkBonus})</span>}
+              {/* 💡 ⚙️ パッシブATK上昇が効いている時は、白文字からゴールド（#ffd700）の輝きへクラスチェンジ！ */}
+              <span style={{ color: passiveAtkBonus > 0 ? '#ffd700' : '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.atk} {passiveAtkBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveAtkBonus})</span>} {cardAtkBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardAtkBonus})</span>}
               </span>
             </div>
 
@@ -456,13 +489,15 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             {(() => {
               const liveInt = (character.meta?.stat_int || 1) + localBonuses.int + (ro?.cardStats?.int || 0);
               const liveDex = (character.meta?.stat_dex || 1) + localBonuses.dex + (ro?.cardStats?.dex || 0);
-              const minMatk = Math.floor(liveInt + (liveDex * 0.2));
-              const maxMatk = Math.floor(liveInt * 2.0 + liveDex);
+              // 🎯 👑 パッシブの上昇数値を、ダイス幅の最小・最大の両方へ直撃プラス！
+              const minMatk = Math.floor(liveInt + (liveDex * 0.2)) + passiveMatkBonus;
+              const maxMatk = Math.floor(liveInt * 2.0 + liveDex) + passiveMatkBonus;
               return (
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
                   <span style={{ color: '#38bdf8' }}>魔力 (Matk)</span>
-                  <span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                    {minMatk} 〜 {maxMatk}
+                  {/* 💡 ⚙️ パッシブが効いている時は、文字をゴールド（#ffd700）へライトアップ！ */}
+                  <span style={{ color: passiveMatkBonus > 0 ? '#ffd700' : '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                    {minMatk} 〜 {maxMatk} {passiveMatkBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveMatkBonus})</span>}
                   </span>
                 </div>
               );
@@ -470,8 +505,9 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#34d399' }}>防御力 (Def)</span>
-              <span style={{ color: '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                +{ro.def} {cardDefBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardDefBonus})</span>}
+              {/* 💡 ⚙️ パッシブDefが乗っている時は、ゴールド（#ffd700）の輝きへライトアップ！ */}
+              <span style={{ color: passiveDefBonus > 0 ? '#ffd700' : '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                +{ro.def} {passiveDefBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveDefBonus})</span>} {cardDefBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardDefBonus})</span>}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
@@ -482,8 +518,9 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#887355' }}>回避 (Flee)</span>
-              <span style={{ color: '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                {ro.flee} {cardFleeBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardFleeBonus})</span>}
+              {/* 💡 ⚙️ 【三土手神特注】パッシブのボーナスが乗っている時は、ゴールド（#ffd700）に光り輝く神の仕様へ */}
+              <span style={{ color: passiveFleeBonus > 0 ? '#ffd700' : '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.flee} {passiveFleeBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveFleeBonus})</span>} {cardFleeBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardFleeBonus})</span>}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
@@ -492,14 +529,16 @@ const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#887355' }}>魔法防御 (Mdef)</span>
-              <span style={{ color: '#f472b6', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                +{ro.mdef} {cardMdefBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardMdefBonus})</span>}
+              {/* 💡 ⚙️ パッシブMdefが乗っている時は、ピンクからゴールド（#ffd700）の加護へ！ */}
+              <span style={{ color: passiveMdefBonus > 0 ? '#ffd700' : '#f472b6', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                +{ro.mdef} {passiveMdefBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveMdefBonus})</span>} {cardMdefBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardMdefBonus})</span>}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#887355' }}>致命打率 (Critical)</span>
-              <span style={{ color: '#fbbf24', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                {ro.critical}% {cardCritBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardCritBonus}%)</span>}
+              {/* 💡 パッシブが乗っている時はテキストをゴールドにして内訳を表示 */}
+              <span style={{ color: passiveCritBonus > 0 ? '#ffd700' : '#fbbf24', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {ro.critical}% {passiveCritBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveCritBonus}%)</span>} {cardCritBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardCritBonus}%)</span>}
               </span>
             </div>
           </div>

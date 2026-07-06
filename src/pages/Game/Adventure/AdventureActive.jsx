@@ -237,6 +237,31 @@ const AdventureActive = ({
           // 編成画面のトグルスイッチでパチパチ切り替えられた最新の position ('front' または 'back') を全自動上書きマウント！
           const position = slotData && typeof slotData === 'object' ? slotData.position : 'front';
 
+// 🔮 👑 【三土手創世神特注：バトル突入時・パッシブスキル全自動検知マウントエンジン】
+          let passiveFleeBonus = 0;
+          let passiveCritBonus = 0;
+          let passiveAtkBonus = 0;
+          let passiveMatkBonus = 0; 
+          let passiveDefBonus = 0;   // 👈 🆕 Def用のボーナス受け皿を新設！
+          let passiveMdefBonus = 0;
+          let passiveHpMultiplier = 1.0; // HPは％上昇（倍率）で受け止める
+          let passiveSpMultiplier = 1.0; // SPは％上昇（倍率）で受け止める
+
+          if (availableSkills && availableSkills.length > 0) {
+            availableSkills.forEach(sk => {
+              if (sk.skill_type === 'passive') {
+                if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === 'パッシブATK増幅') passiveAtkBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);  // 👈 🆕 データベースからDefをスキャン！
+                if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0); // 👈 🆕 データベースからMdefをスキャン！
+                if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
+                if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
+              }
+            });
+          }
+
           return {
             id: ch.id,
             name: ch.custom_name,
@@ -245,13 +270,14 @@ const AdventureActive = ({
             // 🛡️ 🆕 キャラクターに武器射程を記憶させる
             weaponRange: ch.equips?.right_hand?.range || 'S',
             position,
-            mhp: ch.max_hp || ch.mhp || 424, 
-            hp: ch.max_hp || ch.mhp || 424,
-            msp: ch.max_sp || ch.msp || 50,
-            sp: ch.max_sp || ch.msp || 50,
+            mhp: Math.floor((ch.max_hp || ch.mhp || 424) * passiveHpMultiplier), 
+            hp: Math.floor((ch.max_hp || ch.mhp || 424) * passiveHpMultiplier),
+            msp: Math.floor((ch.max_sp || ch.msp || 50) * passiveSpMultiplier),
+            sp: Math.floor((ch.max_sp || ch.msp || 50) * passiveSpMultiplier),
             str: ch.roStatus?.str || ch.str || 10,
             agi: ch.roStatus?.agi || ch.agi || (ch.meta?.stat_agi || 10) + (ch.bonus?.agi || 0),
             vit: ch.roStatus?.vit || ch.vit || (ch.meta?.stat_vit || 10) + (ch.bonus?.vit || 0),
+            int: ch.roStatus?.int || ch.int || (ch.meta?.stat_int || 10) + (ch.bonus?.int || 0),
             dex: ch.roStatus?.dex || ch.dex || (ch.meta?.stat_dex || 10) + (ch.bonus?.dex || 0), 
             luk: ch.roStatus?.luk || ch.luk || 10,
             job: myJob,
@@ -266,7 +292,7 @@ const AdventureActive = ({
             // 🔮 バフ・デバフ用のアクティブ配列プール
             activeBuffs: [],
 
-            final_battle_critical: Number(alcoholCritical),
+            final_battle_critical: Number(alcoholCritical) + passiveCritBonus,
 
             // 🩸 装備から吸い上げた吸血値をインジェクション
             hp_drain_chance: totalDrainChance,
@@ -275,10 +301,20 @@ const AdventureActive = ({
             card_inflict_type: totalInflictType,
             card_inflict_chance: maxInflictChance,
 
-            roStatus: ch.roStatus || {},
-            flee: ch.roStatus?.flee || 0,
+roStatus: ch.roStatus || {},
+            
+            // 物理攻撃力パッシブ合流
+            atk: Number(ch.roStatus?.atk || 0) + passiveAtkBonus,
+            // 魔法魔力パッシブ合流
+            passive_matk_bonus: passiveMatkBonus,
+            // 回避率パッシブ合流
+            flee: Number(ch.roStatus?.flee || 0) + passiveFleeBonus,
+            
+            // 🎯 👑 【Def / Mdef 電線完全同期】素の計算値にパッシブ数値をその場でドッキング！
+            def: Number(ch.roStatus?.def || 0) + passiveDefBonus,
+            mdef: Number(ch.roStatus?.mdef || 0) + passiveMdefBonus,
+            
             hit: ch.roStatus?.hit || 0,
-            mdef: ch.roStatus?.mdef || 0,
             aspd: ch.roStatus?.aspd || 150.0 
           };
         });
@@ -990,6 +1026,9 @@ if (isBackRow && isShortRange) {
           // 🏹 🆕 【三土手神特注】後衛時におけるSレンジスキルの暴発封印ゲート（ここで1度だけ宣言）
           const rawSkillsList = member.skillsList || [];
           const rangeFilteredSkills = rawSkillsList.filter(sk => {
+            // 🔮 👑 常時発動型のパッシブスキルは、アクティブ技のプールから物理的に100%永久除外！
+            if (sk.skill_type === 'passive') return false;
+
             // キャラが後衛（back）かつ、スキルの設定射程がSレンジ（S）なら除外
             if (member.position === 'back' && sk.skill_range === 'S') {
               return false; 
@@ -1448,7 +1487,8 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
 
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
                 logText = `${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
-                if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && localEnemies[targetIdx].hp > 0) {
+                // 🔮 👑 ここもパッシブなら敵にデバフを流さない！
+                if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && playableSkill.skill_type !== 'passive' && localEnemies[targetIdx].hp > 0) {
                   const baseChance = Number(playableSkill.effect_chance || 0);
                   const enemyResistPct = playableSkill.effect_type === 'スタン' ? primaryTarget.resist_stun || 0 : playableSkill.effect_type === '凍結' ? primaryTarget.resist_freeze || 0 : playableSkill.effect_type === '毒' ? primaryTarget.resist_poison || 0 : playableSkill.effect_type === '暗闇' ? primaryTarget.resist_blind || 0 : 0;
                   if (Math.random() * 100 < Math.max(0, baseChance - enemyResistPct)) {
@@ -1489,8 +1529,8 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
               skillToUse = activeSkills[Math.floor(Math.random() * activeSkills.length)];
               if (member.sp < Number(skillToUse.sp_cost || 0)) useSkill = false;
               else {
-                const isHeal = skillToUse.name?.includes('ヒール') || skillToUse.effect_type === '回復';
-                if (isHeal && !localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7)) useSkill = false;
+                // 🧹 上のブロックの const isHeal = ... をスッキリ撤去し、チェックはそのまま直書きにリフォーム！
+                if ((skillToUse.name?.includes('ヒール') || skillToUse.effect_type === '回復') && !localParty.some(p => p.hp > 0 && p.hp < (p.mhp || 424) * 0.7)) useSkill = false;
                 else if (!isTargetBoss && currentSpRatio <= 50) useSkill = false;
               }
             }
@@ -1500,23 +1540,26 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
               let calculatedPower = baseValue;
               if (skillToUse.value_type === 'percent' || skillToUse.calculation_type === 'percent') calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
               
+              // 🔮 👑 【スコープ完全開通】ここで新しく const 宣言することで、下の if (isHeal || ... ) に100%バトンが繋がります！
+              const isHeal = skillToUse.name?.includes('ヒール') || skillToUse.effect_type === '回復';
+
               if (isHeal || skillToUse.target_type === '味方単体' || skillToUse.target_type === '味方全体') {
-  if (skillToUse.target_type === '味方全体') {
-    // 🚑 全体回復の処理
-    localParty.forEach(p => {
-      if (p.hp > 0) {
-        p.hp = Math.min(p.mhp || 424, p.hp + calculatedPower);
-      }
-    });
-    logText = `🚑✨ [全体発動] ${member.name} 【${skillToUse.name}】！ 味方全員を ${calculatedPower} 回復！`;
-  } else {
-    // 🚑 単体回復の処理
-    const injured = localParty.filter(p => p.hp > 0 && p.hp < p.mhp).sort((a,b) => a.hp - b.hp);
-    const hIdx = localParty.findIndex(p => p.id === (injured[0] || member).id);
-    localParty[hIdx].hp = Math.min(localParty[hIdx].mhp, localParty[hIdx].hp + calculatedPower);
-    logText = `✨ ${member.name} 【${skillToUse.name}】！ ${localParty[hIdx].name} を ${calculatedPower} 回復`;
-  }
-} else {
+                if (skillToUse.target_type === '味方全体') {
+                  // 🚑 全体回復の処理
+                  localParty.forEach(p => {
+                    if (p.hp > 0) {
+                      p.hp = Math.min(p.mhp || 424, p.hp + calculatedPower);
+                    }
+                  });
+                  logText = `🚑✨ [全体発動] ${member.name} 【${skillToUse.name}】！ 味方全員を ${calculatedPower} 回復！`;
+                } else {
+                  // 🚑 単体回復の処理
+                  const injured = localParty.filter(p => p.hp > 0 && p.hp < p.mhp).sort((a,b) => a.hp - b.hp);
+                  const hIdx = localParty.findIndex(p => p.id === (injured[0] || member).id);
+                  localParty[hIdx].hp = Math.min(localParty[hIdx].mhp, localParty[hIdx].hp + calculatedPower);
+                  logText = `✨ ${member.name} 【${skillToUse.name}】！ ${localParty[hIdx].name} を ${calculatedPower} 回復`;
+                }
+              } else {
                 const skillSpecs = { ...attackSpecs, element: skillToUse.element || '無', is_physical: skillToUse.skill_type === 'art' };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
                 if (skillToUse.skill_type === 'art') {
@@ -1532,7 +1575,8 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
                   logText = `🔮 ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！`;
                 }
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-                if (skillToUse.effect_type && skillToUse.effect_type !== 'なし' && localEnemies[targetIdx].hp > 0) {
+                // 🔮 👑 パッシブスキルの効果を敵に付与するのを鉄壁ガード！
+                if (skillToUse.effect_type && skillToUse.effect_type !== 'なし' && skillToUse.skill_type !== 'passive' && localEnemies[targetIdx].hp > 0) {
                   const res = skillToUse.effect_type === 'スタン' ? primaryTarget.resist_stun || 0 : skillToUse.effect_type === '毒' ? primaryTarget.resist_poison || 0 : 0;
                   if (Math.random() * 100 < Math.max(0, Number(skillToUse.effect_chance || 0) - res)) {
                     localEnemies[targetIdx].state = { currentStatus: skillToUse.effect_type, durationTurns: Number(skillToUse.duration_turns || 3) };
