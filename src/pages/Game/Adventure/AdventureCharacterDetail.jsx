@@ -319,8 +319,11 @@ ro.mdef = ro.mdef + passiveMdefBonus;
   // 💡 最も確実かつタイポのない鉄壁の2重連動配線
   // 計算エンジンが算出した「最終Atk/Def」の元となった、カード合算後の純粋なVIT・INTをベースにHP/SPを完全シンクロ！
   // 今挿してあるカードが持つ固定HP加算（card_hp）に加え、VIT増幅分（VIT * 10）も1ミリの漏れなく自動追従します
-  const liveMaxHp = Math.floor(((character.meta?.base_hp || 100) + (((ro.def - Object.values(character.equips || {}).reduce((sum, eq) => sum + (eq?.def || 0), 0)) * 2) * 10) + (ro.card_hp || 0)) * passiveHpMultiplier);
-const liveMaxSp = Math.floor(((character.meta?.base_sp || 10) + (((ro.mdef - Object.values(character.equips || {}).reduce((sum, eq) => sum + (sum?.mdef || 0), 0)) * 2) * 2) + (ro.card_sp || 0)) * passiveSpMultiplier);
+  const baseHpCalc = 100 + ((character.level || 1) * 15) + ((ro.vit || 0) * 8) + (ro.card_hp || 0);
+  const liveMaxHp = Math.floor(baseHpCalc * passiveHpMultiplier);
+
+  const baseSpCalc = 20 + ((character.level || 1) * 2) + ((ro.int || 0) * 4) + (ro.card_sp || 0);
+  const liveMaxSp = Math.floor(baseSpCalc * passiveSpMultiplier);
 
   // 👑 三土手神仕様：酒場・拠点（非戦闘時）に滞在しているため、現在のHP/SPは常に完全全回復（MAXバインド）！
   const currentLiveHp = liveMaxHp;
