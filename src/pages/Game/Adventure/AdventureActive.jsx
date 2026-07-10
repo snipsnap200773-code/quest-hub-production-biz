@@ -245,7 +245,10 @@ const AdventureActive = ({
           let passiveDefBonus = 0;   
           let passiveMdefBonus = 0;  
           let passiveTwinChance = 0; 
-          let passiveHpRegen = 0;    // 👈 🆕 5秒ごとのHP回復量を溜める器を新設！
+          let passiveHpRegen = 0;
+          let passiveSpRegen = 0;
+          let passiveDexBonus = 0;       // 🏹 🆕 【三土手神特注】常時DEX上昇値を溜める器
+          let passiveRangedHitBonus = 0; // 🏹 🆕 【三土手神特注】遠隔Hit底上げ値を溜める器
           let passiveHpMultiplier = 1.0; 
           let passiveSpMultiplier = 1.0; 
 
@@ -260,12 +263,24 @@ const AdventureActive = ({
                 if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === 'ツインブレード型連撃') passiveTwinChance = Math.max(passiveTwinChance, Number(sk.effect_value || 0));
                 
+                // 🧼 ディバインアイ（神識眼）：常時DEXを固定値プラスする判定
+                if (sk.effect_type === 'パッシブDEX増幅' || sk.name?.includes('ディバインアイ') || sk.name?.includes('神識眼')) {
+                  passiveDexBonus += Number(sk.effect_value || 0);
+                }
+                
+                // 🧼 ホークアイ（遠見の心眼）：Lレンジ武器装備時にHitを底上げする判定
+                if (sk.effect_type === '遠隔命中増幅' || sk.name?.includes('ホークアイ') || sk.name?.includes('遠見の心眼')) {
+                  passiveRangedHitBonus += Number(sk.effect_value || 0);
+                }
+
                 // 🎯 👑 【三土手創世神特注：効果タイプ ＆ スキル名 二重包囲網センサー】
-                // effect_typeが一致するか、またはスキルの名前に「HP自動回復」が含まれていれば、確実にeffect_value（50000）を強奪ロード！
                 if (sk.effect_type === 'パッシブHP自動回復' || sk.name?.includes('HP自動回復')) {
                   passiveHpRegen += Number(sk.effect_value || 0);
                 }
-                
+                // 🎯 🆕 【効果タイプ ＆ スキル名 二重包囲網センサー：SP版】
+                if (sk.effect_type === 'パッシブSP自動回復' || sk.name?.includes('マインドリフレッシュ') || sk.name?.includes('精神統一')) {
+                  passiveSpRegen += Number(sk.effect_value || 0);
+                }
                 if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
                 if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
               }
@@ -287,8 +302,8 @@ const AdventureActive = ({
             agi: ch.roStatus?.agi || ch.agi || (ch.meta?.stat_agi || 0) + (ch.bonus?.agi || 0),
             vit: ch.roStatus?.vit || ch.vit || (ch.meta?.stat_vit || 0) + (ch.bonus?.vit || 0),
             int: ch.roStatus?.int || ch.int || (ch.meta?.stat_int || 0) + (ch.bonus?.int || 0),
-            border_dex: ch.roStatus?.dex || ch.dex || 0, 
-            dex: ch.roStatus?.dex || ch.dex || 0, 
+            border_dex: (ch.roStatus?.dex || ch.dex || 0) + passiveDexBonus, 
+            dex: (ch.roStatus?.dex || ch.dex || 0) + passiveDexBonus, 
             luk: ch.roStatus?.luk || ch.luk || 0,
             job: myJob,
             weaponSubtype,
@@ -329,11 +344,18 @@ roStatus: ch.roStatus || {},
             
             // 🎯 👑 【自己治癒力メモリ直結】5秒周期タイマーが参照するための固定回復量を完全バインド！
             passive_hp_regen: passiveHpRegen,
+            // 🎯 🆕 【精神統一メモリ直結】5秒周期タイマーが参照するための固定SP回復量をバインド！
+            passive_sp_regen: passiveSpRegen,
             
             // 🎰 クリティカル率パッシブも戦闘初期スペックへ確実に焼き付ける
             critical: Number(alcoholCritical || ch.roStatus?.critical || 0) + passiveCritBonus,
             
-            hit: ch.roStatus?.hit || 0,
+            // 🧼 変数未定義エラーを完全粉砕！ch.equip_right_hand やマスター武器データの射程をその場で正確に透視して判定！
+            hit: Number(ch.roStatus?.hit || 0) + (
+              (masterWeapon?.weapon_range === 'L' || ch.equips?.right_hand?.range === 'L') 
+                ? passiveRangedHitBonus 
+                : 0
+            ),
             aspd: ch.roStatus?.aspd || 150.0 
           };
         });
@@ -441,8 +463,13 @@ roStatus: ch.roStatus || {},
               resist_poison: Number(dbEnemy?.resist_poison || 0),
               resist_blind: Number(dbEnemy?.resist_blind || 0),
               int: dbEnemy?.int || dbEnemy?.stat_int || 0,
-              hit: dbEnemy?.hit || 0,
-              enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null,
+              
+              // 🎯 【三土手神特注】ダッシュボードのプレビュー数理法則と100%完全同期！
+              hit: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_dex || dbEnemy?.dex || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 20),
+              flee: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_agi || dbEnemy?.agi || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 10),
+              
+              // 💨 上書き設定があれば採用、なければ基本値150.0をマウント！
+              enemy_aspd: dbEnemy?.enemy_aspd !== null && dbEnemy?.enemy_aspd !== undefined ? Number(dbEnemy.enemy_aspd) : 150.0,
               
               // 🏹 🆕 逆引きした本物の武器射程を完全にマウント！
               is_range_atk: isRanged,
@@ -553,10 +580,15 @@ roStatus: ch.roStatus || {},
           // 🎰 LUKをベースにした数理設計に基づき、回復パーセンテージを算出（最低1%〜）
           const lukBonusPct = 1 + Math.floor((member.luk || 0) / 10);
           // 回復量の実数値を計算（最低保証値1）
-          const regenAmount = Math.max(1, Math.floor(((member.msp || 0) * lukBonusPct) / 100));
+          const baseSpRegen = Math.max(1, Math.floor(((member.msp || 0) * lukBonusPct) / 100));
+          
+          // 🧪 🆕 【マインドリフレッシュ数理完全同期配線】
+          // 全員共通の基本SP回復に、特定のキャラが持つパッシブ固定値をその場で上乗せ加算！
+          const passiveSpRegenAmount = Number(member.passive_sp_regen || 0);
+          const totalSpRegen = baseSpRegen + passiveSpRegenAmount;
           
           // 最大SPを超えないように安全に加算
-          const nextSp = Math.min(member.msp || 0, member.sp + regenAmount);
+          const nextSp = Math.min(member.msp || 0, member.sp + totalSpRegen);
           
           // 高速バトルログが埋まるのを防ぐため、内部ステータスを静かに書き換えてUIに同期させます。
           return {
@@ -1049,8 +1081,11 @@ if (isBackRow && isShortRange) {
             // 🔮 👑 常時発動型のパッシブスキルは、アクティブ技のプールから物理的に100%永久除外！
             if (sk.skill_type === 'passive') return false;
 
-            // キャラが後衛（back）かつ、スキルの設定射程がSレンジ（S）なら除外
-            if (member.position === 'back' && sk.skill_range === 'S') {
+            // 🚑 👑 【三土手神特注パッチ】回復やバフなど「味方にかける支援魔法」は射程制限から免除！
+            const isSupportMagic = ['状態異常回復', '回復', '物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(sk.effect_type) || sk.name?.includes('ヒール');
+
+            // 支援魔法ではなく、キャラが後衛かつSレンジなら除外
+            if (!isSupportMagic && member.position === 'back' && sk.skill_range === 'S') {
               return false; 
             }
             return true;
@@ -1102,38 +1137,94 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 3. 【さらに次点】バフ・支援特技（速度増加など）AI：誰も死にかけていない時だけかける
           if (!targetAlly) {
-  // バフ効果を持つスキルを抽出
-  const buffSkill = allowedSkills.find(sk => ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
-  
-  if (buffSkill) {
-    // まだこのバフがかかっていない生存メンバーをスキャン
-    let filteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === buffSkill.id));
-    const priorityJobs = buffSkill.target_priority_jobs || [];
+            const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+            const availableBuffSkills = allowedSkills.filter(sk => buffEffectTypes.includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
+            
+            if (availableBuffSkills.length > 0) {
+              let selectedBuffSkill = null;
+              let selectedTarget = null;
 
-    if (priorityJobs.length > 0) {
-      // 🔮 👑 【三土手神特注：ダッシュボード連動型・動的優先度スキャンエンジン】
-      // 設定された優先職業順位（例：['ファイター', 'スカウト']）を上から順番に精査
-      for (let jobRequirement of priorityJobs) {
-        // 仲間の名前（name）またはシステム職業（job）にその文字が含まれているかチェック
-        targetAlly = filteredAllies.find(p => p.name.includes(jobRequirement) || p.job === jobRequirement) || null;
-        if (targetAlly) break; // 最も優先度の高い仲間が見つかった瞬間にロックオンしてループ脱出！
-      }
-    } else {
-      // ダッシュボードで優先職が一切指定されていない汎用スキルの場合は、今まで通り先頭の仲間へ
-      targetAlly = filteredAllies[0] || null;
-    }
+              // 🎯 ステップA：優先ターゲット（例：ムキムキ➔ファイター、魔力あがれ➔メイジ）を厳格に探す
+              for (let bSkill of availableBuffSkills) {
+                let priorityJobs = bSkill.target_priority_jobs;
+                if (typeof priorityJobs === 'string') {
+                  if (priorityJobs.trim() === '') priorityJobs = [];
+                  else {
+                    try { priorityJobs = JSON.parse(priorityJobs); }
+                    catch (e) { priorityJobs = priorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
+                  }
+                }
+                priorityJobs = priorityJobs || [];
 
-    // 🎯 ターゲットが「確実に存在する場合だけ」確定発動ゲートを開く！
-    if (targetAlly) {
-      playableSkill = buffSkill;
-      shouldLaunchMagic = true;
-    } else {
-      // 条件に合う仲間が一人もいない場合は、発動をキャンセルしてスルーさせる
-      playableSkill = null;
-      shouldLaunchMagic = false;
-    }
-  }
-} 
+                if (priorityJobs.length > 0) {
+                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id));
+                  if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
+
+                  for (let jobReq of priorityJobs) {
+                    const cleanReq = jobReq.replace(/[\[\]"']/g, '').trim();
+                    const foundMatch = pFiltered.find(p => p.name.includes(cleanReq) || p.job === cleanReq);
+                    if (foundMatch) {
+                      selectedBuffSkill = bSkill;
+                      selectedTarget = foundMatch;
+                      break;
+                    }
+                  }
+                }
+                if (selectedBuffSkill) break; 
+              }
+
+              // 🎯 ステップB：優先指定の無い「汎用バフ」だけを処理する
+              if (!selectedBuffSkill) {
+                for (let bSkill of availableBuffSkills) {
+                  // 🚨 【大本命の修正箇所】優先職（メイジ等）が設定されているバフは、専用魔法なので誰彼構わずかけない（スキップ）！
+                  let priorityJobs = bSkill.target_priority_jobs;
+                  if (typeof priorityJobs === 'string') {
+                    if (priorityJobs.trim() === '') priorityJobs = [];
+                    else {
+                      try { priorityJobs = JSON.parse(priorityJobs); }
+                      catch (e) { priorityJobs = priorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
+                    }
+                  }
+                  priorityJobs = priorityJobs || [];
+
+                  // 優先指定が存在するなら、それは汎用バフではないのでステップBでは無視する
+                  if (priorityJobs.length > 0) {
+                    continue; 
+                  }
+
+                  const isAreaBuff = bSkill.target_type === '味方全体';
+                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id));
+                  if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
+
+                  const totalTargetsCount = bSkill.is_range_damage_cut === true 
+                    ? localParty.filter(p => p.hp > 0 && p.id !== member.id).length
+                    : localParty.filter(p => p.hp > 0).length;
+
+                  const alreadyBuffedCount = totalTargetsCount - pFiltered.length;
+
+                  if (alreadyBuffedCount >= totalTargetsCount || (isAreaBuff && alreadyBuffedCount > 0)) {
+                    continue;
+                  }
+
+                  if (pFiltered.length > 0) {
+                    selectedBuffSkill = bSkill;
+                    selectedTarget = pFiltered[0]; // 先頭の味方に付与
+                    break;
+                  }
+                }
+              }
+
+              if (selectedBuffSkill && selectedTarget) {
+                playableSkill = selectedBuffSkill;
+                shouldLaunchMagic = true;
+                targetAlly = selectedTarget;
+              } else {
+                playableSkill = null;
+                shouldLaunchMagic = false;
+                targetAlly = null;
+              }
+            }
+          }
           
           if (!targetAlly && primaryTarget) {
             // 🔮 弱点属性攻撃スキャン
@@ -1142,12 +1233,22 @@ if (isBackRow && isShortRange) {
               '風': ['地', '地属性'], '闇': ['聖', '聖属性'], '不死': ['聖', '聖属性', '火', '火属性'], '聖': ['闇', '闇属性']
             };
             const weaknesses = weaknessMap[primaryTarget.element] || [];
-            if (weaknesses.length > 0) {
-              const exploitSkill = allowedSkills.find(sk => weaknesses.includes(sk.element) && member.sp >= Number(sk.sp_cost || 0));
-              if (exploitSkill) {
-                playableSkill = exploitSkill;
-                shouldLaunchMagic = true;
-              }
+            
+            // ① まずは今まで通り、2倍ダメージを狙える完全な弱点魔法があるかスキャン
+            let exploitSkill = allowedSkills.find(sk => weaknesses.includes(sk.element) && member.sp >= Number(sk.sp_cost || 0));
+            
+            // ② 🚨 【三土手神特注】弱点魔法がない、または無属性魔法や聖属性パッシブ特効を活かしたい場合の救済ゲート
+            if (!exploitSkill) {
+              exploitSkill = allowedSkills.find(sk => 
+                (sk.element === '無' || sk.element === '聖' || sk.name === 'ホーリーライト') && 
+                member.sp >= Number(sk.sp_cost || 0) &&
+                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(sk.effect_type) // ✨ここを修正：バフ魔法が攻撃として誤判定されるのを完全封鎖！
+              );
+            }
+
+            if (exploitSkill) {
+              playableSkill = exploitSkill;
+              shouldLaunchMagic = true;
             }
           }
 
@@ -1169,11 +1270,17 @@ if (isBackRow && isShortRange) {
           if (playableSkill && !shouldLaunchMagic && member.sp >= Number(playableSkill.sp_cost || 0)) {
             // 🔮 👑 【三土手神特注：ランダム暴発ルート完全封印センサー】
             const isBuffType = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
-            
-            if (isBuffType) {
-              const rPriorityJobs = playableSkill.target_priority_jobs || [];
-              let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === playableSkill.id));
-              let foundValidTarget = false;
+
+if (isBuffType) {
+  const rPriorityJobs = playableSkill.target_priority_jobs || [];
+  let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === playableSkill.id));
+  
+  // 🛡️ 👑 【三土手神特注パッチ】かばう（献身）系スキルの場合は、術者本人をターゲット候補から完全除外！
+  if (playableSkill.is_range_damage_cut === true) {
+    rFilteredAllies = rFilteredAllies.filter(p => p.id !== member.id);
+  }
+
+  let foundValidTarget = false;
 
               if (rPriorityJobs.length > 0) {
                 // 優先職の中に生きている該当者がいるかチェック
@@ -1202,7 +1309,7 @@ if (isBackRow && isShortRange) {
             }
 
             // バフの対象チェックを無事通過、または攻撃スキルの場合は通常通り発動ジャッジへ
-            if (playableSkill && (isTargetBoss || currentSpRatio > 50)) {
+            if (playableSkill && !shouldLaunchMagic && (isTargetBoss || currentSpRatio > 50)) { // ✨ここを修正：!shouldLaunchMagic を追加して、上でキャンセルされた場合は絶対に発動（true）させない！
               shouldLaunchMagic = true;
             }
           }
@@ -1224,12 +1331,31 @@ if (isBackRow && isShortRange) {
           const finalCriticalRate = member.final_battle_critical > 0 ? member.final_battle_critical : (member.luk || 0);
           const isCritical = Math.random() * 100 < finalCriticalRate;
 
-          const cardSize = member.cardSizeEff || {};
-          const cardRace = member.cardRaceEff || {};
-          const cardElem = member.cardElemEff || {};
+          // ✨安全確保：先にすべてのカードエフェクトバッファの器をシャローコピーで完全に展開してメモリにマウント！
+          const cardSize = { ...(member.cardSizeEff || {}) };
+          let cardRace = { ...(member.cardRaceEff || {}) };
+          let cardElem = { ...(member.cardElemEff || {}) }; // ✨修正：cardElem をここで安全に宣言し、クラッシュの芽を完全粉砕！
+
+          // 🛡️ 👑 【三土手神特注】ホーリープラクティス専用・種族＆属性ハイブリッド特効判定線
+          const hasHolyPractice = (member.skillsList || []).find(sk => sk.name === 'ホーリープラクティス');
+          if (hasHolyPractice && primaryTarget) {
+            const bonusPct = Number(hasHolyPractice.effect_value || 20); // 登録した20%を取得
+            
+            // 敵の種族が「悪魔」「不死」、または敵の属性（element）が「不死」の場合に発動ゲートを全開にする
+            const isTargetDemonicOrUndead = primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死';
+            
+            if (isTargetDemonicOrUndead) {
+              // 独立数理室（gameRules.js）のどのオブジェクト判定線に引っかかってもいいように、すべてに20%を安全インジェクション！
+              cardRace['悪魔'] = (cardRace['悪魔'] || 0) + bonusPct;
+              cardRace['不死'] = (cardRace['不死'] || 0) + bonusPct;
+              cardElem['不死'] = (cardElem['不死'] || 0) + bonusPct; 
+            }
+          }
+
           const sizeValue = cardSize['小型'] || 0;
           const raceValue = cardRace['無形'] || 0;
           const elemValue = cardElem['地'] || 0;
+          const undeadElemValue = cardElem['不死'] || 0; // ✨新設：不死属性特効の変動値を安全にロードする配線
           
           // 🔮 🆕 三土手神特注：初回ロード時に小文字で安全マウントした武器属性（weaponElement）を正確に引き継ぐ
           let currentWeaponElement = member.weaponElement || '無';
@@ -1241,8 +1367,8 @@ if (isBackRow && isShortRange) {
             weapon_subtype: member.weaponSubtype, 
             is_physical: true,
             card_size_eff: primaryTarget ? { [primaryTarget.size]: sizeValue } : {}, 
-            card_race_eff: primaryTarget ? { [primaryTarget.race]: raceValue } : {}, 
-            card_elem_eff: primaryTarget ? { [primaryTarget.element]: elemValue } : {}
+            card_race_eff: primaryTarget ? cardRace : {}, 
+            card_elem_eff: primaryTarget ? cardElem : {} // ✨ここを修正：固定オブジェクトではなく、ホーリープラクティスが蓄積された「cardElem」を丸ごと投下！
           };
           const defenderSpecs = primaryTarget ? { element: primaryTarget.element, race: primaryTarget.race, size: primaryTarget.size } : { element: '無', race: '無形', size: '中型' };
           const totalMultiplier = calculateDamageModifier(attackSpecs, defenderSpecs);
@@ -1350,15 +1476,16 @@ if (isBackRow && isShortRange) {
                   range_damage_cut_pct: rangeCutPct, // 🛡️ 肩代わり率専用キーに本来の 50 を格納！
                   duration_turns: turns,
                   casterId: member.id,
-  isNew: true
-                };
+                  // 🎯 【三土手神特注】確定発動時も true に設定し、発動ターン直後の重複すり減りから鉄壁ガード！
+                  isNew: true 
+                    };
 
                 // スキルの効果タイプを判別して、ログの文字列を切り替える！
                 let buffMsg = "ステータスが上昇した！";
 if (playableSkill.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
 else if (playableSkill.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
 else if (playableSkill.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
-else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が大幅に上昇した！"; // 👈 これを追加！
+else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill.effect_type === '魔法防御MDEF増幅') buffMsg = "魔法防御が上昇した！";
 
                 const isAreaBuff = playableSkill.target_type === '味方全体';
 
@@ -1403,7 +1530,14 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
               const isAOE = playableSkill.target_type === '敵全体' || playableSkill.target_type === '範囲エネミー' || playableSkill.name?.includes('全体') || playableSkill.isAreaOfEffect === true;
               if (isAOE) {
                 const isMagic = playableSkill.skill_type === 'magic';
-                logText = isMagic ? `🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が炸裂！(残SP: ${member.sp})` : `⚔️💥 【全体特技】${member.name} の【${playableSkill.name}】が一閃！(残SP: ${member.sp})`;
+                
+                // 🔮 🆕 全体大魔法・全体特技用のホーリープラクティス文字センサーをインジェクション！
+                let magicPassNotice = "";
+                if (hasHolyPractice && primaryTarget && (primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死')) {
+                  magicPassNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
+                }
+
+                logText = isMagic ? `${magicPassNotice}🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が炸裂！(残SP: ${member.sp})` : `${magicPassNotice}⚔️💥 【全体特技】${member.name} の【${playableSkill.name}】が一閃！(残SP: ${member.sp})`;
                 newLogs.push({ id: `p-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
 
                 // 🔮 👑 【三土手神特注：全体魔法・特技用 バフ完全同期ベースパワー算出ゲート】
@@ -1520,7 +1654,14 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
                 }
 
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-                logText = `${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
+                
+                // 🔮 🆕 単体魔法・単体特技用のホーリープラクティス文字センサーをインジェクション！
+                let magicPassNotice = "";
+                if (hasHolyPractice && primaryTarget && (primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死')) {
+                  magicPassNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
+                }
+
+                logText = `${magicPassNotice}${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
                 // 🔮 👑 ここもパッシブなら敵にデバフを流さない！
                 if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && playableSkill.skill_type !== 'passive' && localEnemies[targetIdx].hp > 0) {
                   const baseChance = Number(playableSkill.effect_chance || 0);
@@ -1641,7 +1782,7 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
                 }
               } 
               // 🛡️ 2. 👑 【三土手創世神特注】戦術支援バフ・支援特技の超最優先ゲート！攻撃魔法ルートへのすり抜けを完全遮断！
-              else if (['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(skillToUse.effect_type)) {
+              else if (['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(skillToUse.effect_type)) {
                 
                 // 🎯 確率発動ルートでも「優先職業」を確実にスキャンして、かつ【まだバフがかかっていない仲間】を厳選！
                 const rPriorityJobs = skillToUse.target_priority_jobs || [];
@@ -1672,10 +1813,11 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
 
                 // 🎯 もし対象の職が全員すでにバフ状態、または誰もいないなら発動を安全にキャンセル（通常攻撃ルートへスルー！）
                 if (!validTargetFound) {
+                  useSkill = false;
+                  skillToUse = null;
                   playableSkill = null;
                   shouldLaunchMagic = false;
                   targetAlly = null;
-                  // 💡 ログを出さずに静かに通常攻撃へ切り替えるため、logText は空のままにします
                 } else {
                   const successRoll = Math.random() * 100;
                   const effChance = Number(skillToUse.effect_chance !== undefined ? skillToUse.effect_chance : 100);
@@ -1745,9 +1887,16 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
               else {
                 const skillSpecs = { ...attackSpecs, element: skillToUse.element || '無', is_physical: skillToUse.skill_type === 'art' };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
+                
+                // 🔮 🆕 45%確率枠の魔法・特技用ホーリープラクティス文字センサーをインジェクション！
+                let magicPassNotice = "";
+                if (hasHolyPractice && primaryTarget && (primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死')) {
+                  magicPassNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
+                }
+
                 if (skillToUse.skill_type === 'art') {
                   finalDmg = Math.max(1, Math.floor((calculatedPower * skillMultiplier) - primaryTarget.vit));
-                  logText = `⚔️ ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の物理ダメージ！`;
+                  logText = `${magicPassNotice}⚔️ ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の物理ダメージ！`;
                   if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance && Number(member.hp_drain_percent || 0) > 0) {
                     const healAmount = Math.floor((finalDmg * Number(member.hp_drain_percent)) / 100);
                     member.hp = Math.min(member.mhp, member.hp + healAmount);
@@ -1755,7 +1904,7 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
                   }
                 } else {
                   finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
-                  logText = `🔮 ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！`;
+                  logText = `${magicPassNotice}🔮 ${member.name} 【${skillToUse.name}】！ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！`;
                 }
                 
                 // 💥 1657行目：ターゲットの敵のHPを引き算する鉄壁の定型文
@@ -1782,62 +1931,108 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
               const isEnemyPoisoned = primaryTarget.state?.currentStatus === 'poison' || primaryTarget.state?.currentStatus === '毒';
               const finalEnemyVit = isEnemyPoisoned ? Math.floor(effectiveEnemyVit * 0.75) : effectiveEnemyVit;
 
-              // ⚔️ 👑 【三土手神特注：通常攻撃用・物理ATKバフ動的加算エンジン】
-              let bonusAtk = 0;
-              if (member.activeBuffs && member.activeBuffs.length > 0) {
-                member.activeBuffs.forEach(b => {
-                  if (b.effect_type === '物理ATK増幅') {
-                    if (b.buff_value_type === 'fixed') bonusAtk += b.buff_value;
-                    else if (b.buff_value_type === 'percent') bonusAtk += Math.floor(randomizedAtk * b.buff_value / 100);
-                  }
-                });
-              }
+              // 🔬 👑 【三土手神特注：プレイヤー物理攻撃時の敵Flee完全対応センサー】
+              // 敵が行動不能デバフ状態でなければ、敵の本物のFlee（回避力）をしっかりロード！
+              const effectiveEnemyFlee = isEnemyDebuffed ? 0 : Number(primaryTarget.flee || 0);
+              const playerHit = Number(member.hit || 0);
+              const enemyFleeChance = 20 + effectiveEnemyFlee - playerHit;
+              const cappedEnemyFleeChance = Math.min(95, enemyFleeChance);
+              const randomEnemyRoll = Math.floor(Math.random() * 100);
 
-              // ダイス値にATKバフを合算して最終ベースダメージを算出
-              const finalTotalAtk = randomizedAtk + bonusAtk;
-              const baseDmg = Math.max(1, finalTotalAtk - finalEnemyVit);
-              finalDmg = Math.floor(baseDmg * totalMultiplier);
-              if (finalDmg < 1) finalDmg = 1;
-              
-              const debuffMsg = isEnemyDebuffed ? `[敵防完全喪失!]` : (isEnemyPoisoned ? `[敵防25%低下!]` : '');
+              // 🚨 ⬇️ 【三土手神特注デバッグ】ここから追加！F12で回避計算の内部数値を丸裸にします！
+              console.log(`=== 🎯 【回避/命中判定テスト】 ${member.name} ➔ ${primaryTarget.name} ===`);
+              console.log(`・敵の生データ(primaryTarget):`, primaryTarget);
+              console.log(`・抽出された敵のFlee: ${effectiveEnemyFlee} (生プロパティ: ${primaryTarget.flee})`);
+              console.log(`・プレイヤーのHit: ${playerHit}`);
+              console.log(`・計算された回避率(キャップ前): ${enemyFleeChance}%`);
+              console.log(`・最終適用回避率(MAX95): ${cappedEnemyFleeChance}%`);
+              console.log(`・運命のダイス出目(0-99): ${randomEnemyRoll} (※出目が回避率未満ならMISS)`);
+              console.log(`========================================================`);
+              // 🚨 ⬆️ ここまで追加！
 
-              // 🔮 👑 【三土手創世神特注：ツインブレード二刀連撃・ダメージ2分割＆2行ログ出力エンジン】
-              // 🏹 🆕 【武器制限ゲート】武器がLレンジ（弓など）の時は、二刀連撃が誤射されないように鉄壁ガード！
-              const isTwinStrikeActive = (member.twin_strike_chance || 0) > 0 && 
-                                         member.weaponRange !== 'L' && 
-                                         (Math.random() * 100 < member.twin_strike_chance);
-
-              if (isTwinStrikeActive) {
-                // トータル想定ダメージ（finalDmg）を綺麗な2連撃に分割出力！
-                const firstDmg = Math.floor(finalDmg / 2) + 1;
-                const secondDmg = Math.max(1, finalDmg - firstDmg);
-                const totalTwinDmg = firstDmg + secondDmg;
-
-                // 敵のHPから2連続でダメージを減算！
-                localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - totalTwinDmg);
-
-                // 2行連続ヒットを視覚的に豪華にビジュアライズ！
-                logText = `⚡ 連撃発動！ ${member.name} の二刀流が電光石火の軌跡を描く！\n` +
-                          `⏩ 1打目 ➔ 【${member.weaponName}】で ${primaryTarget.name} に ${firstDmg} の斬撃ダメージ！\n` +
-                          `⏩ 2打目 ➔ 【${member.weaponName}】で ${primaryTarget.name} に ${secondDmg} の追撃ダメージ！ (計 ${totalTwinDmg} Dmg!!)`;
+              if (randomEnemyRoll < cappedEnemyFleeChance) {
+                // 💨 敵が高確率でヒラリとかわすMISSルートへ直撃結合！
+                logText = `💨 [MISS] ${member.name} が 【${primaryTarget.name}】 を狙撃！しかし、残像のように回避された！ (敵回避率:${Math.max(0, cappedEnemyFleeChance)}%)`;
               } else {
-                // 通常通りの単発通常攻撃ヒット処理
-                localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
-                logText = `⚔️ ${member.name} が 【${member.weaponName}】 で通常攻撃！[${attackSpecs.weapon_subtype}/${attackSpecs.element}属性] ➔ (ダイス${randomizedAtk}-敵防${finalEnemyVit})${debuffMsg} × 総合倍率:${totalMultiplier.toFixed(2)}倍 ➔ ${finalDmg} の物理ダメージを与えた！`;
-              }
-              
-              if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance && Number(member.hp_drain_percent || 0) > 0) {
-                const healAmount = Math.floor((finalDmg * Number(member.hp_drain_percent)) / 100);
-                member.hp = Math.min(member.mhp, member.hp + healAmount);
-                logText += ` 🩸 ${healAmount} 回復！`;
-              }
-              if (localEnemies[targetIdx].hp > 0 && member.card_inflict_type && member.card_inflict_chance > 0 && localEnemies[targetIdx].state?.currentStatus !== member.card_inflict_type) {
-                const res = member.card_inflict_type === '毒' ? primaryTarget.resist_poison || 0 : member.card_inflict_type === 'スタン' ? primaryTarget.resist_stun || 0 : 0;
-                if (Math.random() * 100 < Math.max(5, member.card_inflict_chance - res)) {
-                  localEnemies[targetIdx].state = { ...localEnemies[targetIdx].state, currentStatus: member.card_inflict_type, durationTurns: 3 };
-                  logText += ` ✨ [追加効果] ${primaryTarget.name} を【${member.card_inflict_type}】状態にした！`;
+                // ⚔️ 👑 回避されなかった場合のみ、通常のダメージ計算室へ突入！
+                let bonusAtk = 0;
+                if (member.activeBuffs && member.activeBuffs.length > 0) {
+                  member.activeBuffs.forEach(b => {
+                    if (b.effect_type === '物理ATK増幅') {
+                      if (b.buff_value_type === 'fixed') bonusAtk += b.buff_value;
+                      else if (b.buff_value_type === 'percent') bonusAtk += Math.floor(randomizedAtk * b.buff_value / 100);
+                    }
+                  });
                 }
-              }
+
+                // ダイス値にATKバフを合算して最終ベースダメージを算出
+                const finalTotalAtk = randomizedAtk + bonusAtk;
+                const baseDmg = Math.max(1, finalTotalAtk - finalEnemyVit);
+                finalDmg = Math.floor(baseDmg * totalMultiplier);
+                if (finalDmg < 1) finalDmg = 1;
+                
+                const debuffMsg = isEnemyDebuffed ? `[敵防完全喪失!]` : (isEnemyPoisoned ? `[敵防25%低下!]` : '');
+
+                // 🔮 👑 【三土手創世神特注：ツインブレード二刀連撃・ダメージ2分割＆2行ログ出力エンジン】
+                // 🏹 🆕 【武器制限ゲート】武器がLレンジ（弓など）の時は、二刀連撃が誤射されないように鉄壁ガード！
+                const isTwinStrikeActive = (member.twin_strike_chance || 0) > 0 && 
+                                           member.weaponRange !== 'L' && 
+                                           (Math.random() * 100 < member.twin_strike_chance);
+
+                if (isTwinStrikeActive) {
+                  // トータル想定ダメージ（finalDmg）を綺麗な2連撃に分割出力！
+                  const firstDmg = Math.floor(finalDmg / 2) + 1;
+                  const secondDmg = Math.max(1, finalDmg - firstDmg);
+                  const totalTwinDmg = firstDmg + secondDmg;
+
+                  // 敵のHPから2連続でダメージを減算！
+                  localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - totalTwinDmg);
+
+                  // 2行連続ヒットを視覚的に豪華にビジュアライズ！
+                  logText = `⚡ 連撃発動！ ${member.name} の二刀流が電光石火の軌跡を描く！\n` +
+                            `⏩ 1打目 ➔ 【${member.weaponName}】で ${primaryTarget.name} に ${firstDmg} の斬撃ダメージ！\n` +
+                            `⏩ 2打目 ➔ 【${member.weaponName}】で ${primaryTarget.name} に ${secondDmg} の追撃ダメージ！ (計 ${totalTwinDmg} Dmg!!)`;
+                } else {
+                  // 通常通りの単発通常攻撃ヒット処理
+                  let holyPracticeNotice = "";
+                // ✨ここを修正：属性（element）が「不死」の場合もログに文字を出すように包囲網を完全同期！
+                if (hasHolyPractice && (primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死')) {
+                  holyPracticeNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
+                }
+
+                if (isTwinStrikeActive) {
+                  // トータル想定ダメージ（finalDmg）を綺麗な2連撃に分割出力！
+                  const firstDmg = Math.floor(finalDmg / 2) + 1;
+                  const secondDmg = Math.max(1, finalDmg - firstDmg);
+                  const totalTwinDmg = firstDmg + secondDmg;
+
+                  // 敵のHPから2連続でダメージを減算！
+                  localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - totalTwinDmg);
+
+                  // 2行連続ヒットを視覚的に豪華にビジュアライズ！
+                  logText = `⚡ 連撃発動！ ${holyPracticeNotice}${member.name} の二刀流が電光石火の軌跡を描く！\n` +
+                            `⏩ 1打目 ➔ 【${member.weaponName}】で ${primaryTarget.name} に ${firstDmg} の斬撃ダメージ！\n` +
+                            `⏩ 2打目 ➔ 【${member.weaponName}】で ${primaryTarget.name} に ${secondDmg} の追撃ダメージ！ (計 ${totalTwinDmg} Dmg!!)`;
+                } else {
+                  // 通常通りの単発通常攻撃ヒット処理
+                  localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
+                  logText = `⚔️ ${holyPracticeNotice}${member.name} が 【${member.weaponName}】 で通常攻撃！[${attackSpecs.weapon_subtype}/${attackSpecs.element}属性] ➔ (ダイス${randomizedAtk}-敵防${finalEnemyVit})${debuffMsg} × 総合倍率:${totalMultiplier.toFixed(2)}倍 ➔ ${finalDmg} の物理ダメージを与えた！`;
+                }
+                }
+                
+                if (member.hp_drain_chance > 0 && Math.random() * 100 < member.hp_drain_chance && Number(member.hp_drain_percent || 0) > 0) {
+                  const healAmount = Math.floor((finalDmg * Number(member.hp_drain_percent)) / 100);
+                  member.hp = Math.min(member.mhp, member.hp + healAmount);
+                  logText += ` 🩸 ${healAmount} 回復！`;
+                }
+                if (localEnemies[targetIdx].hp > 0 && member.card_inflict_type && member.card_inflict_chance > 0 && localEnemies[targetIdx].state?.currentStatus !== member.card_inflict_type) {
+                  const res = member.card_inflict_type === '毒' ? primaryTarget.resist_poison || 0 : member.card_inflict_type === 'スタン' ? primaryTarget.resist_stun || 0 : 0;
+                  if (Math.random() * 100 < Math.max(5, member.card_inflict_chance - res)) {
+                    localEnemies[targetIdx].state = { ...localEnemies[targetIdx].state, currentStatus: member.card_inflict_type, durationTurns: 3 };
+                    logText += ` ✨ [追加効果] ${primaryTarget.name} を【${member.card_inflict_type}】状態にした！`;
+                  }
+                }
+              } // 🧼 回避ルート分岐の閉じカッコ
             }
           }
 
@@ -1947,8 +2142,13 @@ else if (playableSkill.effect_type === '魔力Matk増幅') buffMsg = "魔力が�
           resist_poison: Number(dbEnemy?.resist_poison || 0),
           resist_blind: Number(dbEnemy?.resist_blind || 0),
           int: dbEnemy?.int || dbEnemy?.stat_int || 0,
-          hit: dbEnemy?.hit || 0,
-          enemy_aspd: dbEnemy?.enemy_aspd !== undefined ? dbEnemy.enemy_aspd : null,
+          
+          // 🎯 【三土手神特注】ダッシュボードのプレビュー数理法則と100%完全同期！
+          hit: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_dex || dbEnemy?.dex || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 20),
+          flee: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_agi || dbEnemy?.agi || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 10),
+          
+          // 💨 上書き設定があれば採用、なければ基本値150.0をマウント！
+          enemy_aspd: dbEnemy?.enemy_aspd !== null && dbEnemy?.enemy_aspd !== undefined ? Number(dbEnemy.enemy_aspd) : 150.0,
           
           // 🏹 🆕 逆引きした本物の武器射程を完全にマウント！
           is_range_atk: isRanged,
