@@ -57,6 +57,10 @@ const AdventureActive = ({
   // 🔮 🆕 セーブ中表示用のローカル状態を増築
   const [isSaving, setIsSaving] = useState(false);
 
+  // 🐾 🆕 【テイマー専用：魔物起き上がりイベント用State】
+  const [tameCandidate, setTameCandidate] = useState(null); // 起き上がった魔物のデータ
+  const [isTamingSaving, setIsTamingSaving] = useState(false); // 捕獲通信中のフラグ
+
   // 1. 初回ロード（ここが「最初」の1回だけの通信）
   useEffect(() => {
     const initAdventure = async () => {
@@ -476,7 +480,13 @@ roStatus: ch.roStatus || {},
               is_range_weapon: isRanged,
               weaponRange: eWeaponRange,
 
-              activeSkills: eSkills
+              activeSkills: eSkills,
+
+              // 👇 ここから追加！ダッシュボードの調教設定を完全に連動マウント！
+              is_tamable: dbEnemy?.is_tamable || false,
+              tame_success_chance: Number(dbEnemy?.tame_success_chance || 0),
+              tame_level_req: Number(dbEnemy?.tame_level_req || 1)
+              // 👆 ここまで
             });
           }
 } else {
@@ -540,12 +550,68 @@ roStatus: ch.roStatus || {},
         const floorGold = localEnemies.reduce((sum, e) => sum + (e.gold || 0), 0);
         setAccumulatedRewards(prev => ({ exp: prev.exp + floorExp, gold: prev.gold + floorGold }));
 
+        // 🐾 【三土手神特注：ドラクエ5型・魔物起き上がり判定エンジン】
+        const aliveTamer = localParty.find(p => p.hp > 0 && (p.job === 'テイマー' || p.name.includes('テイマー')));
+        let tamedEnemyInfo = null;
+
+        if (aliveTamer) {
+          // 1. まず今回倒した敵全員の中から、「調教可能」かつ「テイマーのLv制限を満たしている」魔物をすべてリストアップ
+          const tamablePool = localEnemies.filter(e => e.is_tamable && aliveTamer.level >= e.tame_level_req);
+          
+          console.log("=== 🐾 2段階テイム抽選システム起動 🐾 ===");
+          console.log(`・生存中のテイマー: ${aliveTamer.name} (Lv.${aliveTamer.level}, DEX:${aliveTamer.dex}, LUK:${aliveTamer.luk})`);
+          console.log(`・調教可能プール（全 ${tamablePool.length} 匹）:`, tamablePool.map(e => e.name));
+
+          if (tamablePool.length > 0) {
+            // 🔥 【第1段階：全滅させた全エネミーから等確率で1匹を完全ランダム抽選！】
+            const randomPickIdx = Math.floor(Math.random() * tamablePool.length);
+            const targetE = tamablePool[randomPickIdx]; 
+            
+            console.log(`🎲 【第1段階・対象抽選】: 候補 ${tamablePool.length} 匹の中から [${targetE.name}] が選出されました！`);
+
+            // 🔥 【第2段階：選ばれたその魔物の固有確率 ＆ 先ほどの超硬派シビア数理で最終判定！】
+            const baseChance = Number(targetE.tame_success_chance || 0);
+            
+            let finalChance = 0;
+            if (baseChance > 0) {
+              const tamerDex = aliveTamer.dex || 0;
+              const tamerLuk = aliveTamer.luk || 0;
+              // 三土手さん指定の硬派な極小ステータス補正レート！
+              finalChance = Math.min(95, baseChance + (tamerDex * 0.01) + (tamerLuk * 0.005));
+            }
+            
+            console.log(`📊 【第2段階・確率計算】: 基礎確率: ${baseChance}% ➔ ステータス補正後最終確率: ${finalChance.toFixed(3)}%`);
+
+            // 🎲 運命の最終ダイスロール！
+            if (finalChance > 0) {
+              const diceRoll = Math.random() * 100;
+              console.log(`🎲 【運命のダイス】: 出目 [${diceRoll.toFixed(3)}] ⇄ 合格ライン [${finalChance.toFixed(3)}未満]`);
+              
+              if (diceRoll < finalChance) {
+                console.log(`✨ 【テイム成功】: ${targetE.name} が起き上がりました！`);
+                tamedEnemyInfo = { enemy: targetE, tamer: aliveTamer };
+              } else {
+                console.log(`💨 【テイム失敗】: 残念、懐きませんでした。`);
+              }
+            } else {
+              console.log(`🚨 【テイム不可】: 最終確率が0%のため、自動的にスキップされました（バフォメット等の仕様です）。`);
+            }
+          } else {
+            console.log("🔍 プールが空です：今回の戦闘には調教条件（Lv制限等）を満たす魔物がいませんでした。");
+          }
+          console.log("=========================================");
+        }
+
         // 🛠️ 🆕 StateのタイムラグをRefで完全回避！その場で引き算を決着させる！
         const nextCount = Math.max(0, remainingBattlesRef.current - 1);
         remainingBattlesRef.current = nextCount;
         setRemainingBattles(nextCount); // 画面の「表示数」を更新
 
-        if (nextCount <= 0) {
+        // 🐾 起き上がりイベントが発生した場合は、進行ステータスを専用の 'tame_event' へ分岐！
+        if (tamedEnemyInfo) {
+          setTameCandidate(tamedEnemyInfo);
+          setAdventureStatus('tame_event');
+        } else if (nextCount <= 0) {
           // 残り戦数が0になった ➔ 完璧なタイミングで「階層制圧完了・B2へ進む」のボタンが出現！
           setAdventureStatus('floor_cleared');
         } else {
@@ -1337,7 +1403,10 @@ if (isBuffType) {
           let cardElem = { ...(member.cardElemEff || {}) }; // ✨修正：cardElem をここで安全に宣言し、クラッシュの芽を完全粉砕！
 
           // 🛡️ 👑 【三土手神特注】ホーリープラクティス専用・種族＆属性ハイブリッド特効判定線
-          const hasHolyPractice = (member.skillsList || []).find(sk => sk.name === 'ホーリープラクティス');
+          const hasHolyPractice = (member.skillsList || []).find(sk => 
+  sk.name === 'ホーリープラクティス' || 
+  sk.name === 'ホーリーガーディアン' // 👈 ここにダッシュボードで付けた名前を完全一致で入れます
+);
           if (hasHolyPractice && primaryTarget) {
             const bonusPct = Number(hasHolyPractice.effect_value || 20); // 登録した20%を取得
             
@@ -2208,6 +2277,66 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
     }
   };
 
+  // 🐾 🆕 【三土手神特注：魔物起き上がり・物流インジェクション関数】
+  const handleTameAccept = async () => {
+    setIsTamingSaving(true);
+    try {
+      const { enemy } = tameCandidate;
+      // 「ポリンJr A」などの末尾の識別アルファベット（A, B, C）を綺麗に除去
+      const cleanName = enemy.name.replace(/ [A-Z]$/, '');
+      
+      // 🚚 「調教済みの」を完全撤去！モンスターの種族名をそのまま誇り高く custom_name に刻みます！
+      const { error } = await supabase
+        .from('game_characters')
+        .insert([{
+          user_id: TEST_USER_ID,
+          master_id: enemy.id,
+          custom_name: cleanName, // ➔ これで酒場でも「ポリンJr」としてそのまま並びます！
+          level: 1, 
+          exp: 0,
+          status_points: 6, // 創世神の初期ポイント6を付与！
+          current_hp: enemy.mhp, 
+          max_hp: enemy.mhp,
+          current_sp: 50,
+          max_sp: 50,
+          bonus_str: enemy.str || 0, // エネミー時代の強さを初期ステータスとして引き継ぐ
+          bonus_agi: enemy.agi || 0,
+          bonus_vit: enemy.vit || 0,
+          bonus_int: enemy.int || 0,
+          bonus_dex: 10,
+          bonus_luk: 10,
+          party_index: null // 酒場へ送る
+        }]);
+
+      if (error) throw error;
+      setDisplayedLogs(prev => [...prev, { id: `tame-ok-${Date.now()}`, text: `🐾✨ 大成功！ ${cleanName} がギルドの酒場（待機枠）に送られた！`, type: "success" }]);
+      
+    } catch (err) {
+      console.error("魔物捕獲エラー:", err);
+      setDisplayedLogs(prev => [...prev, { id: `tame-err-${Date.now()}`, text: `🚨 捕獲データの送信に失敗しました...`, type: "system" }]);
+    } finally {
+      setIsTamingSaving(false);
+      resumeAfterTame();
+    }
+  };
+
+  const handleTameDecline = () => {
+    const cleanName = tameCandidate.enemy.name.replace(/ [A-Z]$/, '');
+    setDisplayedLogs(prev => [...prev, { id: `tame-no-${Date.now()}`, text: `🐾 ${cleanName} は寂しそうに森へ帰っていった...`, type: "system" }]);
+    resumeAfterTame();
+  };
+
+  const resumeAfterTame = () => {
+    setTameCandidate(null);
+    // 元の進行フローへ美しく復帰
+    if (remainingBattlesRef.current <= 0) {
+      setAdventureStatus('floor_cleared');
+    } else {
+      setAdventureStatus('battling');
+      setIsBattleOver(true);
+    }
+  };
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -2265,6 +2394,24 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       {/* 🧭 🆕 【三土手ローグライク専用：アクションゲーム選択バー】 */}
       <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #1e293b', textAlign: 'center' }}>
         
+        {/* 🐾 ドラクエ5型・起き上がりイベント専用UI */}
+        {adventureStatus === 'tame_event' && tameCandidate && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', background: '#3b0764', borderRadius: '10px', border: '1px solid #a855f7', boxShadow: '0 0 10px #a855f755' }}>
+            <span style={{ fontSize: '0.85rem', color: '#e9d5ff', fontWeight: 'bold' }}>
+              🐾 {tameCandidate.enemy.name.replace(/ [A-Z]$/, '')} が起き上がり、仲間なりたそうにこちらを見ている！
+            </span>
+            <span style={{ fontSize: '0.75rem', color: '#c084fc' }}>仲間にしますか？</span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '4px' }}>
+              <button onClick={handleTameAccept} disabled={isTamingSaving} style={{ padding: '12px', borderRadius: '8px', background: 'linear-gradient(135deg, #a855f7 0%, #7e22ce 100%)', color: '#fff', border: 'none', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer' }}>
+                {isTamingSaving ? '捕獲中...' : 'はい！'}
+              </button>
+              <button onClick={handleTameDecline} disabled={isTamingSaving} style={{ padding: '12px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #475569', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer' }}>
+                いいえ
+              </button>
+            </div>
+          </div>
+        )}
+        
         {/* ① パーティーが全滅した場合 ➔ 没収を受け入れて撤還 */}
         {adventureStatus === 'game_over' && (
           <button onClick={onReturn} style={{ width: '100%', padding: '12px', borderRadius: '12px', background: '#451a1a', color: '#f43f5e', border: '1px solid #ef4444', fontSize: '0.9rem', fontWeight: 'bold' }}>
@@ -2318,46 +2465,56 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
         )}
       </div>
 
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: `repeat(${party.length}, 1fr)`, 
-        gap: '4px', padding: '10px 6px', background: '#0b0f19'
-      }}>
-        {party.map(member => {
-          // リアルタイムに変動するSPの安全な割合を算出（メンバー毎に独立計算）
-          const mspValue = member.msp || 50;
-          const spPercent = Math.min(100, Math.max(0, (member.sp / mspValue) * 100));
+      {/* 🐾 🆕 【三土手神特注：コックピットUI・3枠/4枠動的フィット配線】 */}
+      {(() => {
+        // 現在戦闘に参加している部隊にテイマーが組み込まれているか走査
+        const hasTamerInBattle = party.some(m => m.job === 'テイマー' || m.id === 'unit_1783729889058');
+        // テイマーがいれば4分割、通常3人パーティーなら3分割にジャストフィットさせる数理[cite: 5]
+        const gridColsCount = hasTamerInBattle ? 4 : 3;
 
-          return (
-            <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '6px', padding: '6px 4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center' }}>
-              {/* キャラクター名 */}
-              <div style={{ fontSize: '0.62rem', fontWeight: 'bold', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {member.name.replace('テスト', '')}
-              </div>
-              
-              {/* ❤️ HP数値 */}
-              <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#34d399', marginTop: '3px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
-                <span style={{ fontWeight: 'bold' }}>HP:</span>
-                <span>{member.hp}/{member.mhp}</span>
-              </div>
-              {/* ❤️ HPゲージ */}
-              <div style={{ height: '4px', background: '#451a1a', borderRadius: '2px', marginTop: '1px', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${(member.hp / member.mhp) * 100}%`, background: '#ef4444', transition: '0.1s' }}></div>
-              </div>
+        return (
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: `repeat(${gridColsCount}, 1fr)`, 
+            gap: '4px', padding: '10px 6px', background: '#0b0f19'
+          }}>
+            {party.map(member => {
+              // リアルタイムに変動するSPの安全な割合を算出（メンバー毎に独立計算）[cite: 5]
+              const mspValue = member.msp || 50;
+              const spPercent = Math.min(100, Math.max(0, (member.sp / mspValue) * 100));
 
-              {/* 💙 リアルタイム魔力（SP）ステータス数値（HPと同じ両端flex配線に矯正！） */}
-              <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#38bdf8', marginTop: '4px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
-                <span style={{ color: '#887355', fontWeight: 'bold' }}>SP:</span>
-                <span style={{ fontWeight: 'bold' }}>{member.sp}/{mspValue}</span>
-              </div>
-              {/* 💙 高級感のあるミニSPプログレスバー */}
-              <div style={{ width: '100%', height: '3px', background: '#0d0905', borderRadius: '1.5px', overflow: 'hidden', border: '1px solid #23190e', marginTop: '1px' }}>
-                <div style={{ width: `${spPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)', transition: 'width 0.2s ease' }}></div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              return (
+                <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '6px', padding: '6px 4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center' }}>
+                  {/* キャラクター名 */}
+                  <div style={{ fontSize: '0.62rem', fontWeight: 'bold', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {member.name.replace('テスト', '')}
+                  </div>
+                  
+                  {/* ❤️ HP数値 */}
+                  <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#34d399', marginTop: '3px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
+                    <span style={{ fontWeight: 'bold' }}>HP:</span>
+                    <span>{member.hp}/{member.mhp}</span>
+                  </div>
+                  {/* ❤️ HPゲージ */}
+                  <div style={{ height: '4px', background: '#451a1a', borderRadius: '2px', marginTop: '1px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${(member.hp / member.mhp) * 100}%`, background: '#ef4444', transition: '0.1s' }}></div>
+                  </div>
+
+                  {/* 💙 リアルタイム魔力（SP）ステータス数値 */}
+                  <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#38bdf8', marginTop: '4px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
+                    <span style={{ color: '#887355', fontWeight: 'bold' }}>SP:</span>
+                    <span style={{ fontWeight: 'bold' }}>{member.sp}/{mspValue}</span>
+                  </div>
+                  {/* 💙 高級感のあるミニSPプログレスバー */}
+                  <div style={{ width: '100%', height: '3px', background: '#0d0905', borderRadius: '1.5px', overflow: 'hidden', border: '1px solid #23190e', marginTop: '1px' }}>
+                    <div style={{ width: `${spPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)', transition: 'width 0.2s ease' }}></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* 🎁 戦闘終了時のみポップアップするリザルトモーダル */}
       <QuestResultModal isOpen={showResult} droppedItems={droppedItems} onClose={onReturn} />

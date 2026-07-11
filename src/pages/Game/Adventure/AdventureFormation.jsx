@@ -45,14 +45,37 @@ const AdventureFormation = ({ allCharacters, currentPartyIds, onPartyChange }) =
     onPartyChange(newParty);
   };
 
-  // 💡 最大パーティ人数を硬派に「4人」へジャストフィットさせるための4枠固定スロットループ
-  const fixedSlots = [0, 1, 2, 3];
+  // 🐾 🆕 【三土手神特注：テイマー連動型・動的パーティサイズ拡張エンジン】
+  // パーティー内にテイマー（jobがテイマー、またはマスターIDがテイマー）がいるかをリアルタイム走査
+  const hasTamer = currentPartyIds.some(slot => {
+    if (!slot) return false;
+    const charId = typeof slot === 'object' ? slot.id : slot;
+    const char = allCharacters.find(c => c.id === charId);
+    return char && (char.job === 'テイマー' || char.master_id === 'unit_1783729889058' || char.meta?.job === 'テイマー');
+  });
+
+  // テイマーがいれば最大4枠、いなければ最大3枠に可変フィット！
+  const maxSlotsCount = hasTamer ? 4 : 3;
+  const fixedSlots = Array.from({ length: maxSlotsCount }, (_, i) => i);
+
+  // 🚨 4人目にキャラがいる状態でテイマーが外された場合、過剰データを安全に消去して親へ即時同期
+  React.useEffect(() => {
+    if (currentPartyIds.length > maxSlotsCount) {
+      const cleanedParty = currentPartyIds.slice(0, maxSlotsCount);
+      onPartyChange(cleanedParty);
+    }
+  }, [maxSlotsCount, currentPartyIds, onPartyChange]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div style={{ textAlign: 'center' }}>
-        <h2 style={{ fontSize: '1.3rem', color: '#f59e0b', margin: '0 0 4px 0' }}>🛡️ 遠征部隊・タクティカル編成 (最大4人)</h2>
-        <p style={{ fontSize: '0.7rem', color: '#64748b', margin: 0 }}>前衛・後衛の人数制限なし！自由な陣形で戦略シミュレーションを構築せよ</p>
+        {/* 🐾 🆕 テイマーがいる時は「最大4人」、いない時は「最大3人」にタイトルを動的切り替え */}
+        <h2 style={{ fontSize: '1.3rem', color: hasTamer ? '#c084fc' : '#f59e0b', margin: '0 0 4px 0', transition: 'color 0.3s' }}>
+          {hasTamer ? '🐾 遠征部隊・テイマー魔物使役陣形 (最大4人)' : '🛡️ 遠征部隊・タクティカル編成 (最大3人)'}
+        </h2>
+        <p style={{ fontSize: '0.7rem', color: '#64748b', margin: 0 }}>
+          {hasTamer ? 'テイマーの特権が発動中！捕獲した魔物を4人目として前線へ投入可能' : '通常時は最大3人編成。テイマーを組み込むことで4人出撃へと限界突破！'}
+        </p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -162,6 +185,20 @@ const AdventureFormation = ({ allCharacters, currentPartyIds, onPartyChange }) =
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
             {allCharacters.map(char => {
+              // 🐾 🆕 【三土手神特注：ファーム預け要素完全撤廃 ➔ 直撃モンスター専用枠ゲート】
+              // 現在タップしたのが「Slot 4（インデックス3）」の時
+              if (activeSlot === 3) {
+                // 人間キャラクター（_base持ち、またはテイマー本人）は4枠目から完全シャットアウト！
+                const isHuman = char.master_id && (char.master_id.includes('_base') || char.master_id === 'unit_1783729889058' || char.job === 'テイマー');
+                if (isHuman) return null;
+                
+                // ➔ ここを通過した「牧場にいる魔物たち（半魚人やポリンJrなど）」がすべて無条件でズラーッと選択肢に出現します！
+              } else {
+                // 逆に通常の「Slot 1〜3」には、魔物たちが絶対に混ざらないように鉄壁ガード！
+                const isMonster = char.master_id && !char.master_id.includes('_base') && char.master_id !== 'unit_1783729889058' && char.job !== 'テイマー';
+                if (isMonster) return null;
+              }
+
               // 互換チェック込みの選択中判定
               const isSelected = currentPartyIds.some(p => p && (typeof p === 'object' ? p.id === char.id : p === char.id));
               return (
@@ -187,7 +224,7 @@ const AdventureFormation = ({ allCharacters, currentPartyIds, onPartyChange }) =
 
       <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px', padding: '12px', fontSize: '0.75rem', color: '#94a3b8', lineHeight: '1.5' }}>
         💡 <strong>三土手創世神のタクティカル・アドバイス：</strong><br />
-        武器や戦略に合わせて、各キャラの【前衛/後衛】ボタンを自由に切り替えてください。頑丈なファイター1人を「前衛」にし、後ろに3人の遠隔アタッカーを並べる「1トップ防壁陣形」も今や完全可能。自由な数理の組み合わせを楽しんでください！
+        本作は硬派な「3人パーティー」が基本陣形となります。しかし、部隊にテイマーが加わることで隠された4つ目のスロットが全自動で開通！ファームでバインドした魔物をその手で前線に引き連れ、圧倒的な手数でダンジョンを制圧してください！
       </div>
     </div>
   );

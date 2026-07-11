@@ -73,29 +73,15 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
       
       data.allMasterItemsList = combinedMasterList;
       
-      // 👑 三土手神特注：レベル連動・フリーポイント自動同期計算エンジン
-      // データベースの古い固定値(6)を突破し、現在のBaseレベルに応じた総獲得ポイントをシミュレート加算！
-      const currentLevel = data.level || 1;
-      let totalEarnedPoints = 6; // レベル1の初期値
-      
-      // レベル2から現在のレベルまで、数理室の漸増ルール（3〜7ポイント）をその場で高速シミュレート
-      for (let lv = 2; lv <= currentLevel; lv++) {
-        if (lv <= 10)       totalEarnedPoints += 3;
-        else if (lv <= 20)  totalEarnedPoints += 4;
-        else if (lv <= 30)  totalEarnedPoints += 5;
-        else if (lv <= 40)  totalEarnedPoints += 6;
-        else                totalEarnedPoints += 7;
-      }
-      
-      // すでにキャラクターの肉体に手振りで消費されているボーナス合計値を算出
-      const spentPoints = (data.bonus?.str || 0) + (data.bonus?.agi || 0) + (data.bonus?.vit || 0) + (data.bonus?.int || 0) + (data.bonus?.dex || 0) + (data.bonus?.luk || 0);
-      
-      // 総獲得ポイントから消費分を引いて、現在余っているはずのフリーポイントを特定
-      const calculatedRemainingPoints = Math.max(0, totalEarnedPoints - spentPoints);
+      // 🐾 🆕 【ミドテディレクター特注：勝手なポイント逆算引き算を完全粉砕パッチ】
+      // フロント側での自動計算誤爆を永久にシャットアウト！
+      // データベース（Supabase）の status_points カラムの数値をそのまま100%ダイレクトに画面へマウントします。
+      const secureStatusPoints = Number(data.status_points !== null && data.status_points !== undefined ? data.status_points : 0);
       
       setCharacter(data);
-      // 💡 データベースの生データではなく、レベル10（合計33ポイント）から弾き出した正しいフリーポイントを強制上書きバインド！
-      setLocalPoints(calculatedRemainingPoints);
+      
+      // 💡 これにより、初期ステータスがどれだけ尖っていようが、DB内の本物のフリーポイント（6や11など）が美しく浮き上がります！
+      setLocalPoints(secureStatusPoints);
       setLocalBonuses({
         str: data.bonus?.str || 0,
         agi: data.bonus?.agi || 0,
