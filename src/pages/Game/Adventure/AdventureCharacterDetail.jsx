@@ -63,8 +63,13 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
     if (data) {
       // 🔮 🛠️ 創世神配線リフォーム：武具アイテムとスキル技能の両方をSupabaseから同時に完全ロード！
       const { data: allItems } = await supabase.from('game_master_items').select('*');
+      
+      // 🐾 🆕 【重要】ここでマスターからスキル技能一覧（allSkills）を確実に取得させて電線を繋ぐ！
       const { data: allSkills } = await supabase.from('game_master_skills').select('*');
       
+      // 🚨 🆕 【超重要パッチ】gameServicesの取得漏れを完全粉砕するため、DBから直接キャラのスキルIDを引っこ抜く！
+      const { data: directCharData } = await supabase.from('game_characters').select('skill_01, skill_02, skill_03').eq('id', characterId).single();
+
       // ロードした2つの異なる世界のデータを、1つの配列に美しく結合してキャラクターに持たせます
       const combinedMasterList = [
         ...(allItems || []),
@@ -72,6 +77,29 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
       ];
       
       data.allMasterItemsList = combinedMasterList;
+
+      // 🐾 🆕 魔物と人間のスキルロード判定を確実にStateへ焼き付ける！
+      const myJob = data.meta?.job || 'ノービス';
+      const myLevel = data.level || 1;
+      const isMonsterClass = ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族'].includes(myJob);
+
+      if (isMonsterClass) {
+        // 😈 魔物の場合は引き継いだスキル枠(skill_01〜03)からピンポイントロード
+        // 💡 修正箇所：data ではなく直接取得した directCharData から確実なIDを読み込む！
+        const tamerSkillIds = [
+          directCharData?.skill_01 || data.skill_01, 
+          directCharData?.skill_02 || data.skill_02, 
+          directCharData?.skill_03 || data.skill_03
+        ].filter(Boolean);
+        data.skillsList = (allSkills || []).filter(sk => tamerSkillIds.includes(sk.id));
+      } else {
+        // 👤 人間の場合は職業とレベル連動
+        data.skillsList = (allSkills || []).filter(sk => {
+          const jobReq = sk.job_requirement;
+          const lvReq = Number(sk.level_requirement || 1);
+          return (jobReq === '全職業' || jobReq === myJob) && myLevel >= lvReq;
+        });
+      }
       
       // 🐾 🆕 【ミドテディレクター特注：勝手なポイント逆算引き算を完全粉砕パッチ】
       // フロント側での自動計算誤爆を永久にシャットアウト！
@@ -80,13 +108,13 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
       
       setCharacter(data);
       
-      // 💡 これにより、初期ステータスがどれだけ尖っていようが、DB内の本物のフリーポイント（6や11など）が美しく浮き上がります！
       setLocalPoints(secureStatusPoints);
       setLocalBonuses({
         str: data.bonus?.str || 0,
         agi: data.bonus?.agi || 0,
         vit: data.bonus?.vit || 0,
         int: data.bonus?.int || 0,
+        get_dex: data.bonus?.dex || 0, // 必要に応じて既存のプロパティに合わせてください
         dex: data.bonus?.dex || 0,
         luk: data.bonus?.luk || 0,
       });
@@ -274,7 +302,8 @@ let passiveMdefBonus = 0;
 let passiveHpMultiplier = 1.0;
 let passiveSpMultiplier = 1.0;
 
-const characterSkills = character.skillsList || [];
+// 🐾 🆕 常に最新の判定で結合された配列を参照させる
+const characterSkills = character?.skillsList || [];
 
 characterSkills.forEach(sk => {
   if (sk.skill_type === 'passive') {
@@ -657,9 +686,8 @@ ro.mdef = ro.mdef + passiveMdefBonus;
             {(() => {
               const currentJob = character.meta?.job || 'ノービス';
 
-              // 💡 ⚙️ 【三土手神連動リフォーム】
-              // 画面側での重複フィルターを粉砕！心臓部がすでに最高ランクに絞り込んでくれた「character.skillsList」をそのまま直撃マウント！
-              const finalLearnedList = character.skillsList || [];
+              // 💡 ⚙️ 【三土手神連動リフォーム】上の154行目でパッシブ補正等もスキャンした本物のスキルリスト（characterSkills）をそのまま直撃マウント！
+              const finalLearnedList = characterSkills;
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
@@ -669,7 +697,7 @@ ro.mdef = ro.mdef + passiveMdefBonus;
                     
                     // 同じ職業制限（または共通）かつ、全く同じ名前のスキルをすべて抽出して必要Lv順にソート
                     const siblingSkills = masterList
-                      .filter(s => s.sp_cost !== undefined && s.name === sk.name && (s.job_requirement === '全職業' || s.job_requirement === character.meta?.job))
+  .filter(s => s.sp_cost !== undefined && s.name === sk.name && (s.job_requirement === '全職業' || s.job_requirement === '魔物共通' || s.job_requirement === character.meta?.job))
                       .sort((a, b) => Number(a.level_requirement) - Number(b.level_requirement));
                     
                     // ソートした配列の中で、自分が何番目にいるか（インデックス + 1 = 現在のスキルLv）
