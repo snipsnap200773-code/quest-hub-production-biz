@@ -47,6 +47,9 @@ const AdventureActive = ({
   
   // 🛡️ 🆕 追加：敵の武器データを逆引きするためにアイテムマスターを保持する器
   const masterItemsRef = useRef([]); 
+
+  // 🐾 🆕 【三土手神特注】酒場の待機メンバーも含めた、自分が所持する全キャラクターリストを記憶する器！
+  const allPlayerCharactersRef = useRef([]);
   
   // 🔮 🆕 創世神特注：SP自動回復用の時間累積プールタイマーRef（初期値0秒）
   const spRegenTimer = useRef(0);
@@ -87,6 +90,9 @@ const AdventureActive = ({
       masterSkillsRef.current = allMasterSkills;
       // 🛡️ 🆕 追加：ここでアイテム一覧を保存！
       masterItemsRef.current = allMasterItems; 
+
+      // 🐾 🆕 【結線！】TEST_USER_ID から一本釣りした全キャラデータをRefにガチッと記憶！
+      allPlayerCharactersRef.current = charList || [];
 
       if (charList && charList.length > 0) {
         // 🔮 🆕 三土手神特注：混在ゴーストデータを無力化するIDクレンジング配線！
@@ -496,11 +502,18 @@ roStatus: ch.roStatus || {},
 
               activeSkills: eSkills,
 
-              // 👇 ここから追加！ダッシュボードの調教設定を完全に連動マウント！
               is_tamable: dbEnemy?.is_tamable || false,
               tame_success_chance: Number(dbEnemy?.tame_success_chance || 0),
-              tame_level_req: Number(dbEnemy?.tame_level_req || 1)
-              // 👆 ここまで
+              tame_level_req: Number(dbEnemy?.tame_level_req || 1),
+
+              // 🐾 🆕 【三土手神特注：1戦目エネミーへの3連ドロップパラメータ電線結合】
+              // ダッシュボードで拡張した3つのスロットの武具・カードIDとそれぞれの確率を正確に初期マウントします！
+              extra_drop_item: dbEnemy?.extra_drop_item || null,
+              extra_drop_chance: Number(dbEnemy?.extra_drop_chance || 0),
+              extra_drop_item_2: dbEnemy?.extra_drop_item_2 || null,
+              extra_drop_chance_2: Number(dbEnemy?.extra_drop_chance_2 || 0),
+              extra_drop_item_3: dbEnemy?.extra_drop_item_3 || null,
+              extra_drop_chance_3: Number(dbEnemy?.extra_drop_chance_3 || 0)
             });
           }
 } else {
@@ -555,9 +568,54 @@ roStatus: ch.roStatus || {},
       if (isAllEnemiesDead) {
         clearInterval(battleTimer);
         
-        // 💡 🆕 下からお引越し！ここで確実に完全勝利ログとドロップを処理する！
+        // 🐾 🆕 【三土手創世神特注：順番エラー粉砕配線】
+        // 下に置いてあったログ配列の初期化宣言を最上部へマウントし、未定義エラーを完全遮断します！
+        let newLogs = [];
+        let matchDrops = [];
+        let dropLogs = [];
+
         setDisplayedLogs(prev => [...prev, { id: `win-all-${Date.now()}`, text: `🏆 🎉 エネミー掃討完了！(B${currentFloor}階)`, type: "system" }]);
-        setDroppedItems([{ id: 1, name: `ダンジョンの秘宝`, rarity: "legendary" }]);
+
+        localEnemies.forEach(enemyItem => {
+          const checkSlot = (itemId, chance) => {
+            if (!itemId || chance <= 0) return;
+            const dice = Math.random() * 100;
+            if (dice < chance) {
+              // アイテムマスターデータから本物の武具スペックを引き抜いて結合
+              const masterItem = masterItemsRef.current.find(i => i.id === itemId);
+              if (masterItem) {
+                matchDrops.push({
+                  id: masterItem.id,
+                  name: masterItem.name,
+                  rarity: masterItem.rarity || 'common'
+                });
+                
+                // レア度に応じた豪華なビジュアル用絵文字を全自動算出
+                const rareEmoji = masterItem.rarity === 'legendary' ? '👑' : masterItem.rarity === 'epic' ? '🔮' : '🎁';
+                dropLogs.push({
+                  id: `drop-${itemId}-${Date.now()}-${Math.random()}`,
+                  text: `${rareEmoji} 【${enemyItem.name.replace(/ [A-Z]$/, '')}】が [${masterItem.name}] をドロップした！ (${masterItem.rarity.toUpperCase()})`,
+                  type: "system" // ゴールド、またはシステムメッセージカラーに連動
+                });
+              }
+            }
+          };
+
+          // 3大独立スロットへ個別にダイスを投下！
+          checkSlot(enemyItem.extra_drop_item, enemyItem.extra_drop_chance);
+          checkSlot(enemyItem.extra_drop_item_2, enemyItem.extra_drop_chance_2);
+          checkSlot(enemyItem.extra_drop_item_3, enemyItem.extra_drop_chance_3);
+        });
+
+        // 獲得した武具があれば、戦闘画面の一時リザルト報酬プールへその場でスタック！
+        if (matchDrops.length > 0) {
+          setDroppedItems(prev => [...prev, ...matchDrops]);
+          if (dropLogs.length > 0) {
+            newLogs = [...newLogs, ...dropLogs];
+          }
+        } else {
+          newLogs.push({ id: `no-drop-${Date.now()}`, text: `✨ この戦闘ではアイテムのドロップはなかった。`, type: "system" });
+        }
 
         // 報酬プールへの合算計算
         const floorExp = localEnemies.reduce((sum, e) => sum + (e.exp || 0), 0);
@@ -569,8 +627,19 @@ roStatus: ch.roStatus || {},
         let tamedEnemyInfo = null;
 
         if (aliveTamer) {
-          // 1. まず今回倒した敵全員の中から、「調教可能」かつ「テイマーのLv制限を満たしている」魔物をすべてリストアップ
-          const tamablePool = localEnemies.filter(e => e.is_tamable && aliveTamer.level >= e.tame_level_req);
+          // 🐾 🆕 【三土手創世神特注：個人空間絶対隔離型・重複テイム防止ゲート・改】
+          // 人間の固有ID巻き込みを完全隔離！そして戦闘に出ていない酒場の待機枠（全所持リスト）まで包囲網を拡張！
+          // 自分自身が現在持っている全キャラクターの中から、純粋に「モンスターの素体ID（master_id）」だけを抽出します。
+          const ownedMonsterMasterIds = allPlayerCharactersRef.current
+            .map(c => c.master_id)
+            .filter(Boolean); // null や undefined （人間の仲間など）を完全に排除
+
+          // 1. まず今回倒した敵全員の中から、「調教可能」かつ「テイマーのLv制限を満たしている」、さらに「まだ自分が1匹も所持していない」魔物をすべてリストアップ
+          const tamablePool = localEnemies.filter(e => 
+            e.is_tamable && 
+            aliveTamer.level >= e.tame_level_req &&
+            !ownedMonsterMasterIds.includes(e.id) // 👈 すでに自分が持っているモンスターID（e.id）でなければ合格！
+          );
           
           console.log("=== 🐾 2段階テイム抽選システム起動 🐾 ===");
           console.log(`・生存中のテイマー: ${aliveTamer.name} (Lv.${aliveTamer.level}, DEX:${aliveTamer.dex}, LUK:${aliveTamer.luk})`);
@@ -590,7 +659,7 @@ roStatus: ch.roStatus || {},
             if (baseChance > 0) {
               const tamerDex = aliveTamer.dex || 0;
               const tamerLuk = aliveTamer.luk || 0;
-              // 三土手さん指定の硬派な極小ステータス補正レート！
+              // 三土手さん指定 of 硬派な極小ステータス補正レート！
               finalChance = Math.min(95, baseChance + (tamerDex * 0.01) + (tamerLuk * 0.005));
             }
             
@@ -620,6 +689,11 @@ roStatus: ch.roStatus || {},
         const nextCount = Math.max(0, remainingBattlesRef.current - 1);
         remainingBattlesRef.current = nextCount;
         setRemainingBattles(nextCount); // 画面の「表示数」を更新
+
+        // 新しく作成した newLogs を既存のログ表示へ安全に結合マウント！
+        if (newLogs.length > 0) {
+          setDisplayedLogs(prev => [...prev, ...newLogs]);
+        }
 
         // 🐾 起き上がりイベントが発生した場合は、進行ステータスを専用の 'tame_event' へ分岐！
         if (tamedEnemyInfo) {
@@ -2291,7 +2365,20 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           weaponRange: eWeaponRange,
           
           // 🔮 【ここを追加】抽出したスキルリストを敵のインスタンスにマウント！
-          activeSkills: eSkills 
+          activeSkills: eSkills,
+
+          // 🐾 🆕 【半魚人バグ完全粉砕！】1戦目と同じく、ダッシュボードの調教設定を2戦目以降の敵インスタンスにも確実に書き写す！
+          is_tamable: dbEnemy?.is_tamable || false,
+          tame_success_chance: Number(dbEnemy?.tame_success_chance || 0),
+          tame_level_req: Number(dbEnemy?.tame_level_req || 1),
+
+          // 🐾 🆕 【三土手神特注：2戦目以降の敵にも3連ドロップパラメータを完全同期マウント】
+          extra_drop_item: dbEnemy?.extra_drop_item || null,
+          extra_drop_chance: Number(dbEnemy?.extra_drop_chance || 0),
+          extra_drop_item_2: dbEnemy?.extra_drop_item_2 || null,
+          extra_drop_chance_2: Number(dbEnemy?.extra_drop_chance_2 || 0),
+          extra_drop_item_3: dbEnemy?.extra_drop_item_3 || null,
+          extra_drop_chance_3: Number(dbEnemy?.extra_drop_chance_3 || 0)
         });
       }
     }
@@ -2395,6 +2482,13 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       if (error) throw error;
       setDisplayedLogs(prev => [...prev, { id: `tame-ok-${Date.now()}`, text: `🐾✨ 大成功！ ${cleanName} がギルドの酒場（待機枠）に送られた！`, type: "success" }]);
       
+      // 🐾 🆕 【三土手創世神特注：道中テイム即時メモリ同期配線】
+      // 街に戻るまでのタイムラグを完全粉砕！今捕まえた魔物のマスターIDを、その場で所持Refへ直撃合流コミット！
+      allPlayerCharactersRef.current = [
+        ...allPlayerCharactersRef.current,
+        { master_id: enemy.id } // 判定に必要な master_id だけをスマートにエミュレート追加
+      ];
+
     } catch (err) {
       console.error("魔物捕獲エラー:", err);
       setDisplayedLogs(prev => [...prev, { id: `tame-err-${Date.now()}`, text: `🚨 捕獲データの送信に失敗しました...`, type: "system" }]);

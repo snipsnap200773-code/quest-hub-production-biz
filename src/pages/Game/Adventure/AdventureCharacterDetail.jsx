@@ -1165,55 +1165,48 @@ ro.mdef = ro.mdef + passiveMdefBonus;
       {activeTab === 'inventory' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           
-          {/* 👑 神のGMデバッグ特権：全武具支給コマンドパネル */}
-          <SectionHeader title="世界創生神のアイテム支給所（開発検証用）" />
-          <div style={{ background: '#1c140a', border: '1px dashed #ffd700', padding: '10px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <span style={{ fontSize: '0.6rem', color: '#ffd700' }}>※ マスターに存在する武具をギルド倉庫に10個強制ポップさせます</span>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
-              {/* 🔮 🆕 スキル（sp_cost持ち）を除外した、純粋なアイテム・武具のみに厳密フィルタリング！ */}
-              {(character.allMasterItemsList || [])
-                .filter(item => item.sp_cost === undefined)
-                .map(item => {
-                  return (
-                    <button 
-                      key={item.id}
-                      onClick={async () => {
-                        await gameServices.debugGiveItemToWarehouse("d1669717-95f4-4f80-932f-d412576d55a7", item.id, 10);
-                        await loadCharAndInventoryData();
-                      }}
-                      style={{ padding: '6px', background: '#0d0905', border: '1px solid #4a341b', color: '#ffd700', fontSize: '0.62rem', borderRadius: '4px', cursor: 'pointer', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      ➕ {item.name} ✕10支給
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
+          {/* 🐾 🆕 【三土手創世神特注：超硬派ハクスラ・ギルド倉庫原帳インフラ】
+              開発用の強制支給所を完全粉砕撤廃！
+              道中でモンスターを討伐し、命懸けで持ち帰った本物の戦利品だけが格納される、
+              嘘偽りの一切ない硬派な共有倉庫ストックを表示します！ */}
 
           {/* 🏛️ ギルド共有倉庫ストック一覧 */}
-          <SectionHeader title="ギルド共有倉庫ストック一覧" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '350px', overflowY: 'auto', background: '#0d0905', padding: '6px', borderRadius: '8px' }}>
+          <SectionHeader title="ギルド共有倉庫ストック原帳一覧" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '450px', overflowY: 'auto', background: '#0d0905', padding: '10px', borderRadius: '8px', border: '1px solid #23190e' }}>
             {guildInventory.map(inv => {
               const item = inv.game_master_items;
               if (!item || inv.count <= 0) return null;
               return (
-                <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#130e09', padding: '6px 10px', borderRadius: '6px', fontSize: '0.7rem' }}>
-  <span>
-    {item.name} [{item.slot_count}] 
-    <span style={{ color: '#887355', marginLeft: '4px' }}>({item.item_subtype})</span>
-    {/* 🏹 🆕 武器ならレンジを表示 */}
-    {item.item_type === 'weapon' && (
-      <span style={{ color: item.weapon_range === 'L' ? '#34d399' : '#f59e0b', marginLeft: '6px', fontWeight: 'bold' }}>
-        [{item.weapon_range}レンジ]
-      </span>
-    )}
-  </span>
-  <span style={{ color: '#34d399', fontWeight: 'bold', fontFamily: 'monospace' }}>✕ {inv.count}個</span>
-</div>
+                <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#130e09', padding: '8px 12px', borderRadius: '6px', fontSize: '0.72rem', border: '1px solid #1c140a' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontWeight: 'bold', color: item.rarity === 'legendary' ? '#f59e0b' : item.rarity === 'epic' ? '#a78bfa' : '#fff' }}>
+                        {item.name}
+                      </span>
+                      <span style={{ fontSize: '0.58rem', color: '#ba9a6f', background: '#22150b', padding: '1px 5px', borderRadius: '3px', border: '1px solid #3a2d1a' }}>
+                        {item.item_subtype}
+                      </span>
+                      {/* 🏹 武器ならレンジを誇り高く表示 */}
+                      {item.item_type === 'weapon' && (
+                        <span style={{ color: item.weapon_range === 'L' ? '#34d399' : '#f59e0b', fontWeight: 'bold', fontSize: '0.58rem' }}>
+                          [{item.weapon_range === 'L' ? 'Lレンジ' : 'Sレンジ'}]
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '0.6rem', color: '#705c45' }}>{item.description}</span>
+                  </div>
+                  <span style={{ color: '#34d399', fontWeight: 'black', fontFamily: 'monospace', fontSize: '0.8rem', background: '#090705', padding: '4px 10px', borderRadius: '4px', border: '1px solid #1a130b' }}>
+                    ✕ {inv.count} 個
+                  </span>
+                </div>
               );
             })}
+            
             {guildInventory.filter(inv => inv.game_master_items && inv.count > 0).length === 0 && (
-              <div style={{ fontSize: '0.65rem', color: '#4b3f2f', textAlign: 'center', padding: '15px' }}>倉庫にストックがありません。上の支給所からポップさせてください。</div>
+              <div style={{ fontSize: '0.68rem', color: '#5a4531', textAlign: 'center', padding: '30px', fontStyle: 'italic' }}>
+                現在、ギルド倉庫にストックされている戦利品はありません。<br />
+                ダンジョンへ出撃し、モンスターから武具やカードを奪い取ってください！
+              </div>
             )}
           </div>
 

@@ -26,61 +26,63 @@ const AdventurePage = () => {
   const [currentPartyIds, setCurrentPartyIds] = useState([null, null, null, null, null]);
 
   // 1. メンバー一覧をSupabaseからロードする処理
-  useEffect(() => {
-    const loadGuildMembers = async () => {
-      const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
-      if (charList && charList.length > 0) {
-        setAllCharacters(charList);
-        
-        const validIds = charList.map(ch => ch.id);
-        const dbParty = [null, null, null, null, null];
-        let hasDbParty = false;
+  const loadGuildMembers = async () => {
+    const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
+    if (charList && charList.length > 0) {
+      setAllCharacters(charList);
+      
+      const validIds = charList.map(ch => ch.id);
+      const dbParty = [null, null, null, null, null];
+      let hasDbParty = false;
 
-        charList.forEach(ch => {
-          if (ch.party_index !== null && ch.party_index !== undefined && ch.party_index >= 0 && ch.party_index < 5) {
-            // 🛠️ DBの並び順から「前衛」として初期セット
-            dbParty[ch.party_index] = { id: ch.id, position: 'front' }; 
-            hasDbParty = true;
-          }
-        });
+      charList.forEach(ch => {
+        if (ch.party_index !== null && ch.party_index !== undefined && ch.party_index >= 0 && ch.party_index < 5) {
+          // 🛠️ DBの並び順から「前衛」として初期セット
+          dbParty[ch.party_index] = { id: ch.id, position: 'front' }; 
+          hasDbParty = true;
+        }
+      });
 
-        if (hasDbParty) {
-          setCurrentPartyIds(dbParty);
+      if (hasDbParty) {
+        setCurrentPartyIds(dbParty);
+      } else {
+        // 🎯 陣形データ(新) と 互換データ(旧) を両方チェック
+        const savedTactics = localStorage.getItem('mitsudote_tactics_save');
+        const savedLegacy = localStorage.getItem('qh_trpg_party_ids');
+
+        if (savedTactics) {
+          // 新しい陣形データが存在する場合
+          const rawParty = JSON.parse(savedTactics);
+          const cleaned = rawParty.map(slotData => {
+            if (!slotData) return null;
+            const charId = typeof slotData === 'object' ? slotData.id : slotData;
+            if (charId && validIds.includes(charId)) {
+              return typeof slotData === 'object' ? slotData : { id: charId, position: 'front' };
+            }
+            return null;
+          });
+          setCurrentPartyIds(cleaned);
+        } else if (savedLegacy) {
+          // 昔のIDだけのデータが存在する場合（互換性サポート）
+          const rawParty = JSON.parse(savedLegacy);
+          const cleaned = rawParty.map(id => {
+            if (id && validIds.includes(id)) {
+              return { id: id, position: 'front' };
+            }
+            return null;
+          });
+          setCurrentPartyIds(cleaned);
         } else {
-          // 🎯 陣形データ(新) と 互換データ(旧) を両方チェック
-          const savedTactics = localStorage.getItem('mitsudote_tactics_save');
-          const savedLegacy = localStorage.getItem('qh_trpg_party_ids');
-
-          if (savedTactics) {
-            // 新しい陣形データが存在する場合
-            const rawParty = JSON.parse(savedTactics);
-            const cleaned = rawParty.map(slotData => {
-              if (!slotData) return null;
-              const charId = typeof slotData === 'object' ? slotData.id : slotData;
-              if (charId && validIds.includes(charId)) {
-                return typeof slotData === 'object' ? slotData : { id: charId, position: 'front' };
-              }
-              return null;
-            });
-            setCurrentPartyIds(cleaned);
-          } else if (savedLegacy) {
-            // 昔のIDだけのデータが存在する場合（互換性サポート）
-            const rawParty = JSON.parse(savedLegacy);
-            const cleaned = rawParty.map(id => {
-              if (id && validIds.includes(id)) {
-                return { id: id, position: 'front' };
-              }
-              return null;
-            });
-            setCurrentPartyIds(cleaned);
-          } else {
-            // 完全に空っぽの場合の初期パーティ
-            const defaultParty = [{ id: charList[0].id, position: 'front' }, null, null, null, null];
-            setCurrentPartyIds(defaultParty);
-          }
+          // 完全に空っぽの場合の初期パーティ
+          const defaultParty = [{ id: charList[0].id, position: 'front' }, null, null, null, null];
+          setCurrentPartyIds(defaultParty);
         }
       }
-    };
+    }
+  };
+
+  // 1. メンバー一覧をSupabaseからロードする処理（初回突入時）
+  useEffect(() => {
     loadGuildMembers();
   }, []);
 
@@ -159,7 +161,12 @@ const AdventurePage = () => {
               quest={selectedQuest} 
               activeQuest={selectedQuest} 
               selectedQuest={selectedQuest} 
-              onReturn={() => { setSelectedQuest(null); setIsExploring(false); setCurrentView('tavern'); }} 
+              onReturn={() => { 
+                setSelectedQuest(null); 
+                setIsExploring(false); 
+                setCurrentView('tavern'); 
+                loadGuildMembers(); // 👈 爆速で再読込の電線を直撃結合！
+              }} 
             />
           ) : isQuestListOpen ? (
             <div style={{ padding: '20px 20px 0', flex: 1 }}><QuestList onSelectQuest={setSelectedQuest} /></div>

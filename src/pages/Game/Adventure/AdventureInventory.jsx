@@ -1,19 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, Sword, Sparkles, Archive, Coins, X, Key, ChevronUp, ChevronDown } from 'lucide-react';
+import { supabase } from '../../../supabaseClient';
+import { gameServices } from '../../../gameServices';
+
+const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
 
 const AdventureInventory = ({ onBack }) => {
-  // 💰 ギルドの所持金（Zeny）状態
-  const [zeny, setZeny] = useState(1500);
-
-  // 🎒 道具の在庫状態
-  const [items, setItems] = useState([
-    { id: 101, name: 'マインゴーシュ [4]', type: 'weapon', rarity: 'rare', count: 1, value: 500, desc: '4つのスロットを持つ短剣。シーフなどに最適。' },
-    { id: 102, name: 'バフォメットJrカード', type: 'card', rarity: 'legendary', count: 1, value: 5000, desc: '激レアカード。装備に挿入するとクリティカル率などが大幅にアップする。' },
-    { id: 103, name: 'ポーション', type: 'consumable', rarity: 'common', count: 15, value: 10, desc: 'HPを少し回復する初心者用の赤い薬。' },
-    { id: 104, name: '丸い爪', type: 'etc', rarity: 'common', count: 5, value: 35, desc: 'バフォメットJrからむしり取った爪。店でゼニーに換えられる。' },
-    { id: 105, name: '始まりの洞窟の古びた鍵', type: 'quest', rarity: 'rare', count: 1, value: 0, desc: '【重要アイテム】始まりの洞窟最深部の隠し扉を開けるための重厚な鍵。売却不可。' },
-    { id: 106, name: 'バフォメットの角片', type: 'quest', rarity: 'legendary', count: 1, value: 0, desc: '【重要アイテム】狂乱の階層主が遺した禍々しい角の破片。ギルドのランクアップ昇格試験に必要。売却不可。' }
-  ]);
+  // 💰 ギルドのリアルタイム所持金（Zeny）状態
+  const [zeny, setZeny] = useState(0);
+  // 🎒 共有倉庫からロードした本物の在庫アイテム配列状態
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   // 🧭 フィルター
   const [filter, setFilter] = useState('all');
@@ -24,6 +21,54 @@ const AdventureInventory = ({ onBack }) => {
   // 🔢 2段階目：数量選択ポップアップアイテム ＆ 個数
   const [sellTargetItem, setSellTargetItem] = useState(null);
   const [sellCount, setSellCount] = useState(1);
+
+  // 🏛️ 🆕 【三土手創世神特注：倉庫＆財貨インフラ直撃サルベージ回路】
+  const loadWarehouseLogistics = async () => {
+    setLoading(true);
+    try {
+      // 1. ギルドの財布データをSupabaseから一本釣り
+      const { data: guildData } = await supabase
+        .from('game_guilds')
+        .select('zeny')
+        .eq('user_id', TEST_USER_ID)
+        .maybeSingle();
+      
+      if (guildData) {
+        setZeny(guildData.zeny || 0);
+      }
+
+      // 2. gameServicesを中継し、共有倉庫内のアイテムとマスタ情報をJOINして全一括ロード
+      const warehouseStocks = await gameServices.getPlayerInventory(TEST_USER_ID);
+      
+      if (warehouseStocks) {
+        // 表示用に構造を綺麗にクレンジング整形
+        const cleanedStocks = warehouseStocks.map(stock => {
+          const master = stock.game_master_items;
+          return {
+            id: stock.id, // game_inventory のレコード固有ID
+            item_id: stock.item_id, // game_master_items のマスターID
+            name: master?.name || '未知のアイテム',
+            type: master?.item_type || 'etc',
+            rarity: master?.rarity || 'common',
+            count: Number(stock.count || 0),
+            value: Number(master?.sell_price || 100),
+            desc: master?.description || '詳細情報なし'
+          };
+        }).filter(item => item.count > 0); // 数量が0のものは倉庫に表示させない
+
+        setItems(cleanedStocks);
+      }
+    } catch (err) {
+      console.error("倉庫データロードエラー:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 画面がマウントされた瞬間にインフラを起動
+  useEffect(() => {
+    loadWarehouseLogistics();
+  }, []);
 
   const filteredItems = items.filter(item => (filter === 'all' || item.type === filter) && item.count > 0);
 
@@ -44,32 +89,61 @@ const AdventureInventory = ({ onBack }) => {
     });
   };
 
-  // 💳 最終チェック付き売却コミット処理
-  const handleFinalSell = () => {
+  // 💳 🆕 【三土手創世神特注：倉庫直結型・売却コミット物流エンジン】
+  const handleFinalSell = async () => {
     if (!sellTargetItem) return;
 
-    const confirmMessage = `💰 【最終確認】\n\n${sellTargetItem.name} を [ ${sellCount} 個 ] 売却します。\n獲得資金: ${sellTargetItem.value * sellCount} Zeny\n\n本当によろしいですか？`;
+    const confirmMessage = `💰 【ギルド買取最終確認】\n\n${sellTargetItem.name} を [ ${sellCount} 個 ] 売却します。\n獲得資金: ${(sellTargetItem.value * sellCount).toLocaleString()} Zeny\n\n本当によろしいですか？`;
     
-    if (!window.confirm(confirmMessage)) {
-      return; 
-    }
+    if (!window.confirm(confirmMessage)) return;
 
-    const totalEarned = sellTargetItem.value * sellCount;
-    setZeny(prev => prev + totalEarned);
+    try {
+      const totalEarned = sellTargetItem.value * sellCount;
 
-    const updatedItems = items.map(item => {
-      if (item.id === sellTargetItem.id) {
-        return { ...item, count: item.count - sellCount };
+      // 1. Supabaseの game_guilds テーブルの所持金をダイレクト加算
+      const { data: currentWallet } = await supabase
+        .from('game_guilds')
+        .select('id, zeny')
+        .eq('user_id', TEST_USER_ID)
+        .maybeSingle();
+
+      if (currentWallet) {
+        await supabase
+          .from('game_guilds')
+          .update({ zeny: Number(currentWallet.zeny || 0) + totalEarned })
+          .eq('id', currentWallet.id);
       }
-      return item;
-    });
-    setItems(updatedItems);
 
-    setSellTargetItem(null);
-    setSelectedItem(null);
+      // 2. Supabaseの game_inventory テーブルの在庫数を引き算
+      const nextCount = sellTargetItem.count - sellCount;
+      if (nextCount <= 0) {
+        // 在庫が完全に0になる場合はレコードごと物理削除（または数量0に更新）
+        await supabase
+          .from('game_inventory')
+          .delete()
+          .eq('id', sellTargetItem.id);
+      } else {
+        // 在庫が残る場合は引き算した数量で上書きアップデート
+        await supabase
+          .from('game_inventory')
+          .update({ count: nextCount })
+          .eq('id', sellTargetItem.id);
+      }
 
-    alert(`💸 商談成立！\n${sellTargetItem.name} を ${sellCount} 個売却し、${totalEarned} Zeny を獲得しました！`);
+      alert(`💸 商談成立！\n${sellTargetItem.name} を ${sellCount} 個売却し、+${totalEarned.toLocaleString()} Zeny を獲得しました！`);
+
+      // 3. すべてのデータがDB上で決着したら、F5リロードなしでフロント表示を瞬時に再同期ロード！
+      setSellTargetItem(null);
+      setSelectedItem(null);
+      await loadWarehouseLogistics();
+
+    } catch (err) {
+      console.error("売却物流コミット失敗:", err);
+      alert("🚨 買い取り通信に失敗しました。ギルド窓口の接続を確認してください。");
+    }
   };
+
+  if (loading) return <div style={{ color: '#34d399', textAlign: 'center', padding: '50px', fontFamily: 'monospace', fontSize: '0.85rem' }}>🎒 ギルド共有倉庫の在庫原帳を照合中...</div>;
 
   return (
     <div style={{ padding: '24px 20px 0 20px', color: '#fff', boxSizing: 'border-box', position: 'relative', minHeight: '80vh' }}>
@@ -80,7 +154,7 @@ const AdventureInventory = ({ onBack }) => {
           ← 戻る
         </button>
         <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#34d399', fontWeight: 'bold', letterSpacing: '1px' }}>
-          🎒 道具一覧
+          🎒 ギルド共有倉庫道具一覧
         </h2>
       </div>
 
@@ -88,16 +162,16 @@ const AdventureInventory = ({ onBack }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
         <div style={{ background: '#111827', border: '1px solid #1e293b', borderRadius: '12px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Archive size={14} /> 倉庫格納アイテム
+            <Archive size={14} /> 倉庫格納中のアイテムバリエーション
           </span>
           <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#34d399', fontFamily: 'monospace' }}>
-            {items.filter(i => i.count > 0).length} / 100 種類
+            {items.filter(i => i.count > 0).length} 種類
           </span>
         </div>
 
         <div style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #111827 100%)', border: '1px solid #4338ca', borderRadius: '12px', padding: '12px 15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '0.75rem', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
-            <Coins size={14} color="#f59e0b" /> ギルド所持金
+            <Coins size={14} color="#f59e0b" /> ギルド金庫総資金
           </span>
           <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#f59e0b', fontFamily: 'monospace' }}>
             {zeny.toLocaleString()} <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 'normal' }}>Zeny</span>
@@ -161,8 +235,8 @@ const AdventureInventory = ({ onBack }) => {
         ))}
 
         {filteredItems.length === 0 && (
-          <div style={{ textalign: 'center', color: '#64748b', fontSize: '0.8rem', padding: '20px' }}>
-            倉庫に該当する道具はありません。
+          <div style={{ textAlign: 'center', color: '#64748b', fontSize: '0.8rem', padding: '20px' }}>
+            現在、倉庫に該当するハクスラ道具の備蓄はありません。
           </div>
         )}
       </div>
@@ -170,12 +244,10 @@ const AdventureInventory = ({ onBack }) => {
       {/* 🗺️ 1段階目ポップアップ：アイテム詳細ウィンドウ */}
       {selectedItem && (
         <div 
-          // ⭕ 修正点：外側の黒い背景をクリックしたら閉じる（setSelectedItem(null)）
           onClick={() => setSelectedItem(null)}
           style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100, padding: '20px', backdropFilter: 'blur(4px)', cursor: 'pointer' }}
         >
           <div 
-            // ⭕ 内側のウィンドウをタップした時は閉じないようにクリックをせき止める！
             onClick={(e) => e.stopPropagation()}
             style={{ background: '#0f172a', width: '100%', maxWidth: '360px', borderRadius: '20px', border: `2px solid ${getRarityColor(selectedItem.rarity)}`, padding: '24px', position: 'relative', cursor: 'default' }}
           >
@@ -235,7 +307,6 @@ const AdventureInventory = ({ onBack }) => {
       {/* 🗺️ 2段階目ポップアップ：数量指定・売却承認ウィンドウ */}
       {sellTargetItem && (
         <div 
-          // ⭕ 修正点：数量選択画面でも、外側の暗幕タップで閉じられるように配線！
           onClick={() => setSellTargetItem(null)}
           style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200, padding: '20px', backdropFilter: 'blur(6px)', cursor: 'pointer' }}
         >
@@ -283,7 +354,7 @@ const AdventureInventory = ({ onBack }) => {
                 とりやめる
               </button>
               <button onClick={handleFinalSell} style={{ flex: 2, padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#0f172a', border: 'none', fontSize: '0.75rem', fontWeight: '900', cursor: 'pointer', boxShadow: '0 4px 12px rgba(16,185,129,0.2)' }}>
-                売る（確認へ）
+                売る（確定へ）
               </button>
             </div>
 
