@@ -414,11 +414,20 @@ roStatus: ch.roStatus || {},
 
         if (enemyError) console.error("エネミーデータ一括取得エラー:", enemyError);
 
+        // 🚀 🆕 もしID指定で敵が1件も取れなかった場合、安全のためにマスターデータの先頭1件（フォールバック）を緊急強奪ロード！
+        let finalDbEnemies = dbEnemies || [];
+        if (!finalDbEnemies || finalDbEnemies.length === 0) {
+          console.warn("⚠️ 警告: 指定されたenemy_idsがマスターデータに見つかりません。テーブル全体の先頭ユニットを仮召喚します。");
+          const { data: fallbackUnits } = await supabase.from('game_master_units').select('*').limit(1);
+          if (fallbackUnits && fallbackUnits.length > 0) {
+            finalDbEnemies = fallbackUnits;
+          }
+        }
+
         // 🛡️ 🆕 次の戦闘でも本物の敵を呼び出せるよう、マスターデータをRefに保存！
-        masterEnemiesRef.current = dbEnemies || [];
+        masterEnemiesRef.current = finalDbEnemies;
 
         // 🛠️ 🆕 【三土手神特注：B1階層コンフィグ連動型ごちゃ混ぜランダム生成エンジン】
-        // クエストデータから現在の階層（まずは1階）のコンフィグをサルベージ
         const fConfigs = activeQuestData?.floor_configs || [];
         const currentFloorCfg = fConfigs.find(f => f.floor === 1) || { 
           battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: enemyIds 
@@ -426,12 +435,17 @@ roStatus: ch.roStatus || {},
 
         // 初期必要戦闘回数をStateに同期
         setRemainingBattles(currentFloorCfg.battle_count);
-        // 🛠️ 🆕 内部メモリRef側にも、最初の突入時だけダッシュボードの設定数を記憶させる配線を結合！
         remainingBattlesRef.current = currentFloorCfg.battle_count;
 
         // 有効な登録モンスターの素材プールを構築
         const activePoolEnemyIds = (currentFloorCfg.enemy_ids || enemyIds).filter(Boolean);
-        const validEnemyPool = activePoolEnemyIds.map(id => dbEnemies?.find(e => e.id === id)).filter(Boolean);
+        // 🚀 🆕 探索先を新調した finalDbEnemies に変更
+        let validEnemyPool = activePoolEnemyIds.map(id => finalDbEnemies.find(e => e.id === id)).filter(Boolean);
+
+        // 🚀 🆕 それでもプールが虚無なら、確保した finalDbEnemies の全現物をプールに強制設定
+        if (validEnemyPool.length === 0 && finalDbEnemies.length > 0) {
+          validEnemyPool = [...finalDbEnemies];
+        }
 
         let loadedEnemies = [];
         
@@ -2421,17 +2435,61 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       const finalEnemies = enemiesStateRef.current;
       const isVictory = finalEnemies.every(e => e.hp <= 0);
 
-      // 👥 1. 生き残ったメンバーの現在HPを一斉にSupabaseへ最終保存
+      // 👥 1. 各メンバーの獲得EXP分配 ＆ 本家RO式・限界突破レベルアップ計算
+      const earnedExpPerChar = Math.floor((accumulatedRewards.exp || 0) / (finalParty.length || 1)); // 今回の遠征で得たキャラごとの分配EXP[cite: 7]
+
       await Promise.all(
         finalParty.map(async (member) => {
+          // 🧠 原帳（allPlayerCharactersRef）から直撃逆引き同期
+          const originChar = allPlayerCharactersRef.current.find(c => c.id === member.id) || {};
+          
+          let lv = Number(originChar.level) || 1;
+          let totalExp = (Number(originChar.exp) || 0) + earnedExpPerChar;
+
+          // 📊 連続レベルアップ判定ループ（MAX50レベル）
+          while (lv < 50) {
+            const nextLvIdx = lv + 1;
+            const requiredExp = RO_NEXT_EXP_TABLE[nextLvIdx] || 999999;
+
+            if (totalExp >= requiredExp) {
+              totalExp -= requiredExp; // 必要経費を引き算
+              lv += 1;                // レベルアップ！
+              console.log(`🎉 【LEVEL UP！】 ${member.name} が Lv.${lv} に限界突破！`);
+            } else {
+              break;
+            }
+          }
+
+          // 🎯 👑 【三土手創世神拡張エンジン完全同期：引き算UIインフラ】
+          // 1. gameRules.js の計算式を呼び出し、新しいレベルにおける「生涯獲得総ポイント数」を算出
+          const totalEarnedPoints = calculateTotalStatusPoints(lv);
+
+          // 2. すでにこのキャラが力振りに使った（STR〜LUKの bonus_xxx の合計値）を逆算集計[cite: 8]
+          const usedPoints = 
+            Number(originChar.bonus_str || 0) + 
+            Number(originChar.bonus_agi || 0) + 
+            Number(originChar.bonus_vit || 0) + 
+            Number(originChar.bonus_int || 0) + 
+            Number(originChar.bonus_dex || 0) + 
+            Number(originChar.bonus_luk || 0);
+
+          // 3. 【総ポイント】 - 【使用済みポイント】 ＝ 画面に出すべき完璧な残りフリーポイント！
+          const finalFreePoints = Math.max(0, totalEarnedPoints - usedPoints);
+
+          // ⚡ 計算された最新スペックを Supabase の game_characters テーブルへ直撃保存！
           await supabase
             .from('game_characters')
-            .update({ current_hp: member.hp })
+            .update({ 
+              current_hp: member.hp,          // 残りHP
+              level: lv,                      // 最新確定レベル
+              exp: totalExp,                  // 繰り越し経験値
+              status_points: finalFreePoints  // 1ミリの狂いもない最新の残りポイント！
+            })
             .eq('id', member.id);
         })
       );
 
-      // 💰 2. 勝利時のみ、全エネミーの報酬を合算してコミット
+      // 💰 2. 📋（ログ用デバッグ配線）
       if (isVictory) {
         const totalExp = finalEnemies.reduce((sum, e) => sum + e.exp, 0);
         const totalGold = finalEnemies.reduce((sum, e) => sum + e.gold, 0);

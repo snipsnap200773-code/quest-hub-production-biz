@@ -108,6 +108,9 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       // データベース（Supabase）の status_points カラムの数値をそのまま100%ダイレクトに画面へマウントします。
       const secureStatusPoints = Number(data.status_points !== null && data.status_points !== undefined ? data.status_points : 0);
       
+      // 🚀 🆕 characterオブジェクト自体のstatus_pointsプロパティも、DBから取得した生数値にここで強制上書き！
+      data.status_points = secureStatusPoints;
+      
       setCharacter(data);
       
       setLocalPoints(secureStatusPoints);
@@ -116,7 +119,7 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
         agi: data.bonus?.agi || 0,
         vit: data.bonus?.vit || 0,
         int: data.bonus?.int || 0,
-        get_dex: data.bonus?.dex || 0, // 必要に応じて既存のプロパティに合わせてください
+        get_dex: data.bonus?.dex || 0,
         dex: data.bonus?.dex || 0,
         luk: data.bonus?.luk || 0,
       });

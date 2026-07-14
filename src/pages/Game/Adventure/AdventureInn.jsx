@@ -52,12 +52,11 @@ const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）か�
       // さらに、同行主として抽出されたテイマー本人のレコード（id）も絶対に除外！
       // これにより、純粋に「新しく捕獲されてInsertされた魔物（モンスター）」だけが100%確実に残ります。
       const tamerIds = tamers.map(t => t.id);
-      const humanJobs = ['ノービス', 'ファイター', 'メイジ', 'クレリック', 'スカウト', 'ハンター', 'テイマー'];
       
       const monsters = allChars.filter(ch => 
         ch.master_id && 
         !tamerIds.includes(ch.id) &&
-        !humanJobs.includes(ch.job) // 🚀 🆕 人間のジョブ持ちは牧場から100%シャットアウト！
+        ch.race !== '人間' // 🚀 🆕 種族属性が「人間」のキャラは、どんなIDであれ牧場から完全シャットアウト！
       );
       setFarmMonsters(monsters);
 
@@ -198,7 +197,8 @@ const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）か�
                     <div>
                       <span style={{ fontSize: '0.55rem', color: '#4b5563', display: 'block' }}>ID: {monster.id.slice(0,8)}...</span>
                       <strong style={{ fontSize: '0.9rem', color: '#fff' }}>{monster.custom_name}</strong>
-                      <span style={{ fontSize: '0.65rem', color: '#a855f7', marginLeft: '6px', fontWeight: 'bold' }}>[{monster.job || '魔獣族'}]</span>
+                      {/* 🚀 🆕 表示するラベルを monster.job ではなく、データベースの種族属性（race）を最優先にして「魔獣族」をフォールバックに */}
+                      <span style={{ fontSize: '0.65rem', color: '#a855f7', marginLeft: '6px', fontWeight: 'bold' }}>[{monster.race || monster.job || '魔獣族'}]</span>
                       <span style={{ fontSize: '0.65rem', color: '#64748b', marginLeft: '6px' }}>Lv.{monster.level}</span>
                     </div>
                     {monster.status_points > 0 && (

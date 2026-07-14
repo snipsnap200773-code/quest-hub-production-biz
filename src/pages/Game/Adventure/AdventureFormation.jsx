@@ -185,18 +185,28 @@ const AdventureFormation = ({ allCharacters, currentPartyIds, onPartyChange }) =
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
             {allCharacters.map(char => {
+              // 🚀 🆕 【ハイブリッド人間判定】
+              // 1. マスターデータ(meta)に unit_type があればそれを絶対基準にする('playable' なら人間)
+              // 2. 過去データ等で無ければ、ジョブ名やrace文字から安全に人間か推測するフォールバック回路
+              const typeAttr = char.unit_type || char.meta?.unit_type;
+              
+              let isHuman = false;
+              if (typeAttr) {
+                isHuman = (typeAttr === 'playable'); // playableなら人間、enemyなら魔物[cite: 1]
+              } else {
+                const jobName = char.job || char.meta?.job || "";
+                const humanJobs = ['ノービス', 'ファイター', 'メイジ', 'クレリック', 'スカウト', 'ハンター', 'テイマー', 'トレーダー'];
+                isHuman = humanJobs.includes(jobName) || char.race === '人間';
+              }
+
               // 🐾 🆕 【三土手神特注：ファーム預け要素完全撤廃 ➔ 直撃モンスター専用枠ゲート】
               // 現在タップしたのが「Slot 4（インデックス3）」の時
               if (activeSlot === 3) {
-                // 人間キャラクター（_base持ち、またはテイマー本人）は4枠目から完全シャットアウト！
-                const isHuman = char.master_id && (char.master_id.includes('_base') || char.master_id === 'unit_1783729889058' || char.job === 'テイマー');
+                // 🚀 4枠目は魔物専用！人間キャラクターは100%完全に弾く！
                 if (isHuman) return null;
-                
-                // ➔ ここを通過した「牧場にいる魔物たち（半魚人やポリンJrなど）」がすべて無条件でズラーッと選択肢に出現します！
               } else {
-                // 逆に通常の「Slot 1〜3」には、魔物たちが絶対に混ざらないように鉄壁ガード！
-                const isMonster = char.master_id && !char.master_id.includes('_base') && char.master_id !== 'unit_1783729889058' && char.job !== 'テイマー';
-                if (isMonster) return null;
+                // 🚀 通常のSlot 1〜3は人間専用！人間以外のキャラクター（魔物）は100%完全に弾く！
+                if (!isHuman) return null;
               }
 
               // 互換チェック込みの選択中判定

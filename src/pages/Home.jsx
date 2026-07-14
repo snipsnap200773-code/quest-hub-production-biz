@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation as useReactLocation } from 'react-router-dom'; // 🚀 🆕 useLocation をインポートに追加
 import { supabase } from '../supabaseClient';
 // 🆕 共通マスター（大カテゴリのリスト）をインポート
 import { INDUSTRY_LABELS } from '../constants/industryMaster';
 import { MapPin, User, LogIn, Heart, Calendar, LogOut, X, Mail, ChevronRight, Eye, EyeOff, Sparkles } from 'lucide-react';
-// 🎮 🆕 ゲームの司令塔（ハブ）をインポート！ [cite: 2025-12-03]
+// 🎮 🆕 ゲームの司令塔（ハブ）をインポート！
 import GameQuestHub from '../components/game/GameQuestHub';
+
 const profileInputStyle = { width: '100%', padding: '8px', borderRadius: '6px', border: 'none', color: '#333', fontSize: '0.9rem', boxSizing: 'border-box' };
 const profileSmallBtnStyle = { padding: '8px 12px', background: '#fff', color: '#07aadb', border: 'none', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' };
 const profileActionBtnStyle = { flex: 1, padding: '10px', borderRadius: '8px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.85rem' };
@@ -16,7 +17,12 @@ const modalPrimaryBtnStyle = { background: '#0f172a', color: '#fff', border: 'no
 
 function Home() {
   const navigate = useNavigate();
+  const location = useReactLocation(); // 🚀 🆕 遷移時の state バトンを検知するアンテナ
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  
+  // 🚀 🆕 キャラ獲得トースト表示制御用のState群
+  const [acquiredCharName, setAcquiredCharName] = useState(null);
+  const [showAcquiredToast, setShowAcquiredToast] = useState(false);
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener('resize', handleResize);
@@ -314,6 +320,20 @@ try {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  // 🎮 🚀 🆕 【創世神特注：予約完了画面からの新メンバー獲得検知センサー】
+  useEffect(() => {
+    if (location.state?.acquiredCharacter) {
+      const charName = location.state.acquiredCharacter;
+      setAcquiredCharName(charName);
+      setShowAcquiredToast(true);
+
+      // 🚀 🆕 自動消去タイマーは完全撤廃！
+      // 画面にトーストがセットされた瞬間にブラウザの履歴バトンだけを消去し、
+      // ページ内の表示（State）は ✕ を押すまで永続維持させます。
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
 
   // 🆕 ステート
 const [isSignUpMode, setIsSignUpMode] = useState(false);
@@ -667,6 +687,79 @@ if (error) {
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
         
+        {/* 🎮 🚀 🆕 【創世神特注：新メンバー獲得祝賀ゴールドトースト】 */}
+        <div style={{
+          maxHeight: showAcquiredToast ? '150px' : '0px',
+          opacity: showAcquiredToast ? 1 : 0,
+          overflow: 'hidden',
+          transition: 'all 0.6s cubic-bezier(0.18, 0.89, 0.32, 1.28)', // 弾むような今風のイージング
+          marginBottom: showAcquiredToast ? '20px' : '0px'
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', // 極振りゴールドグラデーション
+            borderRadius: '20px',
+            padding: '20px',
+            color: '#fff',
+            boxShadow: '0 10px 25px rgba(217,119,6,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            border: '2px solid #fef08a'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <div style={{
+                background: 'rgba(255,255,255,0.2)',
+                padding: '10px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                animation: 'pulse 1.5s infinite' // 鼓動するアニメーション
+              }}>
+                <Sparkles size={24} color="#fff" />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.75rem', fontWeight: 'bold', opacity: 0.9, letterSpacing: '1px' }}>
+                  QUEST HUB 連動ガチャ起動！
+                </div>
+                <div style={{ fontSize: '1.25rem', fontWeight: '900', marginTop: '2px', textShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>
+                  🎉 酒場に【{acquiredCharName}】が加わりました！
+                </div>
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => navigate('/game')}
+              style={{
+                background: '#fff',
+                color: '#d97706',
+                border: 'none',
+                padding: '10px 18px',
+                borderRadius: '12px',
+                fontWeight: '900',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                whiteSpace: 'nowrap',
+                transition: 'transform 0.1s'
+              }}
+              onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+              酒場を見に行く →
+            </button>
+          </div>
+        </div>
+
+        {/* 🆕 トースト用のインラインCSSアニメーション */}
+        <style>{`
+          @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+          }
+        `}</style>
+
 {/* 🆕 野良ユーザー専用：会員登録のメリット案内 */}
 {!user && (
   <div style={{ background: '#fff', borderRadius: '24px', padding: '25px', marginBottom: '25px', border: '2px dashed #07aadb', textAlign: 'center', boxShadow: '0 10px 25px -5px rgba(7,170,219,0.1)' }}>
