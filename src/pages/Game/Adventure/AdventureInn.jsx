@@ -6,11 +6,21 @@ import AdventureCharacterDetail from './AdventureCharacterDetail';
 import AdventureInventory from './AdventureInventory'; 
 import { supabase } from '../../../supabaseClient'; // 🚚 物流通信用のインポートを確保
 
-const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
+// 🆕 固定の TEST_USER_ID の定義を物理的に完全消去！
 
-const AdventureInn = () => {
+const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）から流れてくる userId を直接マウント！
   const [subView, setSubView] = useState('top');
   const [selectedCharId, setSelectedCharId] = useState(null); 
+
+  // 🚀 🆕 予約トリガー合流同期用の再読み込みキーを新設！
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // 🚀 🆕 酒場トップに戻る、または仲間一覧に切り替えるたびにリロードを自動誘発させる監視電線！
+  React.useEffect(() => {
+    if (subView === 'top' || subView === 'characters') {
+      setRefreshTrigger(prev => prev + 1);
+    }
+  }, [subView]);
 
   // 🐾 🆕 【三土手神特注：ファーム内の魔物＆テイマー物流State群】
   const [farmMonsters, setFarmMonsters] = useState([]);
@@ -25,7 +35,7 @@ const AdventureInn = () => {
       const { data: allChars, error } = await supabase
         .from('game_characters')
         .select('*')
-        .eq('user_id', TEST_USER_ID);
+        .eq('user_id', userId); // 🆕 引数で受け取った最新の userId に通信電線を結合！
 
       if (error) throw error;
 
@@ -42,11 +52,12 @@ const AdventureInn = () => {
       // さらに、同行主として抽出されたテイマー本人のレコード（id）も絶対に除外！
       // これにより、純粋に「新しく捕獲されてInsertされた魔物（モンスター）」だけが100%確実に残ります。
       const tamerIds = tamers.map(t => t.id);
+      const humanJobs = ['ノービス', 'ファイター', 'メイジ', 'クレリック', 'スカウト', 'ハンター', 'テイマー'];
       
       const monsters = allChars.filter(ch => 
         ch.master_id && 
-        !ch.master_id.includes('_base') && 
-        !tamerIds.includes(ch.id)
+        !tamerIds.includes(ch.id) &&
+        !humanJobs.includes(ch.job) // 🚀 🆕 人間のジョブ持ちは牧場から100%シャットアウト！
       );
       setFarmMonsters(monsters);
 
@@ -94,6 +105,8 @@ const AdventureInn = () => {
   if (subView === 'characters') {
     return (
       <AdventureCharacterList 
+        userId={userId} // 🆕 仲間一覧コンポーネントへバトンをパス！
+        key={`char-list-${refreshTrigger}`} // 🚀 🆕 トリガー変化時にコンポーネントを最新状態で丸ごと同期再マウント！
         onBack={() => setSubView('top')} 
         onSelectCharacter={(id) => {
           setSelectedCharId(id);
@@ -107,6 +120,7 @@ const AdventureInn = () => {
   if (subView === 'detail') {
     return (
       <AdventureCharacterDetail 
+        userId={userId} // 🆕 仲間詳細コンポーネントへも userId のバトンをパス！
         characterId={selectedCharId} 
         onBack={() => setSubView('characters')} 
       />
@@ -117,6 +131,7 @@ const AdventureInn = () => {
   if (subView === 'inventory') {
     return (
       <AdventureInventory 
+        userId={userId} // 🆕 先ほど直した倉庫コンポーネントへ userId を手渡して配線開通！[cite: 5]
         onBack={() => setSubView('top')} 
       />
     );

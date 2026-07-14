@@ -29,7 +29,7 @@ const EQUIP_SLOTS = [
   { key: 'accessory', name: '⑨装飾 (アクセサリー)', icon: <Gem size={13} /> }
 ];
 
-const AdventureCharacterDetail = ({ characterId, onBack }) => {
+const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 親（酒場）から引き渡された動的な userId のバトンをここでキャッチ！
   const [character, setCharacter] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('status');
@@ -50,10 +50,12 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
 
   const loadCharAndInventoryData = async () => {
     setLoading(true);
-    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
-    const charList = await gameServices.getPlayerCharacters(testUserId);
+    // 🆕 固定の testUserId の変数定義を完全撤去！
+    
+    // 🆕 Props から流れてくる動的な userId を引数へダイレクトにマウント！
+    const charList = await gameServices.getPlayerCharacters(userId);
     const data = charList?.find(c => c.id === characterId);
-    const invData = await gameServices.getPlayerInventory(testUserId);
+    const invData = await gameServices.getPlayerInventory(userId);
     if (invData) setGuildInventory(invData);
 
     // 🔮 スロット分離テーブルから現在のカード装着状態を爆速ハイドレーション
@@ -168,9 +170,10 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
   const handleEquipItem = async (slotKey, itemMasterId) => {
     if (isEquipping) return;
     setIsEquipping(true);
-    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
+    // 🆕 固定の testUserId を完全抹消！
     try {
-      const res = await gameServices.saveEquipmentChange(testUserId, character.id, slotKey, itemMasterId);
+      // 🆕 ログイン中の userId を使って正確に売着脱を共有倉庫へコミット！
+      const res = await gameServices.saveEquipmentChange(userId, character.id, slotKey, itemMasterId);
       if (res && res.success) {
         setSelectedSlotKey(null);
         setSelectedSlotIndex(null); // 開いていたカード選択スロットもリセット
@@ -185,15 +188,17 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
   const handleUnequipItem = async (slotKey) => {
     if (isEquipping) return;
     setIsEquipping(true);
-    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
+    // 🆕 固定の testUserId の変数定義を物理的に完全消去！
     try {
       // ⚠️ 安全第一：武具を外すときは、その武具に刺さっているすべてのカードを先に自動で抜いて倉庫に戻す
       const cardsInSlot = equippedCards.filter(c => c.slot_key === slotKey);
       for (const card of cardsInSlot) {
-        await gameServices.removeCardFromSlot(testUserId, character.id, slotKey, card.slot_index, card.card_master_id);
+        // 🆕 ループ内の引き抜き通信も、動的な userId に切り替えて安全にそれぞれの倉庫へ返却！
+        await gameServices.removeCardFromSlot(userId, character.id, slotKey, card.slot_index, card.card_master_id);
       }
 
-      const res = await gameServices.saveEquipmentChange(testUserId, character.id, slotKey, null);
+      // 🆕 装備を外すメインの通信処理も、動的な userId へと直撃結線！
+      const res = await gameServices.saveEquipmentChange(userId, character.id, slotKey, null);
       if (res && res.success) {
         setSelectedSlotKey(null);
         setSelectedSlotIndex(null);
@@ -209,9 +214,10 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
   const handleInsertCard = async (slotKey, slotIndex, cardMasterId) => {
     if (isEquipping) return;
     setIsEquipping(true);
-    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
+    // 🆕 固定の testUserId を完全抹消！
     try {
-      const res = await gameServices.insertCardToSlot(testUserId, character.id, slotKey, slotIndex, cardMasterId);
+      // 🆕 ログインプレイヤーの userId でカード倉庫物流を同期コミット！
+      const res = await gameServices.insertCardToSlot(userId, character.id, slotKey, slotIndex, cardMasterId);
       if (res && res.success) {
         setSelectedSlotIndex(null); // 挿し終わったらフォームを閉じる
         await loadCharAndInventoryData();
@@ -226,9 +232,10 @@ const AdventureCharacterDetail = ({ characterId, onBack }) => {
   const handleRemoveCard = async (slotKey, slotIndex, cardMasterId) => {
     if (isEquipping) return;
     setIsEquipping(true);
-    const testUserId = "d1669717-95f4-4f80-932f-d412576d55a7";
+    // 🆕 固定の testUserId の変数定義を物理的に完全消去！
     try {
-      const res = await gameServices.removeCardFromSlot(testUserId, character.id, slotKey, slotIndex, cardMasterId);
+      // 🆕 引数（Props）の userId を使って、引き抜いたカードを動的に各プレイヤーの倉庫へ返却！
+      const res = await gameServices.removeCardFromSlot(userId, character.id, slotKey, slotIndex, cardMasterId);
       if (res && res.success) {
         await loadCharAndInventoryData();
       } else {

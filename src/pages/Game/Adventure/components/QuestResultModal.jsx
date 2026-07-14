@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { Sparkles, Coins, Package } from 'lucide-react';
 import { supabase } from '../../../../supabaseClient';
+// 🟢 🆕 独立数理室からテーブルとポイント計算インフラを最上部で安全にドッキング！
+import { RO_NEXT_EXP_TABLE, calculateTotalStatusPoints } from '../../../../gameRules';
 
-const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
-
-const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
+const QuestResultModal = ({ isOpen, userId, droppedItems = [], accumulatedRewards = { exp: 0, gold: 0 }, onClose }) => {
   if (!isOpen) return null;
 
-  // 各アイテムの売却チェック状態を管理（デフォルトはすべてチェックなし＝持ち帰る）
+  // 各アイテムの売却チェック状態を管理
   const [sellChecked, setSellChecked] = useState({});
   const [isSaving, setIsSaving] = useState(false);
 
@@ -16,7 +16,6 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
   };
 
   // 📦 🆕 【三土手創世神特注：ハクスラ財貨物流一括コミットコア】
-  // 「全て持ち帰る」または「選択売却」の物流ルートを一元的につかさどる神関数です！
   const processLogistics = async (mode) => {
     if (isSaving) return;
     setIsSaving(true);
@@ -27,41 +26,34 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
       let totalZenyEarned = 0;
 
       droppedItems.forEach(item => {
-        // モードが 'sell_selected' かつ チェックが入っている場合は即時売却ルートへ
         if (mode === 'sell_selected' && sellChecked[item.id]) {
-          // アイテムマスターデータから設定された sell_price（換金価格）を逆引き計算
           totalZenyEarned += Number(item.sell_price || item.value || 100);
         } else {
-          // それ以外はすべて大切に共有倉庫へ持ち帰るルートへスタック
           itemsToKeep.push(item);
         }
       });
 
       // 2. 【共有倉庫（DB）への一括インジェクション処理】
-      // 持ち帰る武具やカードが1件でも存在する場合、game_inventory テーブルへ直撃 Upsert！
       if (itemsToKeep.length > 0) {
         await Promise.all(
           itemsToKeep.map(async (item) => {
-            // 既存の倉庫の中に同じアイテムIDがすでに格納されているかスキャン
             const { data: existingStock } = await supabase
               .from('game_inventory')
               .select('id, count')
-              .eq('user_id', TEST_USER_ID)
+              .eq('user_id', userId)
               .eq('item_id', item.id)
               .maybeSingle();
 
             if (existingStock) {
-              // すでに在庫がある場合は、既存の数量に +1 加算してアップデート！
               await supabase
                 .from('game_inventory')
                 .update({ count: Number(existingStock.count || 0) + 1 })
                 .eq('id', existingStock.id);
             } else {
-              // 倉庫に初めて入る初物アイテムの場合は、新規に数量1個でインサート！
               await supabase
                 .from('game_inventory')
                 .insert([{
-                  user_id: TEST_USER_ID,
+                  user_id: userId, // 💡 TEST_USER_ID を排除し、Props の userId に完全に結合！
                   item_id: item.id,
                   count: 1
                 }]);
@@ -71,31 +63,107 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
       }
 
       // 3. 【ギルド所持金（DB）への換金コミット処理】
-      // 即時売却によるZeny獲得が発生している場合は、ギルドマスター財貨テーブルへ直撃加算！
-      if (totalZenyEarned > 0) {
-        // ギルドの現在の財布（Zeny）の生データをサルベージ
-        const { data: guildWallet } = await supabase
-          .from('game_guilds')
-          .select('id, zeny')
-          .eq('user_id', TEST_USER_ID)
+      const finalZenyAddition = totalZenyEarned + Number(accumulatedRewards.gold || 0);
+
+      if (finalZenyAddition > 0) {
+        // 🔑 【修正】game_guilds ではなく、新設された game_party_status の zeny カラムに直接合流！
+        const { data: partyStatus } = await supabase
+          .from('game_party_status')
+          .select('user_id, zeny')
+          .eq('user_id', userId)
           .maybeSingle();
 
-        if (guildWallet) {
+        if (partyStatus) {
           await supabase
-            .from('game_guilds')
-            .update({ zeny: Number(guildWallet.zeny || 0) + totalZenyEarned })
-            .eq('id', guildWallet.id);
+            .from('game_party_status')
+            .update({ zeny: Number(partyStatus.zeny || 0) + finalZenyAddition })
+            .eq('user_id', userId);
         }
       }
 
-      // 4. 物流結果をバトルログ画面風のダイアログでお知らせ
-      if (mode === 'all') {
-        alert(`🎒 遠征部隊の物流が完了しました！\n獲得した戦利品 [ ${itemsToKeep.length} 個 ] をすべてギルド共有倉庫へ格納しました！`);
-      } else {
-        alert(`💸 商談成立！\n選択した戦利品を査定・売却し [ +${totalZenyEarned} Zeny ] を獲得しました！\n残りのアイテム [ ${itemsToKeep.length} 個 ] は共有倉庫へ無風格納されました！`);
+      // 4. 【獲得したEXP（経験値）を戦闘メンバー全員に付与コミット】
+      if (Number(accumulatedRewards.exp || 0) > 0) {
+
+        // 陣形キーから現在のアクティブパーティIDをLocalStorageから取得
+        const savedTactics = localStorage.getItem('mitsudote_tactics_save');
+        if (savedTactics) {
+          const rawParty = JSON.parse(savedTactics);
+          // null以外の有効なキャラクターID（UUID）を抽出
+          const activeCharIds = rawParty
+            .map(slot => slot && typeof slot === 'object' ? slot.id : slot)
+            .filter(id => id && String(id).trim() !== '' && String(id) !== 'null');
+
+          if (activeCharIds.length > 0) {
+            await Promise.all(
+              activeCharIds.map(async (charId) => {
+                // キャラクターの現在の経験値をダウンロード
+                const { data: charData } = await supabase
+                  .from('game_characters')
+                  .select('id, exp, level, status_points, bonus_str, bonus_agi, bonus_vit, bonus_int, bonus_dex, bonus_luk')
+                  .eq('id', charId)
+                  .maybeSingle();
+
+                if (charData) {
+                  let nextExp = Number(charData.exp || 0) + Number(accumulatedRewards.exp);
+                  let nextLevel = Number(charData.level || 1);
+                  let originalLevel = nextLevel; // 元のレベルを記憶
+
+                  // 📊 【三土手神特注：本家RO成長曲線連動型・限界突破レベルアップ判定ループ】
+                  // RO_NEXT_EXP_TABLE を参照し、上限を突破している限り何度でも連続レベルアップ！
+                  let requiredExp = RO_NEXT_EXP_TABLE[nextLevel] || 999999;
+                  while (nextExp >= requiredExp && nextLevel < 50) { // 最大Lv50制限
+                    nextExp -= requiredExp;
+                    nextLevel += 1;
+                    requiredExp = RO_NEXT_EXP_TABLE[nextLevel] || 999999;
+                  }
+
+                  // 🪙 【フリーポイント自動差分計算インフラ】
+                  // レベルアップが発生した場合、新しいレベルで持っているべき「総獲得ポイント」を算出し、
+                  // そこから「既に手振りに使ったポイント（bonus分）」を正確に引き算して残りフリーポイントを上書き！
+                  let finalStatusPoints = charData.status_points;
+
+                  if (nextLevel > originalLevel) {
+                    // 新しいレベルにおける生涯総フリーポイント
+                    const totalPointsAtNextLv = calculateTotalStatusPoints(nextLevel);
+                    
+                    // 既に自分で割り振って消費済みのポイントを合計
+                    const spentPoints = Number(charData.bonus_str || 0) + 
+                                        Number(charData.bonus_agi || 0) + 
+                                        Number(charData.bonus_vit || 0) + 
+                                        Number(charData.bonus_int || 0) + 
+                                        Number(charData.bonus_dex || 0) + 
+                                        Number(charData.bonus_luk || 0);
+
+                    // 総ポイントから消費分を引いて、残るべきフリーポイントを美しく算出
+                    finalStatusPoints = Math.max(0, totalPointsAtNextLv - spentPoints);
+                    
+                    console.log(`🎉 LEVEL UP!! [${charId}] : Lv.${originalLevel} ➔ Lv.${nextLevel} (残りステP: ${finalStatusPoints})`);
+                  }
+
+                  // 獲得した経験値、新しいレベル、そして再計算されたフリーポイントをSupabaseへ一括永続コミット！
+                  await supabase
+                    .from('game_characters')
+                    .update({ 
+                      exp: nextExp, 
+                      level: nextLevel,
+                      status_points: finalStatusPoints
+                    })
+                    .eq('id', charId);
+                }
+              })
+            );
+          }
+        }
       }
 
-      // すべての物流処理が正常クリーンに終了したら、モーダルを閉じて冒険画面側へバトンを返す
+      // 5. 物流結果のお知らせ
+      if (mode === 'all') {
+        alert(`🎒 遠征部隊の物流が完了しました！\n獲得した戦利品 [ ${itemsToKeep.length} 個 ] をすべてギルド共有倉庫へ格納し、モンスター撃破報酬 [ +${accumulatedRewards.gold} Zeny ] をギルド金庫へ追加しました！`);
+      } else {
+        alert(`💸 商談成立！\n選択した戦利品の売却とモンスター撃破報酬を合わせ、総額 [ +${finalZenyAddition} Zeny ] を獲得しました！\n残りのアイテム [ ${itemsToKeep.length} 個 ] は共有倉庫へ格納されました！`);
+      }
+
+      // 6. すべての物流処理が正常クリーンに終了したら、モーダルを閉じて冒険画面側へバトンを返す
       onClose();
 
     } catch (err) {
@@ -118,9 +186,22 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
         <div style={{ color: '#f59e0b', marginBottom: '10px' }}>
           <Sparkles size={32} style={{ margin: '0 auto' }} />
         </div>
-        <h2 style={{ fontSize: '1.3rem', color: '#f59e0b', margin: '0 0 20px 0', letterSpacing: '2px', fontFamily: 'serif' }}>
+        <h2 style={{ fontSize: '1.3rem', color: '#f59e0b', margin: '0 0 15px 0', letterSpacing: '2px', fontFamily: 'serif' }}>
           🏆 探索完了・戦利品清算
         </h2>
+
+        {/* 獲得EXPとZenyリザルト表示 */}
+        <div style={{ 
+          background: '#1a1c23', border: '1px solid #334155', borderRadius: '12px', 
+          padding: '10px', marginBottom: '15px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' 
+        }}>
+          <div style={{ fontSize: '0.8rem', color: '#34d399', fontWeight: 'bold' }}>
+            📈 獲得 EXP: <span style={{ color: '#fff', fontFamily: 'monospace' }}>+{accumulatedRewards.exp}</span>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: '#ffd700', fontWeight: 'bold' }}>
+            💰 獲得 Zeny: <span style={{ color: '#fff', fontFamily: 'monospace' }}>+{accumulatedRewards.gold}</span>
+          </div>
+        </div>
 
         {/* ドロップリストコンテナ */}
         <div style={{ 
@@ -133,7 +214,6 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
           </div>
           
           {droppedItems.map((item, index) => {
-            // リストのキー重複エラーを防ぐ一意の識別キーを生成
             const uniqueKey = item.id ? `${item.id}_${index}` : `drop_idx_${index}`;
             return (
               <div key={uniqueKey} style={{ 
@@ -164,11 +244,11 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <button 
             onClick={() => processLogistics('all')}
-            disabled={isSaving || droppedItems.length === 0}
+            disabled={isSaving} // 💡 アイテムが0個でも、ZenyとEXPを持って帰れるようにロックを解除！
             style={{ 
               width: '100%', padding: '12px', borderRadius: '12px', 
-              background: droppedItems.length === 0 ? '#1f1f1f' : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', 
-              color: droppedItems.length === 0 ? '#444' : '#fff', border: 'none', fontWeight: 'bold', cursor: droppedItems.length === 0 ? 'not-allowed' : 'pointer',
+              background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', 
+              color: '#fff', border: 'none', fontWeight: 'bold', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
             }}
           >
@@ -177,7 +257,7 @@ const QuestResultModal = ({ isOpen, droppedItems = [], onClose }) => {
           
           <button 
             onClick={() => processLogistics('sell_selected')}
-            disabled={isSaving || droppedItems.length === 0 || Object.values(sellChecked).filter(Boolean).length === 0}
+            disabled={isSaving || droppedItems.length === 0 || Object.values(sellChecked).filter(Boolean).length === 0} // こちらは選択売却用なのでアイテム0ならdisabledでOKです
             style={{ 
               width: '100%', padding: '12px', borderRadius: '12px', 
               background: '#222', color: (isSaving || droppedItems.length === 0 || Object.values(sellChecked).filter(Boolean).length === 0) ? '#444' : '#ef4444', 

@@ -7,13 +7,18 @@ import AdventureFormation from './AdventureFormation'; // 🆕 切り出した�
 import QuestList from './QuestList'; 
 import QuestModal from './components/QuestModal'; 
 import AdventureInn from './AdventureInn'; 
+
+// 🆕 消えてしまっていた gameServices と supabase のインポート電線をここに再結合します！
 import { gameServices } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
 
-const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
-
-const AdventurePage = () => {
+const AdventurePage = () => { // 🆕 親（App.jsx）から Props を貰う必要がないよう、引数欄を元のシンプルな形に差し戻します！
   const navigate = useNavigate();
+
+  // 🆕 【最新Supabase対応・動的マルチユーザーIDもぎ取りコア】
+  // 古い .session() や .user() 判定を完全撤去し、現在のログインセッションから生のユーザーIDを安全に自動取得します！
+  // これにより、別のプレイヤーがログインしてもコードを1文字も変えずに自動でそれぞれのIDで遊べます。
+  const [userId, setUserId] = useState(null);
   
   const [currentView, setCurrentView] = useState('tavern'); 
   const [isExploring, setIsExploring] = useState(false); 
@@ -25,9 +30,17 @@ const AdventurePage = () => {
   // ⭕ 初期値のデフォルトの器をセット
   const [currentPartyIds, setCurrentPartyIds] = useState([null, null, null, null, null]);
 
+  // 🔔 🆕 【三土手物流特注：街のデータ強制同期フラグ】
+  // 冒険から街に生還した際、この数値を+1して各子画面の再ロード処理を自動着火させます
+  const [logisticsTrigger, setLogisticsTrigger] = useState(0); 
+
   // 1. メンバー一覧をSupabaseからロードする処理
-  const loadGuildMembers = async () => {
-    const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
+  // 💡 安全にIDを受け取れるように引数（targetUserId）を拡張します
+  const loadGuildMembers = async (targetUserId) => {
+    const activeUserId = targetUserId || userId;
+    if (!activeUserId) return; // IDがまだ存在しない場合は通信を水際でガードする
+
+    const charList = await gameServices.getPlayerCharacters(activeUserId);
     if (charList && charList.length > 0) {
       setAllCharacters(charList);
       
@@ -37,7 +50,6 @@ const AdventurePage = () => {
 
       charList.forEach(ch => {
         if (ch.party_index !== null && ch.party_index !== undefined && ch.party_index >= 0 && ch.party_index < 5) {
-          // 🛠️ DBの並び順から「前衛」として初期セット
           dbParty[ch.party_index] = { id: ch.id, position: 'front' }; 
           hasDbParty = true;
         }
@@ -46,12 +58,10 @@ const AdventurePage = () => {
       if (hasDbParty) {
         setCurrentPartyIds(dbParty);
       } else {
-        // 🎯 陣形データ(新) と 互換データ(旧) を両方チェック
         const savedTactics = localStorage.getItem('mitsudote_tactics_save');
         const savedLegacy = localStorage.getItem('qh_trpg_party_ids');
 
         if (savedTactics) {
-          // 新しい陣形データが存在する場合
           const rawParty = JSON.parse(savedTactics);
           const cleaned = rawParty.map(slotData => {
             if (!slotData) return null;
@@ -63,7 +73,6 @@ const AdventurePage = () => {
           });
           setCurrentPartyIds(cleaned);
         } else if (savedLegacy) {
-          // 昔のIDだけのデータが存在する場合（互換性サポート）
           const rawParty = JSON.parse(savedLegacy);
           const cleaned = rawParty.map(id => {
             if (id && validIds.includes(id)) {
@@ -73,7 +82,6 @@ const AdventurePage = () => {
           });
           setCurrentPartyIds(cleaned);
         } else {
-          // 完全に空っぽの場合の初期パーティ
           const defaultParty = [{ id: charList[0].id, position: 'front' }, null, null, null, null];
           setCurrentPartyIds(defaultParty);
         }
@@ -81,10 +89,29 @@ const AdventurePage = () => {
     }
   };
 
-  // 1. メンバー一覧をSupabaseからロードする処理（初回突入時）
+  // 🔌 【最重要】現在ログインしている本物のユーザーIDをSupabaseの公式APIから自動取得する処理
   useEffect(() => {
-    loadGuildMembers();
-  }, []);
+    const fetchSession = async () => {
+      try {
+        // Supabaseのクライアントから現在のログインセッションを非同期で安全に取得します
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        // セッション情報の中から本物の user_id を抽出
+        const currentUserId = session?.user?.id || null;
+        if (currentUserId) {
+          setUserId(currentUserId); // 1. StateにユーザーIDをセットして全体に電線を繋ぎます
+          loadGuildMembers(currentUserId); // 2. もぎ取ったIDでそのまま即座にキャラクターデータをロードします
+        } else {
+          console.warn("⚠️ ログインセッションが見つかりません。ログアウトしている可能性があります。");
+        }
+      } catch (err) {
+        console.error("セッション自動もぎ取りエラー:", err);
+      }
+    };
+
+    fetchSession();
+  }, []); // 初回マウント時に1回だけ確実に実行します
 
   // 2. ⭕ パーティ編成が変更されたら、即座にブラウザの記憶に保存する関数
   const handlePartyChange = async (newParty) => {
@@ -133,7 +160,8 @@ const AdventurePage = () => {
       {/* --- 1. 酒場タブ --- */}
       {currentView === 'tavern' && (
         <div style={{ flex: 1, paddingTop: '0px' }}>
-          <AdventureInn />
+          {/* 🆕 自動取得した userId と 物流同期トリガーを酒場（Inn）へ引き渡します！ */}
+          <AdventureInn userId={userId} logisticsTrigger={logisticsTrigger} />
         </div>
       )}
 
@@ -157,6 +185,7 @@ const AdventurePage = () => {
           {isExploring ? (
             /* 🔮 三土手創世神特注配線：選ばれた本物のクエストデータを戦闘画面へ完全同期マウント！ */
             <AdventureActive 
+              userId={userId} // 🆕 これ！ここで子画面へ userId を引き渡すことで、Active 側の参照エラーを完全粉砕します！
               partyCharacterIds={currentPartyIds.filter(id => id && id !== 'null' && id !== 'undefined' && String(id).trim() !== '')} 
               quest={selectedQuest} 
               activeQuest={selectedQuest} 
@@ -166,6 +195,9 @@ const AdventurePage = () => {
                 setIsExploring(false); 
                 setCurrentView('tavern'); 
                 loadGuildMembers(); // 👈 爆速で再読込の電線を直撃結合！
+
+                // 🔔 🆕 帰還時にカウントアップ！これにより倉庫や詳細が自動で最新のデータを読み込みます
+                setLogisticsTrigger(prev => prev + 1); 
               }} 
             />
           ) : isQuestListOpen ? (

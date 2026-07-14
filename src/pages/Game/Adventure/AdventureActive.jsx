@@ -3,11 +3,12 @@ import { Timer, Trophy, ShieldAlert } from 'lucide-react';
 import QuestResultModal from './components/QuestResultModal';
 import { gameServices } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
-import { calculateDamageModifier, calculateStatusInflictChance } from '../../../gameRules'; 
+import { calculateDamageModifier, calculateStatusInflictChance, RO_NEXT_EXP_TABLE } from '../../../gameRules';
 
-const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
+// 🆕 固定の TEST_USER_ID 定義を完全撤去！
 
 const AdventureActive = ({ 
+  userId, // 🆕 親画面からログイン中のユーザーIDをバトンとして受け取る
   partyCharacterIds = [], 
   quest = null, 
   activeQuest = null, 
@@ -77,7 +78,8 @@ const AdventureActive = ({
       
       setCurrentQuestState(currentQuest);
 
-      const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
+      // 🆕 TEST_USER_ID を物理的に削除し、Props から受け取った userId へ動的配線を結合！
+      const charList = await gameServices.getPlayerCharacters(userId);
       const { data: dbSkills } = await supabase.from('game_master_skills').select('*');
       const { data: dbItems } = await supabase.from('game_master_items').select('*'); 
 
@@ -479,6 +481,8 @@ roStatus: ch.roStatus || {},
               size: finalSize,
               race: finalRace,
               element: finalElement,
+              reward_gold_battle: Number(dbEnemy?.reward_gold_battle || 0),
+              reward_exp_battle: Number(dbEnemy?.reward_exp_battle || 0),
               exp: Number(activeQuestData?.exp_reward || 0),
               gold: Number(activeQuestData?.zeny_reward || 0),
               state: { currentStatus: 'なし', durationTurns: 0 },
@@ -618,9 +622,21 @@ roStatus: ch.roStatus || {},
         }
 
         // 報酬プールへの合算計算
-        const floorExp = localEnemies.reduce((sum, e) => sum + (e.exp || 0), 0);
-        const floorGold = localEnemies.reduce((sum, e) => sum + (e.gold || 0), 0);
-        setAccumulatedRewards(prev => ({ exp: prev.exp + floorExp, gold: prev.gold + floorGold }));
+        const battleExp = localEnemies.reduce((sum, e) => sum + (e.reward_exp_battle || 0), 0);
+        const battleGold = localEnemies.reduce((sum, e) => sum + (e.reward_gold_battle || 0), 0);
+
+        // 🆕 戦闘ごとの獲得報酬をハクスラ感溢れるシステムログとしてリアルタイム出力！
+        newLogs.push({
+          id: `battle-reward-${Date.now()}`,
+          text: `💰 戦闘勝利報酬を獲得！ ➔ 📈 +${battleExp} EXP / 🟡 +${battleGold} Zeny`,
+          type: "system"
+        });
+
+        // 🆕 帰還時に持ち帰る累積一時報酬プール（accumulatedRewards）へ直撃スタック加算！
+        setAccumulatedRewards(prev => ({ 
+          exp: prev.exp + battleExp, 
+          gold: prev.gold + battleGold 
+        }));
 
         // 🐾 【三土手神特注：ドラクエ5型・魔物起き上がり判定エンジン】
         const aliveTamer = localParty.find(p => p.hp > 0 && (p.job === 'テイマー' || p.name.includes('テイマー')));
@@ -2343,6 +2359,8 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           size: dbEnemy?.size || '小型',
           race: dbEnemy?.race || '無形',
           element: dbEnemy?.element || '無',
+          reward_gold_battle: Number(dbEnemy?.reward_gold_battle || 0),
+          reward_exp_battle: Number(dbEnemy?.reward_exp_battle || 0),
           exp: Number(currentQuestState?.exp_reward || 0),
           gold: Number(currentQuestState?.zeny_reward || 0),
           state: { currentStatus: 'なし', durationTurns: 0 },
@@ -2445,9 +2463,10 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       const { error } = await supabase
         .from('game_characters')
         .insert([{
-          user_id: TEST_USER_ID,
+          // 🆕 ここも動的にログインプレイヤーの userId に結線！
+          user_id: userId,
           master_id: enemy.id,
-          custom_name: cleanName, // ➔ これで酒場でも「ポリンJr」としてそのまま並びます！
+          custom_name: cleanName,
           level: 1, 
           exp: 0,
           status_points: 6, // 創世神の初期ポイント6を付与！
@@ -2647,25 +2666,42 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       {(() => {
         // 現在戦闘に参加している部隊にテイマーが組み込まれているか走査
         const hasTamerInBattle = party.some(m => m.job === 'テイマー' || m.id === 'unit_1783729889058');
-        // テイマーがいれば4分割、通常3人パーティーなら3分割にジャストフィットさせる数理[cite: 5]
+        // テイマーがいれば4分割、通常3人パーティーなら3分割にジャストフィットさせる数理[cite: 6]
         const gridColsCount = hasTamerInBattle ? 4 : 3;
 
         return (
           <div style={{ 
             display: 'grid', 
             gridTemplateColumns: `repeat(${gridColsCount}, 1fr)`, 
-            gap: '4px', padding: '10px 6px', background: '#0b0f19'
+            gap: '4px', padding: '10px 6px', backgroundColor: '#0b0f19'
           }}>
             {party.map(member => {
-              // リアルタイムに変動するSPの安全な割合を算出（メンバー毎に独立計算）[cite: 5]
+              // リアルタイムに変動するSPの安全な割合を算出
               const mspValue = member.msp || 50;
               const spPercent = Math.min(100, Math.max(0, (member.sp / mspValue) * 100));
 
+              // 📈 【三土手成長数理結合】本物テーブルからこのレベルの最大必要EXPを逆引き
+              const currentLevel = member.level || 1;
+              const nextMaxExp = RO_NEXT_EXP_TABLE[currentLevel] || 999999;
+              
+              // 💡 遠征中に獲得した累積プール（accumulatedRewards.exp）をパーティ人数で均等割りし、
+              // 画面上のゲージにリアルタイムで上乗せ加算してアニメーションさせます！
+              const liveEarnedExp = Math.floor((accumulatedRewards.exp || 0) / (party.length || 1));
+              // 初期ロード時のベースexpに、道中の獲得expをガッチャンコ！
+              const currentLiveExp = (member.exp || 0) + liveEarnedExp;
+              const expPercent = Math.min(100, Math.max(0, (currentLiveExp / nextMaxExp) * 100));
+
               return (
-                <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '6px', padding: '6px 4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center' }}>
-                  {/* キャラクター名 */}
-                  <div style={{ fontSize: '0.62rem', fontWeight: 'bold', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {member.name.replace('テスト', '')}
+                <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '6px', padding: '6px 4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center', boxSizing: 'border-box' }}>
+                  
+                  {/* 📈 上部：レベル ＆ 名前を横並びで綺麗にセパレート */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '0.55rem', fontFamily: 'monospace', color: '#f59e0b', fontWeight: 'bold', background: 'rgba(0,0,0,0.5)', padding: '1px 4px', borderRadius: '3px', shrink: 0 }}>
+                      Lv.{currentLevel}
+                    </span>
+                    <span style={{ fontSize: '0.62rem', fontWeight: '900', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {member.name.replace('テスト', '')}
+                    </span>
                   </div>
                   
                   {/* ❤️ HP数値 */}
@@ -2678,15 +2714,26 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                     <div style={{ height: '100%', width: `${(member.hp / member.mhp) * 100}%`, background: '#ef4444', transition: '0.1s' }}></div>
                   </div>
 
-                  {/* 💙 リアルタイム魔力（SP）ステータス数値 */}
-                  <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#38bdf8', marginTop: '4px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
+                  {/* 💙 SP数値 */}
+                  <div style={{ fontFamily: 'monospace', fontSize: '0.55rem', color: '#38bdf8', marginTop: '3px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
                     <span style={{ color: '#887355', fontWeight: 'bold' }}>SP:</span>
-                    <span style={{ fontWeight: 'bold' }}>{member.sp}/{mspValue}</span>
+                    <span>{member.sp}/{mspValue}</span>
                   </div>
-                  {/* 💙 高級感のあるミニSPプログレスバー */}
+                  {/* 💙 SPバー */}
                   <div style={{ width: '100%', height: '3px', background: '#0d0905', borderRadius: '1.5px', overflow: 'hidden', border: '1px solid #23190e', marginTop: '1px' }}>
                     <div style={{ width: `${spPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0284c7 0%, #38bdf8 100%)', transition: 'width 0.2s ease' }}></div>
                   </div>
+
+                  {/* 📈 💜 EXP数値（ただの棒にならないよう、テキストを追加！） */}
+                  <div style={{ fontFamily: 'monospace', fontSize: '0.5rem', color: '#c084fc', marginTop: '3px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
+                    <span style={{ fontWeight: 'bold' }}>EXP:</span>
+                    <span>{currentLiveExp}/{nextMaxExp}</span>
+                  </div>
+                  {/* 📈 💜 EXPプログレスバー（戦闘中にリアルタイムで右へ伸びる仕様） */}
+                  <div style={{ width: '100%', height: '3px', background: '#111', borderRadius: '1.5px', overflow: 'hidden', border: '1px solid #2d1b4e', marginTop: '1px' }}>
+                    <div style={{ width: `${expPercent}%`, height: '100%', background: 'linear-gradient(90deg, #a855f7 0%, #e9d5ff 100%)', transition: 'width 0.3s ease' }}></div>
+                  </div>
+
                 </div>
               );
             })}
@@ -2694,8 +2741,14 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
         );
       })()}
 
-      {/* 🎁 戦闘終了時のみポップアップするリザルトモーダル */}
-      <QuestResultModal isOpen={showResult} droppedItems={droppedItems} onClose={onReturn} />
+      {/* 🎁 戦闘終了時のみポップアップするリザルトモーダルへ総獲得Zeny・EXPのバトンを託す！ */}
+      <QuestResultModal 
+        isOpen={showResult} 
+        userId={userId} // 👈 💡 これ！ログイン中のユーザーIDをモーダルに渡し、DBの1本釣り更新電線を結線します
+        droppedItems={droppedItems} 
+        accumulatedRewards={accumulatedRewards} 
+        onClose={onReturn} 
+      />
     </div>
   );
 };

@@ -1,18 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { gameServices } from '../../../gameServices';
 
-// テスト用の三土手さんの固定UUID
-const TEST_USER_ID = "d1669717-95f4-4f80-932f-d412576d55a7";
+// 🆕 固定の TEST_USER_ID 定義を物理的に完全消去！
 
-const AdventureCharacterList = ({ onBack, onSelectCharacter }) => {
+const AdventureCharacterList = ({ userId, onBack, onSelectCharacter }) => { // 🆕 引数（Props）に userId を追記してバトンをキャッチ！
   const [characters, setCharacters] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Supabaseからギルドに所属する全メンバー（5人）をロード
   useEffect(() => {
+    // 💡 userId がまだ null や undefined のときは通信をシャットアウトして型エラーを完全に防ぎます！
+    if (!userId) return;
+
     const fetchMembers = async () => {
       setLoading(true);
-      const charList = await gameServices.getPlayerCharacters(TEST_USER_ID);
+      // 🆕 ログイン中の userId を使って正確にプレイヤーごとの名簿を一本釣りロード！
+      const charList = await gameServices.getPlayerCharacters(userId);
       if (charList) {
         // ⭕ どんな更新があっても「IDの文字列順」で常に完全に固定整列させる！
         const sortedList = [...charList].sort((a, b) => a.id.localeCompare(b.id));
@@ -21,7 +24,7 @@ const AdventureCharacterList = ({ onBack, onSelectCharacter }) => {
       setLoading(false);
     };
     fetchMembers();
-  }, []);
+  }, [userId]);
 
   if (loading) {
     return <div style={{ color: '#f59e0b', textAlign: 'center', padding: '40px', fontSize: '0.9rem' }}>ギルドの仲間名簿を紐解いています...</div>;
