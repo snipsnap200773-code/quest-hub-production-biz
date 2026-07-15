@@ -81,80 +81,9 @@ const QuestResultModal = ({ isOpen, userId, droppedItems = [], accumulatedReward
         }
       }
 
-      // 4. 【獲得したEXP（経験値）を戦闘メンバー全員に付与コミット】
-      if (Number(accumulatedRewards.exp || 0) > 0) {
-
-        // 陣形キーから現在のアクティブパーティIDをLocalStorageから取得
-        const savedTactics = localStorage.getItem('mitsudote_tactics_save');
-        if (savedTactics) {
-          const rawParty = JSON.parse(savedTactics);
-          // null以外の有効なキャラクターID（UUID）を抽出
-          const activeCharIds = rawParty
-            .map(slot => slot && typeof slot === 'object' ? slot.id : slot)
-            .filter(id => id && String(id).trim() !== '' && String(id) !== 'null');
-
-          if (activeCharIds.length > 0) {
-            await Promise.all(
-              activeCharIds.map(async (charId) => {
-                // キャラクターの現在の経験値をダウンロード
-                const { data: charData } = await supabase
-                  .from('game_characters')
-                  .select('id, exp, level, status_points, bonus_str, bonus_agi, bonus_vit, bonus_int, bonus_dex, bonus_luk')
-                  .eq('id', charId)
-                  .maybeSingle();
-
-                if (charData) {
-                  let nextExp = Number(charData.exp || 0) + Number(accumulatedRewards.exp);
-                  let nextLevel = Number(charData.level || 1);
-                  let originalLevel = nextLevel; // 元のレベルを記憶
-
-                  // 📊 【三土手神特注：本家RO成長曲線連動型・限界突破レベルアップ判定ループ】
-                  // RO_NEXT_EXP_TABLE を参照し、上限を突破している限り何度でも連続レベルアップ！
-                  let requiredExp = RO_NEXT_EXP_TABLE[nextLevel] || 999999;
-                  while (nextExp >= requiredExp && nextLevel < 50) { // 最大Lv50制限
-                    nextExp -= requiredExp;
-                    nextLevel += 1;
-                    requiredExp = RO_NEXT_EXP_TABLE[nextLevel] || 999999;
-                  }
-
-                  // 🪙 【フリーポイント自動差分計算インフラ】
-                  // レベルアップが発生した場合、新しいレベルで持っているべき「総獲得ポイント」を算出し、
-                  // そこから「既に手振りに使ったポイント（bonus分）」を正確に引き算して残りフリーポイントを上書き！
-                  let finalStatusPoints = charData.status_points;
-
-                  if (nextLevel > originalLevel) {
-                    // 新しいレベルにおける生涯総フリーポイント
-                    const totalPointsAtNextLv = calculateTotalStatusPoints(nextLevel);
-                    
-                    // 既に自分で割り振って消費済みのポイントを合計
-                    const spentPoints = Number(charData.bonus_str || 0) + 
-                                        Number(charData.bonus_agi || 0) + 
-                                        Number(charData.bonus_vit || 0) + 
-                                        Number(charData.bonus_int || 0) + 
-                                        Number(charData.bonus_dex || 0) + 
-                                        Number(charData.bonus_luk || 0);
-
-                    // 総ポイントから消費分を引いて、残るべきフリーポイントを美しく算出
-                    finalStatusPoints = Math.max(0, totalPointsAtNextLv - spentPoints);
-                    
-                    console.log(`🎉 LEVEL UP!! [${charId}] : Lv.${originalLevel} ➔ Lv.${nextLevel} (残りステP: ${finalStatusPoints})`);
-                  }
-
-                  // 獲得した経験値、新しいレベル、そして再計算されたフリーポイントをSupabaseへ一括永続コミット！
-                  await supabase
-                    .from('game_characters')
-                    .update({ 
-                      exp: nextExp, 
-                      level: nextLevel,
-                      status_points: finalStatusPoints
-                    })
-                    .eq('id', charId);
-                }
-              })
-            );
-          }
-        }
-      }
+      // 4. 👑 【二重計上防止：スキップ】
+      // 経験値(EXP)のリアルタイム加算とレベルアップ処理は、すでに戦闘中（AdventureActive）で完了し
+      // DBへ保存済みのため、ここでは二重に計算させず完全にスキップ（削除）します。
 
       // 5. 物流結果のお知らせ
       if (mode === 'all') {

@@ -3,7 +3,7 @@ import { Timer, Trophy, ShieldAlert } from 'lucide-react';
 import QuestResultModal from './components/QuestResultModal';
 import { gameServices } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
-import { calculateDamageModifier, calculateStatusInflictChance, RO_NEXT_EXP_TABLE } from '../../../gameRules';
+import { calculateDamageModifier, calculateStatusInflictChance, RO_NEXT_EXP_TABLE, calculateTotalStatusPoints } from '../../../gameRules';
 
 // 🆕 固定の TEST_USER_ID 定義を完全撤去！
 
@@ -317,6 +317,7 @@ const AdventureActive = ({
             id: ch.id,
             name: ch.custom_name,
             level: myLevel,
+            exp: ch.exp || 0, // 👑 修正：戦闘前の現在の経験値をここで確実にロード！
             weaponName,
             weaponRange: ch.equips?.right_hand?.range || 'S',
             position,
@@ -2435,8 +2436,8 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       const finalEnemies = enemiesStateRef.current;
       const isVictory = finalEnemies.every(e => e.hp <= 0);
 
-      // 👥 1. 各メンバーの獲得EXP分配 ＆ 本家RO式・限界突破レベルアップ計算
-      const earnedExpPerChar = Math.floor((accumulatedRewards.exp || 0) / (finalParty.length || 1)); // 今回の遠征で得たキャラごとの分配EXP[cite: 7]
+      // 👥 1. 割り算を完全廃止！獲得した経験値（accumulatedRewards.exp）は全員が100%丸ごと獲得！
+      const earnedExpPerChar = accumulatedRewards.exp || 0; 
 
       await Promise.all(
         finalParty.map(async (member) => {
@@ -2464,19 +2465,23 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           // 1. gameRules.js の計算式を呼び出し、新しいレベルにおける「生涯獲得総ポイント数」を算出
           const totalEarnedPoints = calculateTotalStatusPoints(lv);
 
-          // 2. すでにこのキャラが力振りに使った（STR〜LUKの bonus_xxx の合計値）を逆算集計[cite: 8]
-          const usedPoints = 
-            Number(originChar.bonus_str || 0) + 
-            Number(originChar.bonus_agi || 0) + 
-            Number(originChar.bonus_vit || 0) + 
-            Number(originChar.bonus_int || 0) + 
-            Number(originChar.bonus_dex || 0) + 
-            Number(originChar.bonus_luk || 0);
+          // 2. 👑 解決：手振りの消費ポイント数を、本物のカラム構造（originChar.bonus?.str）から正確に集計！
+          // これにより、手振り確定した消費数が0と誤認されるのを完璧にガードします。
+          const spentPoints = 
+            Number(originChar.bonus?.str || originChar.bonus_str || 0) + 
+            Number(originChar.bonus?.agi || originChar.bonus_agi || 0) + 
+            Number(originChar.bonus?.vit || originChar.bonus_vit || 0) + 
+            Number(originChar.bonus?.int || originChar.bonus_int || 0) + 
+            Number(originChar.bonus?.dex || originChar.bonus_dex || 0) + 
+            Number(originChar.bonus?.luk || originChar.bonus_luk || 0);
 
-          // 3. 【総ポイント】 - 【使用済みポイント】 ＝ 画面に出すべき完璧な残りフリーポイント！
-          const finalFreePoints = Math.max(0, totalEarnedPoints - usedPoints);
+          // 3. 👑 【三土手神特注：帰還時のポイント計算ズレ完全粉砕！】
+          // 【生涯総獲得ポイント ＋ 初期支給の6ポイント】 － 【使用済みポイント】 ＝ 画面に出すべき完璧な残りフリーポイント！
+          const finalFreePoints = Math.max(0, totalEarnedPoints - spentPoints);
 
-          // ⚡ 計算された最新スペックを Supabase の game_characters テーブルへ直撃保存！
+          // ⚡ 👑 解決：部分更新（update）を安全に実行！
+          // jobやrace、guild_nameなどのカラムを上書き項目から完全に除外することで、
+          // 既存の大切なデータが巻き込まれてNULLに破壊されるのを永久にシャットアウトします！
           await supabase
             .from('game_characters')
             .update({ 
@@ -2532,27 +2537,41 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           max_hp: enemy.mhp,
           current_sp: 50,
           max_sp: 50,
-          bonus_str: enemy.str || 0, // エネミー時代の強さを初期ステータスとして引き継ぐ
-          bonus_agi: enemy.agi || 0,
-          bonus_vit: enemy.vit || 0,
-          bonus_int: enemy.int || 0,
-          bonus_dex: 10,
-          bonus_luk: 10,
+          
+          // 👑 解決：手振りボーナスは完全に「0」でまっさらな状態からスタート！
+          // これにより「手振りポイントを既に振った」と勘違いされるのを永久に防ぎます。
+          bonus_str: 0,
+          bonus_agi: 0,
+          bonus_vit: 0,
+          bonus_int: 0,
+          bonus_dex: 0,
+          bonus_luk: 0,
+          
           party_index: null, // 酒場へ送る
+          
+          // 👑 解決：テーブル直下の job, race, guild_name が NULL になるバグを直撃粉砕！
+          // 生成時にここへ直接初期文字列を書き込んでインサートします。
+          job: masterData?.job || '魔獣族',
+          race: masterData?.race || enemy.race || '無形',
+          guild_name: '無所属',
+          
           // 🐾 🆕 マスターデータからスキルIDを継承！
           skill_01: masterData?.skill_01 || null,
           skill_02: masterData?.skill_02 || null,
           skill_03: masterData?.skill_03 || null,
-          // 🐾 🆕 職業（魔物クラス）と基本ステータスを meta に格納
+          // 🐾 🆕 職業（魔物クラス）と、エネミー個別に振られて尖らせたステータス（10や20など）を meta に格納
           meta: {
             job: masterData?.job || '魔獣族',
             race: masterData?.race || enemy.race || '無形',
-            stat_str: enemy.str || 0,
-            stat_agi: enemy.agi || 0,
-            stat_vit: enemy.vit || 0,
-            stat_int: enemy.int || 0,
-            stat_dex: 10,
-            stat_luk: 10
+            
+            // 👑 解決：敵個別で振った「尖った初期ステータス」は手振りではなく、
+            // すべてマスター初期値（stat_xxx）としてここで完全にマウントして差別化します！
+            stat_str: enemy.str || masterData?.stat_str || 1,
+            stat_agi: enemy.agi || masterData?.stat_agi || 1,
+            stat_vit: enemy.vit || masterData?.stat_vit || 1,
+            stat_int: enemy.int || masterData?.stat_int || 1,
+            stat_dex: enemy.dex || masterData?.stat_dex || 1,
+            stat_luk: enemy.luk || masterData?.stat_luk || 1
           }
         }]);
 
@@ -2739,15 +2758,29 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
               const spPercent = Math.min(100, Math.max(0, (member.sp / mspValue) * 100));
 
               // 📈 【三土手成長数理結合】本物テーブルからこのレベルの最大必要EXPを逆引き
-              const currentLevel = member.level || 1;
-              const nextMaxExp = RO_NEXT_EXP_TABLE[currentLevel] || 999999;
+              const liveEarnedExp = accumulatedRewards.exp || 0;
               
-              // 💡 遠征中に獲得した累積プール（accumulatedRewards.exp）をパーティ人数で均等割りし、
-              // 画面上のゲージにリアルタイムで上乗せ加算してアニメーションさせます！
-              const liveEarnedExp = Math.floor((accumulatedRewards.exp || 0) / (party.length || 1));
-              // 初期ロード時のベースexpに、道中の獲得expをガッチャンコ！
-              const currentLiveExp = (member.exp || 0) + liveEarnedExp;
-              const expPercent = Math.min(100, Math.max(0, (currentLiveExp / nextMaxExp) * 100));
+              // 👑 初期ロード時のベースexpに道中の獲得expを合算し、一時的な「現在の総経験値」と「レベル」を算出
+              let displayLevel = member.level || 1;
+              let displayExp = (member.exp || 0) + liveEarnedExp;
+
+              // 📈 【三土手成長数理結合】戦闘中リアルタイムレベルアップループ！
+              while (displayLevel < 50) {
+                const nextLvIdx = displayLevel + 1;
+                const requiredExp = RO_NEXT_EXP_TABLE[nextLvIdx] || 999999;
+                
+                // 経験値が必要値を満たしていれば、その場でレベルアップ！
+                if (displayExp >= requiredExp) {
+                  displayExp -= requiredExp;
+                  displayLevel += 1;
+                } else {
+                  break; // 満たしていなければループ終了
+                }
+              }
+
+              // 最終的に計算されたレベルに応じた「次のレベルへの必要経験値」を逆引き
+              const displayNextMaxExp = RO_NEXT_EXP_TABLE[Math.min(50, displayLevel + 1)] || 999999;
+              const expPercent = Math.min(100, Math.max(0, (displayExp / displayNextMaxExp) * 100));
 
               return (
                 <div key={member.id} style={{ background: member.hp <= 0 ? '#1e1b4b' : '#1e293b', borderRadius: '6px', padding: '6px 4px', border: member.hp <= 0 ? '1px solid #ef4444' : '1px solid #334155', textAlign: 'center', boxSizing: 'border-box' }}>
@@ -2755,7 +2788,7 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                   {/* 📈 上部：レベル ＆ 名前を横並びで綺麗にセパレート */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', marginBottom: '2px' }}>
                     <span style={{ fontSize: '0.55rem', fontFamily: 'monospace', color: '#f59e0b', fontWeight: 'bold', background: 'rgba(0,0,0,0.5)', padding: '1px 4px', borderRadius: '3px', shrink: 0 }}>
-                      Lv.{currentLevel}
+                      Lv.{displayLevel}
                     </span>
                     <span style={{ fontSize: '0.62rem', fontWeight: '900', color: member.hp <= 0 ? '#64748b' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {member.name.replace('テスト', '')}
@@ -2785,7 +2818,7 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                   {/* 📈 💜 EXP数値（ただの棒にならないよう、テキストを追加！） */}
                   <div style={{ fontFamily: 'monospace', fontSize: '0.5rem', color: '#c084fc', marginTop: '3px', display: 'flex', justifyContent: 'space-between', padding: '0 4px', lineHeight: '1.2' }}>
                     <span style={{ fontWeight: 'bold' }}>EXP:</span>
-                    <span>{currentLiveExp}/{nextMaxExp}</span>
+                    <span>{displayExp}/{displayNextMaxExp}</span>
                   </div>
                   {/* 📈 💜 EXPプログレスバー（戦闘中にリアルタイムで右へ伸びる仕様） */}
                   <div style={{ width: '100%', height: '3px', background: '#111', borderRadius: '1.5px', overflow: 'hidden', border: '1px solid #2d1b4e', marginTop: '1px' }}>

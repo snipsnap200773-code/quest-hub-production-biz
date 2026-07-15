@@ -160,6 +160,7 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
     if (!character || isCommitting) return;
     setIsCommitting(true);
     try {
+      // 👑 解決：第3引数に character.status_points（古い値）を渡していたタイポを、画面上の最新値（localPoints）へ修正！
       const res = await gameServices.saveStatusAllocation(character.id, localBonuses, localPoints);
       if (res && res.success) {
         alert(`🎉 ステータスを確定しました！`);
