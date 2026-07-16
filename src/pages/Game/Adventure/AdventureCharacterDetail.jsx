@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Briefcase, Type, Save, RotateCcw, Plus, Swords, Sun, Moon, Layers, Footprints, Gem, Crosshair, Zap, Award, X } from 'lucide-react';
 import { gameServices, calculateRoStatus } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
-import { RO_NEXT_EXP_TABLE } from '../../../gameRules';
+// 👑 calculateTotalStatusPoints をインポートの仲間に加えます
+import { RO_NEXT_EXP_TABLE, calculateTotalStatusPoints } from '../../../gameRules';
 
 // 日本語のステータス説明マッピング
 const STAT_LABELS = {
@@ -119,7 +120,7 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
         agi: data.bonus?.agi || 0,
         vit: data.bonus?.vit || 0,
         int: data.bonus?.int || 0,
-        get_dex: data.bonus?.dex || 0,
+        // 👑 幽霊キー「get_dex」を完全粉砕！これでDEXの二重カウントを防ぎます。
         dex: data.bonus?.dex || 0,
         luk: data.bonus?.luk || 0,
       });
@@ -440,9 +441,32 @@ ro.mdef = ro.mdef + passiveMdefBonus;
       {activeTab === 'status' && (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <SectionHeader title="ステータスポイント" />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#120d08', padding: '10px 14px', borderRadius: '8px', border: '1px solid #23190e' }}>
-            <span style={{ fontSize: '0.75rem', color: '#ba9a6f' }}>保有フリーポイント</span>
-            <span style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#ffd700', fontFamily: 'monospace' }}>{localPoints}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: '#120d08', padding: '12px 14px', borderRadius: '8px', border: '1px solid #23190e' }}>
+            {/* 1. 現在残っている保有フリーポイント（メイン表示） */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.75rem', color: '#ba9a6f', fontWeight: 'bold' }}>保有フリーポイント</span>
+              <span style={{ fontSize: '1.25rem', fontWeight: 'black', color: '#ffd700', fontFamily: 'monospace' }}>{localPoints}</span>
+            </div>
+            
+            {/* 境界線 */}
+            <div style={{ height: '1px', background: '#23190e', margin: '4px 0' }}></div>
+            
+            {/* 2. 👑 三土手神特注：レベルに応じた累計・手振り消費内訳のサブインジケーター */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.62rem', color: '#887355' }}>
+              <span>
+                Lv.{character.level} 累計獲得数: 
+                <strong style={{ color: '#ffd700', marginLeft: '4px', fontFamily: 'monospace' }}>
+                  {/* 👑 すっきり直接関数を呼び出して、完璧に累計ポイントを表示！ */}
+                  {calculateTotalStatusPoints(character.level)} pt
+                </strong>
+              </span>
+              <span>
+                消費済み: 
+                <strong style={{ color: '#38bdf8', marginLeft: '4px', fontFamily: 'monospace' }}>
+                  {Object.values(localBonuses).reduce((sum, val) => sum + val, 0)} pt
+                </strong>
+              </span>
+            </div>
           </div>
 
           <SectionHeader title="能力値 (Base Status)" />
