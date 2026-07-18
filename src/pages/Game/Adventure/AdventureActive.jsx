@@ -61,6 +61,10 @@ const AdventureActive = ({
   // 🔮 🆕 セーブ中表示用のローカル状態を増築
   const [isSaving, setIsSaving] = useState(false);
 
+  // 👑 【三土手神特注：カジュアル目隠しインフラ】
+  // 最初は戦闘ログをエレガントに隠し、「戦闘中…」とだけ表示するためのState（初期値は折りたたみON）
+  const [isLogCollapsed, setIsLogCollapsed] = useState(true);
+
   // 🐾 🆕 【テイマー専用：魔物起き上がりイベント用State】
   const [tameCandidate, setTameCandidate] = useState(null); // 起き上がった魔物のデータ
   const [isTamingSaving, setIsTamingSaving] = useState(false); // 捕獲通信中のフラグ
@@ -542,10 +546,19 @@ roStatus: ch.roStatus || {},
         enemiesStateRef.current = loadedEnemies;
         setEnemies(loadedEnemies);
 
-        // 🛠️ 🆕 【三土手創世神特注：初手暴発・固定値150の完全粉砕配線】
-        // ここに仮の戦闘ログモックが迷い込まないよう、純粋な突入宣告のみをセットしてタイマーへ安全にバトンタッチ！
+        // 👑 【三土手神特注：カジュアル・ストーリープロローグ自動生成インフラ】
+        const envType = activeQuestData?.environment_type || 'dungeon';
+        const areaUnit = activeQuestData?.area_type_name || '階';
+        
+        const welcomeText = `🏰 一行は【${activeQuestData?.name || '未知の領域'}】の討伐へ向かった。`;
+        const situationText = activeQuestData?.prologue_text 
+          ? `📝 ${activeQuestData.prologue_text}` 
+          : `📝 辺りには静寂が広がり、どこからか魔物の殺気が漂っている…`;
+
         setDisplayedLogs([
-          { id: 'start', text: `⚔️ 【${activeQuestData?.name || '未知の領域'}】B1階 突入 ➔ 全エネミーとの一斉交戦を開始します！`, type: "system" }
+          { id: 'story-start', text: welcomeText, type: "system" },
+          { id: 'story-prologue', text: situationText, type: "system" },
+          { id: 'story-encounter', text: `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ ──`, type: "system" }
         ]);
       } else {
         setDisplayedLogs([{ id: 'err', text: "酒場に冒険者がいません。編成を確認してください。", type: "system" }]);
@@ -738,6 +751,9 @@ roStatus: ch.roStatus || {},
           setAdventureStatus('battling');
           setIsBattleOver(true);
         }
+
+        // 👑 【三土手神特注】戦闘が終わったら、リザルトやテイムを確認するために目隠しを自動解放！
+        setIsLogCollapsed(false);
         return;
       }
 
@@ -2420,12 +2436,27 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
     setEnemies(loadedEnemies);
     setIsBattleOver(false);
     setAdventureStatus('battling');
+    
+    // 👑 進軍・索敵のたびに、自動でログの目隠しをONにリセットして緊張感を演出！
+    setIsLogCollapsed(true);
 
     // 🛠️ 🆕 Stateの「remainingBattles」はラグで古い数字を持っていることがあるため、
     // ここで直接、絶対に最新の「remainingBattlesRef.current」の数字を引っ張ってくる！
     const displayCount = forcedNextFloor ? targetFloorCfg.battle_count : remainingBattlesRef.current;
 
-    setDisplayedLogs(prev => [...prev, { id: `next-${Date.now()}`, text: `⚔️ 【B${nextFloorNum}階】探索継続：新たな魔物群と遭遇！(残り戦闘: ${displayCount}回)`, type: "system" }]);
+    // 👑 【三土手神特注：進軍・索敵ログの環境タイプ別テキストコンバーター】
+    const areaUnit = currentQuestState?.area_type_name || '階';
+    let advanceLogText = `👣 一行は警戒しながら、さらにその先（${nextFloorNum}${areaUnit}目）へと進路を取った。`;
+    
+    if (forcedNextFloor) {
+      advanceLogText = `🏰 ── エリア制圧完了。部隊はさらにその奥地（${nextFloorNum}${areaUnit}目）へと足を踏み入れた。 ──`;
+    }
+
+    setDisplayedLogs(prev => [
+      ...prev, 
+      { id: `advance-${Date.now()}`, text: advanceLogText, type: "system" },
+      { id: `next-${Date.now()}`, text: `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ (残り討伐: ${displayCount}戦) ──`, type: "system" }
+    ]);
   };
 
   // 3. 🔮 🆕 三土手創世神特注：サーバー無風コミットエンジン（これが「最後」の1回だけの通信）
@@ -2638,18 +2669,41 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       
       <div style={{ padding: '12px 15px', borderBottom: '1px solid #1e293b', background: '#0f172a', zIndex: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '0.85rem' }}>🐾 【{currentQuestState?.name || 'クエスト'}】 ({party.length}名編成)</div>
-          {/* 🧹 右側にあった制限時間の表示コンポーネントをスッキリ完全撤去！ */}
+          <div style={{ color: '#f59e0b', fontWeight: 'bold', fontSize: '0.85rem' }}>⚔️ 【{currentQuestState?.name || '討伐任務'}】</div>
+          {/* 👑 プレイヤーがいつでも手動でログを開け閉めできるトグルボタンを設置！ */}
+          {!isBattleOver && (
+            <button 
+              onClick={() => setIsLogCollapsed(!isLogCollapsed)} 
+              style={{ padding: '2px 8px', background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', borderRadius: '4px', fontSize: '0.65rem', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              {isLogCollapsed ? '👁️ 戦況ログを解放' : '🙈 ログを隠す'}
+            </button>
+          )}
         </div>
       </div>
 
-      <div ref={scrollRef} style={{ flex: 1, padding: '15px', overflowY: 'auto', fontSize: '0.8rem', lineHeight: '1.7', background: '#020617', fontFamily: 'monospace' }}>
-        {displayedLogs.map(log => (
-          <div key={log.id} style={{ marginBottom: '6px', padding: '4px 8px', borderRadius: '4px', background: log.type === 'system' ? '#1e1b4b' : 'none', color: log.type === 'battle' ? '#f43f5e' : log.type === 'success' ? '#34d399' : log.type === 'system' ? '#f59e0b' : '#94a3b8' }}>
-            {log.text}
+      {/* 👑 【三土手神特注：カジュアル目隠しシアターインフラ】 */}
+      {(!isBattleOver && isLogCollapsed) ? (
+        /* ⚔️ 【目隠しONの時】無駄な長文ログをシャットアウトし、中央にエレガントな激闘インジケーターを点灯！ */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', background: '#020617' }}>
+          <div style={{ color: '#f43f5e', fontSize: '1.2rem', fontWeight: 'black', letterSpacing: '2px', animation: 'pulse 1.5s infinite' }}>
+            ⚔️ ── 討 伐 激 闘 中 ── ⚔️
           </div>
-        ))}
-      </div>
+          <span style={{ fontSize: '0.68rem', color: '#64748b' }}>パーティが裏側で20msの超高速戦闘を展開しています...</span>
+          <style>{`
+            @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+          `}</style>
+        </div>
+      ) : (
+        /* 📜 【目隠しOFF・または戦闘終了時】すべての詳細なストーリー文と戦闘ダメージ履歴を美しくスクロール描画！ */
+        <div ref={scrollRef} style={{ flex: 1, padding: '15px', overflowY: 'auto', fontSize: '0.8rem', lineHeight: '1.7', background: '#020617', fontFamily: 'monospace' }}>
+          {displayedLogs.map(log => (
+            <div key={log.id} style={{ marginBottom: '6px', padding: '4px 8px', borderRadius: '4px', background: log.type === 'system' ? '#1e1b4b' : 'none', color: log.type === 'battle' ? '#f43f5e' : log.type === 'success' ? '#34d399' : log.type === 'system' ? '#f59e0b' : '#94a3b8', whiteSpace: 'pre-wrap' }}>
+              {log.text}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 15px', background: '#1a0505', borderTop: '1px solid #451a1a', borderBottom: '1px solid #451a1a' }}>
         {enemies.map((enemyItem) => (
