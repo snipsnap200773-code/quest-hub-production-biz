@@ -65,6 +65,19 @@ const AdventureActive = ({
   // 最初は戦闘ログをエレガントに隠し、「戦闘中…」とだけ表示するためのState（初期値は折りたたみON）
   const [isLogCollapsed, setIsLogCollapsed] = useState(true);
 
+  // 👑 【三土手神特注：TRPGテキストタイピング演出インフラ】
+  // 'typing_1' (1行目入力中) ➔ 'interval_1' (間) ➔ 'typing_2' (2行目) ➔ 'interval_2' (間) ➔ 'surprise' (！) ➔ 'ready' (戦闘開始)
+  const [prologueStep, setPrologueStep] = useState('typing_1');
+  const [typingText1, setTypingText1] = useState('');
+  const [typingText2, setTypingText2] = useState('');
+  const [typingText3, setTypingText3] = useState('');
+  
+  // 🆕 追加：現在の戦闘シチュエーションを記憶するState
+  const [encounterType, setEncounterType] = useState('first'); // 'first' | 'floor_start' | 'normal' | 'boss'
+
+  // 👑 🆕 三土手神特注：最深部ボス撃破時のみ大爆発する全画面クエストクリア演出フラグ
+  const [showQuestClearTheater, setShowQuestClearTheater] = useState(false);
+
   // 🐾 🆕 【テイマー専用：魔物起き上がりイベント用State】
   const [tameCandidate, setTameCandidate] = useState(null); // 起き上がった魔物のデータ
   const [isTamingSaving, setIsTamingSaving] = useState(false); // 捕獲通信中のフラグ
@@ -400,18 +413,18 @@ roStatus: ch.roStatus || {},
         if (activeQuestData?.floor_configs && Array.isArray(activeQuestData.floor_configs)) {
           activeQuestData.floor_configs.forEach(f => {
             if (f.enemy_ids) f.enemy_ids.forEach(id => { if (id) allEnemyIds.add(id); });
+            // 👑 🆕 ボスIDも事前ダウンロードプールに確実に含める！
+            if (f.boss_id) allEnemyIds.add(f.boss_id); 
           });
         } else {
-          // 旧クエストデータとの互換性
           if (activeQuestData?.enemy_master_id) allEnemyIds.add(activeQuestData.enemy_master_id);
           if (activeQuestData?.enemy_master_id_2) allEnemyIds.add(activeQuestData.enemy_master_id_2);
           if (activeQuestData?.enemy_master_id_3) allEnemyIds.add(activeQuestData.enemy_master_id_3);
         }
 
         let enemyIds = Array.from(allEnemyIds);
-        if (enemyIds.length === 0) enemyIds.push('test_porin_junior'); // 万が一のフォールバック
+        if (enemyIds.length === 0) enemyIds.push('test_porin_junior'); 
 
-        // Supabaseのin構文を使い、出現予定の敵データを一撃で一括ダウンロード！
         const { data: dbEnemies, error: enemyError } = await supabase
           .from('game_master_units')
           .select('*')
@@ -419,50 +432,53 @@ roStatus: ch.roStatus || {},
 
         if (enemyError) console.error("エネミーデータ一括取得エラー:", enemyError);
 
-        // 🚀 🆕 もしID指定で敵が1件も取れなかった場合、安全のためにマスターデータの先頭1件（フォールバック）を緊急強奪ロード！
         let finalDbEnemies = dbEnemies || [];
         if (!finalDbEnemies || finalDbEnemies.length === 0) {
-          console.warn("⚠️ 警告: 指定されたenemy_idsがマスターデータに見つかりません。テーブル全体の先頭ユニットを仮召喚します。");
+          console.warn("⚠️ 警告: マスターデータが見つかりません。");
           const { data: fallbackUnits } = await supabase.from('game_master_units').select('*').limit(1);
-          if (fallbackUnits && fallbackUnits.length > 0) {
-            finalDbEnemies = fallbackUnits;
-          }
+          if (fallbackUnits && fallbackUnits.length > 0) finalDbEnemies = fallbackUnits;
         }
 
-        // 🛡️ 🆕 次の戦闘でも本物の敵を呼び出せるよう、マスターデータをRefに保存！
         masterEnemiesRef.current = finalDbEnemies;
 
-        // 🛠️ 🆕 【三土手神特注：B1階層コンフィグ連動型ごちゃ混ぜランダム生成エンジン】
         const fConfigs = activeQuestData?.floor_configs || [];
         const currentFloorCfg = fConfigs.find(f => f.floor === 1) || { 
-          battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: enemyIds 
+          battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: enemyIds, boss_id: '' 
         };
 
-        // 初期必要戦闘回数をStateに同期
         setRemainingBattles(currentFloorCfg.battle_count);
         remainingBattlesRef.current = currentFloorCfg.battle_count;
 
-        // 有効な登録モンスターの素材プールを構築
-        const activePoolEnemyIds = (currentFloorCfg.enemy_ids || enemyIds).filter(Boolean);
-        // 🚀 🆕 探索先を新調した finalDbEnemies に変更
-        let validEnemyPool = activePoolEnemyIds.map(id => finalDbEnemies.find(e => e.id === id)).filter(Boolean);
+        // 👑 🆕 【1戦目のボス判定＆出現数ロジック】
+        const isInitialBoss = currentFloorCfg.battle_count === 1 && currentFloorCfg.boss_id;
+        setEncounterType(isInitialBoss ? 'boss' : 'first');
 
-        // 🚀 🆕 それでもプールが虚無なら、確保した finalDbEnemies の全現物をプールに強制設定
-        if (validEnemyPool.length === 0 && finalDbEnemies.length > 0) {
-          validEnemyPool = [...finalDbEnemies];
+        let validEnemyPool = [];
+        let spawnCount = 1;
+        let isBossSpawn = false;
+
+        if (isInitialBoss) {
+          // ボス確定ポップ
+          validEnemyPool = [finalDbEnemies.find(e => e.id === currentFloorCfg.boss_id)].filter(Boolean);
+          spawnCount = 1;
+          isBossSpawn = true;
+        } else {
+          // 通常雑魚ポップ
+          const activePoolEnemyIds = (currentFloorCfg.enemy_ids || enemyIds).filter(Boolean);
+          validEnemyPool = activePoolEnemyIds.map(id => finalDbEnemies.find(e => e.id === id)).filter(Boolean);
+          if (validEnemyPool.length === 0 && finalDbEnemies.length > 0) validEnemyPool = [...finalDbEnemies];
+          
+          const minS = Number(currentFloorCfg.min_spawn || 1);
+          const maxS = Number(currentFloorCfg.max_spawn || 2);
+          spawnCount = Math.floor(Math.random() * (maxS - minS + 1)) + minS;
         }
 
         let loadedEnemies = [];
         
         if (validEnemyPool.length > 0) {
-          // コンフィグで設定された最小〜最大出現数の間で今回の出現数をダイス決定！
-          const minS = Number(currentFloorCfg.min_spawn || 1);
-          const maxS = Number(currentFloorCfg.max_spawn || 2);
-          const spawnCount = Math.floor(Math.random() * (maxS - minS + 1)) + minS;
-
-          // 出現数ぶんプールからごちゃ混ぜチョイス
           for (let i = 0; i < spawnCount; i++) {
-            const randomIndex = Math.floor(Math.random() * validEnemyPool.length);
+            // ボスなら先頭のデータを、雑魚ならランダム
+            const randomIndex = isBossSpawn ? 0 : Math.floor(Math.random() * validEnemyPool.length);
             const dbEnemy = validEnemyPool[randomIndex];
             const targetId = dbEnemy.id;
 
@@ -546,19 +562,9 @@ roStatus: ch.roStatus || {},
         enemiesStateRef.current = loadedEnemies;
         setEnemies(loadedEnemies);
 
-        // 👑 【三土手神特注：カジュアル・ストーリープロローグ自動生成インフラ】
-        const envType = activeQuestData?.environment_type || 'dungeon';
-        const areaUnit = activeQuestData?.area_type_name || '階';
-        
-        const welcomeText = `🏰 一行は【${activeQuestData?.name || '未知の領域'}】の討伐へ向かった。`;
-        const situationText = activeQuestData?.prologue_text 
-          ? `📝 ${activeQuestData.prologue_text}` 
-          : `📝 辺りには静寂が広がり、どこからか魔物の殺気が漂っている…`;
-
+        // 👑 【三土手神特注：初期ログを空にして、タイピング側で歴史を紡ぐようにマウント】
         setDisplayedLogs([
-          { id: 'story-start', text: welcomeText, type: "system" },
-          { id: 'story-prologue', text: situationText, type: "system" },
-          { id: 'story-encounter', text: `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ ──`, type: "system" }
+          { id: 'story-init', text: `🚩 討伐作戦展開中...`, type: "system" }
         ]);
       } else {
         setDisplayedLogs([{ id: 'err', text: "酒場に冒険者がいません。編成を確認してください。", type: "system" }]);
@@ -567,11 +573,106 @@ roStatus: ch.roStatus || {},
     };
 
     initAdventure();
-  }, []);
+  }, []); // 👈 1つ目の初回ロードuseEffectの終わり
+
+  // =========================================================================
+  // 👑 【ここから追加：TRPG式 1文字ずつ出力＆時間ウエイト自動進行エンジン】
+  // =========================================================================
+  useEffect(() => {
+    if (loading || !currentQuestState || party.length === 0) return;
+
+    // 👑 🆕 シチュエーション別の重厚なテキスト分岐！
+    const welcomeStr = encounterType === 'boss' 
+      ? `🚪 最奥部へと到達した。重苦しい空気が立ち込めている。` 
+      : encounterType === 'floor_start' 
+        ? `🏰 一行は【${currentQuestState.name || '始まりの森'}】のB${currentFloor}階へと足を踏み入れた。` 
+        : encounterType === 'normal' 
+          ? `👣 一行は警戒しながら、さらに奥へと進んでいく・・・` 
+          : `🏰 一行は【${currentQuestState.name || '始まりの森'}】の討伐へ向かった。`;
+
+    const situationStr = encounterType === 'boss' 
+      ? `📝 ── 鼓膜を震わせる咆哮！強大な魔物の殺気が目前に迫る！ ──` 
+      : encounterType === 'normal' 
+        ? `📝 薄暗い道中、新たな敵の気配を察知した！` 
+        : `📝 辺りには静寂が広がり、どこからか魔物の殺気が漂っている…`;
+
+    const surpriseStr = encounterType === 'boss' 
+      ? `🚨 ── 激震！奥地から巨大なボスが立ちはだかった！ ──` 
+      : `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ ──`;
+
+    // ── 【ステップA：1行目のタイピング（一文字ずつ送る）】 ──
+    if (prologueStep === 'typing_1') {
+      if (typingText1.length < welcomeStr.length) {
+        const timer = setTimeout(() => {
+          setTypingText1(welcomeStr.slice(0, typingText1.length + 1));
+        }, 60);
+        return () => clearTimeout(timer);
+      } else {
+        setPrologueStep('interval_1');
+      }
+    }
+
+    // ── 【ステップB：1行目終了後の3.5秒間の静寂】 ──
+    if (prologueStep === 'interval_1') {
+      const timer = setTimeout(() => {
+        setPrologueStep('typing_2');
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+
+    // ── 【ステップC：2行目のタイピング（一文字ずつ送る）】 ──
+    if (prologueStep === 'typing_2') {
+      if (typingText2.length < situationStr.length) {
+        const timer = setTimeout(() => {
+          setTypingText2(situationStr.slice(0, typingText2.length + 1));
+        }, 60);
+        return () => clearTimeout(timer);
+      } else {
+        setPrologueStep('interval_2');
+      }
+    }
+
+    // ── 【ステップD：2行目終了後の3.5秒間の静寂 ➔ 🚨急襲（演出）へ】 ──
+    if (prologueStep === 'interval_2') {
+      const timer = setTimeout(() => {
+        setPrologueStep('surprise');
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+
+    // ── 【ステップE：急襲テキストを一文字ずつ送る】 ──
+    if (prologueStep === 'surprise') {
+      // 👑 解決：環境データによって末尾の空白や改行コードが混じるのを防ぐため、trim() を噛ませて厳密に文字数を比較！
+      if (typingText3.trim().length < surpriseStr.trim().length) {
+        const timer = setTimeout(() => {
+          setTypingText3(surpriseStr.slice(0, typingText3.length + 1));
+        }, 40); 
+        return () => clearTimeout(timer);
+      } else {
+        // すべての演出用タイピングが完了した瞬間に、表示用の文字ログ配列をガッチャンコ同期！
+        setDisplayedLogs([
+          { id: 'story-start', text: welcomeStr, type: 'system' },
+          { id: 'story-prologue', text: situationStr, type: 'system' },
+          { id: 'story-encounter', text: surpriseStr, type: 'system' }
+        ]);
+        
+        // 2秒のウエイトの後、確実にバリケードを解除！
+        const timer = setTimeout(() => {
+          setPrologueStep('ready');
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [loading, prologueStep, typingText1, typingText2, typingText3, currentQuestState, party]);
+  // =========================================================================
+  // 👑 【追加ここまで：次の戦闘ループuseEffectへと美しくバトンを繋ぎます】
+  // =========================================================================
 
   // 2. 🧠 超軽量・高速カウント保証型戦闘ループ（※この間は通信回数完全に「0」！）
   useEffect(() => {
-    if (loading || party.length === 0 || enemies.length === 0 || isBattleOver) return;
+    // 👑 【三土手神特注：プロローグ演出バリケード】
+    // 1戦目のプロローグ演出中（ready以外）は、裏側の戦闘タイマーを絶対に起動させない！
+    if (loading || party.length === 0 || enemies.length === 0 || isBattleOver || prologueStep !== 'ready') return;
 
     // 🔮 🆕 20msのスキャンから1秒（1000ms）を正確に計測するための内部プール変数
     let msCounter = 0;
@@ -746,6 +847,13 @@ roStatus: ch.roStatus || {},
         } else if (nextCount <= 0) {
           // 残り戦数が0になった ➔ 完璧なタイミングで「階層制圧完了・B2へ進む」のボタンが出現！
           setAdventureStatus('floor_cleared');
+
+          // 👑 🆕 【三土手創世神特注：最深部ボス討伐検知センサー】
+          // 今クリアした階層が、クエストの「最大総階層数」に到達していれば、勝利のファンファーレシアターを起動！
+          const isMaxFloorCleared = currentFloor >= (currentQuestState?.floors || 1);
+          if (isMaxFloorCleared) {
+            setShowQuestClearTheater(true);
+          }
         } else {
           // まだ残り回数（2回、1回）が残っている ➔ 索敵続行（探索を続ける）ボタンを点灯！
           setAdventureStatus('battling');
@@ -2305,24 +2413,18 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       
       if (newLogs.length > 0) {
         setParty(localParty);
-        // 👿 State側も複数形（setEnemies）へ完全書き換え！
         setEnemies(localEnemies);
         
         setDisplayedLogs(prev => {
           const combined = [...prev, ...newLogs];
-          
-          // 👑 三土手神リフォーム：最大500件の歴史をたっぷりホールド！
-          if (combined.length > 500) {
-            return combined.slice(-500);
-          }
+          if (combined.length > 500) return combined.slice(-500);
           return combined;
         });
       }
     }, 20);
 
-    // 💡 消去した countTimer の解除を綺麗に取り除き、battleTimer だけを安全にクリーンアップ！
     return () => { clearInterval(battleTimer); };
-  }, [loading, party, enemies, isBattleOver]);
+  }, [loading, party, enemies, isBattleOver, prologueStep]);
 
   // 🧭 🆕 【三土手ローグライク特注：同一階層内の次戦召喚 ＆ 上の階層への進軍エンジン】
   const handleNextBattle = (forcedNextFloor = null) => {
@@ -2349,39 +2451,54 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       remainingBattlesRef.current = targetFloorCfg.battle_count;
     }
 
-    // 次の戦闘用のエネミーをコンフィグの最小〜最大出現数からランダム生成
-    const minS = Number(targetFloorCfg.min_spawn || 1);
-    const maxS = Number(targetFloorCfg.max_spawn || 2);
-    const spawnCount = Math.floor(Math.random() * (maxS - minS + 1)) + minS;
+    // 👑 🆕 【ボス判定 ＆ シチュエーション判定】
+    const isBossBattle = (forcedNextFloor ? targetFloorCfg.battle_count : remainingBattlesRef.current) === 1 && targetFloorCfg.boss_id;
+    
+    if (isBossBattle) setEncounterType('boss');
+    else if (forcedNextFloor) setEncounterType('floor_start');
+    else setEncounterType('normal');
 
-    const activePoolEnemyIds = (targetFloorCfg.enemy_ids || []).filter(Boolean);
-    // 🛡️ 🆕 保存しておいたマスターデータから、今回の階層の有効な敵プールを再構築！
-    const validEnemyPool = activePoolEnemyIds.map(id => masterEnemiesRef.current.find(e => e.id === id)).filter(Boolean);
+    let validEnemyPool = [];
+    let spawnCount = 1;
+    let isBossSpawn = false;
+
+    if (isBossBattle) {
+      // 👑 最後の1戦 ＆ ボス設定あり ➔ ボス確定召喚！
+      validEnemyPool = [masterEnemiesRef.current.find(e => e.id === targetFloorCfg.boss_id)].filter(Boolean);
+      spawnCount = 1;
+      isBossSpawn = true;
+    } else {
+      // 🐾 道中の雑魚ランダム召喚
+      const minS = Number(targetFloorCfg.min_spawn || 1);
+      const maxS = Number(targetFloorCfg.max_spawn || 2);
+      spawnCount = Math.floor(Math.random() * (maxS - minS + 1)) + minS;
+      const activePoolEnemyIds = (targetFloorCfg.enemy_ids || []).filter(Boolean);
+      validEnemyPool = activePoolEnemyIds.map(id => masterEnemiesRef.current.find(e => e.id === id)).filter(Boolean);
+    }
     
     let loadedEnemies = [];
     if (validEnemyPool.length > 0) {
       for (let i = 0; i < spawnCount; i++) {
-        const randomIndex = Math.floor(Math.random() * validEnemyPool.length);
+        // ボスなら先頭固定、雑魚ならランダム
+        const randomIndex = isBossSpawn ? 0 : Math.floor(Math.random() * validEnemyPool.length);
         const dbEnemy = validEnemyPool[randomIndex];
         const targetId = dbEnemy.id;
 
         const isBaphometTarget = String(targetId).toLowerCase().includes('baphomet');
         const finalName = dbEnemy?.name || (isBaphometTarget ? "バフォメットJr" : "テストポリンJr");
         
-        // 🔮 【ここを追加】データベースから取得したスキルIDから、この敵が持つスキルを抽出！
         const enemySkillIds = [dbEnemy?.skill_01, dbEnemy?.skill_02, dbEnemy?.skill_03].filter(Boolean);
         const eSkills = masterSkillsRef.current.filter(sk => enemySkillIds.includes(sk.id));
         
-        // 🔮 🆕 【三土手神特注】敵の右手装備IDから本物の武器データを逆引き！
         const enemyWeaponId = dbEnemy?.equip_right_hand;
         const enemyWeapon = masterItemsRef.current.find(item => item.id === enemyWeaponId);
-        const eWeaponRange = enemyWeapon?.weapon_range || 'S'; // 指定がなければ近接(S)
+        const eWeaponRange = enemyWeapon?.weapon_range || 'S';
         const isRanged = eWeaponRange === 'L';
 
         loadedEnemies.push({
           instanceId: `${targetId}_spawn_${i}_${Date.now()}`,
           id: targetId,
-          name: `${finalName} ${String.fromCharCode(65 + i)}`,
+          name: isBossSpawn ? `🔥 ${finalName}` : `${finalName} ${String.fromCharCode(65 + i)}`,
           mhp: dbEnemy?.hp || dbEnemy?.base_hp || dbEnemy?.max_hp || 0,
           hp: dbEnemy?.hp || dbEnemy?.base_hp || dbEnemy?.max_hp || 0,
           str: dbEnemy?.str || dbEnemy?.stat_str || 0,
@@ -2400,28 +2517,16 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           resist_poison: Number(dbEnemy?.resist_poison || 0),
           resist_blind: Number(dbEnemy?.resist_blind || 0),
           int: dbEnemy?.int || dbEnemy?.stat_int || 0,
-          
-          // 🎯 【三土手神特注】ダッシュボードのプレビュー数理法則と100%完全同期！
           hit: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_dex || dbEnemy?.dex || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 20),
           flee: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_agi || dbEnemy?.agi || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 10),
-          
-          // 💨 上書き設定があれば採用、なければ基本値150.0をマウント！
           enemy_aspd: dbEnemy?.enemy_aspd !== null && dbEnemy?.enemy_aspd !== undefined ? Number(dbEnemy.enemy_aspd) : 150.0,
-          
-          // 🏹 🆕 逆引きした本物の武器射程を完全にマウント！
           is_range_atk: isRanged,
           is_range_weapon: isRanged,
           weaponRange: eWeaponRange,
-          
-          // 🔮 【ここを追加】抽出したスキルリストを敵のインスタンスにマウント！
           activeSkills: eSkills,
-
-          // 🐾 🆕 【半魚人バグ完全粉砕！】1戦目と同じく、ダッシュボードの調教設定を2戦目以降の敵インスタンスにも確実に書き写す！
           is_tamable: dbEnemy?.is_tamable || false,
           tame_success_chance: Number(dbEnemy?.tame_success_chance || 0),
           tame_level_req: Number(dbEnemy?.tame_level_req || 1),
-
-          // 🐾 🆕 【三土手神特注：2戦目以降の敵にも3連ドロップパラメータを完全同期マウント】
           extra_drop_item: dbEnemy?.extra_drop_item || null,
           extra_drop_chance: Number(dbEnemy?.extra_drop_chance || 0),
           extra_drop_item_2: dbEnemy?.extra_drop_item_2 || null,
@@ -2436,27 +2541,14 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
     setEnemies(loadedEnemies);
     setIsBattleOver(false);
     setAdventureStatus('battling');
-    
-    // 👑 進軍・索敵のたびに、自動でログの目隠しをONにリセットして緊張感を演出！
-    setIsLogCollapsed(true);
+    setIsLogCollapsed(true); // 自動で目隠しON
 
-    // 🛠️ 🆕 Stateの「remainingBattles」はラグで古い数字を持っていることがあるため、
-    // ここで直接、絶対に最新の「remainingBattlesRef.current」の数字を引っ張ってくる！
-    const displayCount = forcedNextFloor ? targetFloorCfg.battle_count : remainingBattlesRef.current;
-
-    // 👑 【三土手神特注：進軍・索敵ログの環境タイプ別テキストコンバーター】
-    const areaUnit = currentQuestState?.area_type_name || '階';
-    let advanceLogText = `👣 一行は警戒しながら、さらにその先（${nextFloorNum}${areaUnit}目）へと進路を取った。`;
-    
-    if (forcedNextFloor) {
-      advanceLogText = `🏰 ── エリア制圧完了。部隊はさらにその奥地（${nextFloorNum}${areaUnit}目）へと足を踏み入れた。 ──`;
-    }
-
-    setDisplayedLogs(prev => [
-      ...prev, 
-      { id: `advance-${Date.now()}`, text: advanceLogText, type: "system" },
-      { id: `next-${Date.now()}`, text: `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ (残り討伐: ${displayCount}戦) ──`, type: "system" }
-    ]);
+    // 👑 🆕 【タイピング演出へのバトンパス】
+    // 即座にログを出さず、バリケードを再構築してプロローグ演出をやり直す！
+    setTypingText1('');
+    setTypingText2('');
+    setTypingText3('');
+    setPrologueStep('typing_1'); 
   };
 
   // 3. 🔮 🆕 三土手創世神特注：サーバー無風コミットエンジン（これが「最後」の1回だけの通信）
@@ -2683,8 +2775,37 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       </div>
 
       {/* 👑 【三土手神特注：カジュアル目隠しシアターインフラ】 */}
-      {(!isBattleOver && isLogCollapsed) ? (
-        /* ⚔️ 【目隠しONの時】無駄な長文ログをシャットアウトし、中央にエレガントな激闘インジケーターを点灯！ */
+      {prologueStep !== 'ready' ? (
+        /* 🎭 【演出進行中】1文字ずつ、指定した間でドラマチックにテキストを浮かび上がらせるシネマモード */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '30px', background: '#020617', fontFamily: 'monospace', gap: '20px', lineHeight: '1.8' }}>
+          
+          {/* 1行目：クエスト出発宣告 */}
+          {typingText1 && (
+            <div style={{ color: '#ffd700', fontSize: '0.85rem', fontWeight: 'bold', background: '#1e1b4b', padding: '10px 14px', borderRadius: '6px', border: '1px solid #4338ca33' }}>
+              {typingText1}
+            </div>
+          )}
+
+          {/* 2行目：環境・状況プロローグ */}
+          {typingText2 && (
+            <div style={{ color: '#ffd700', fontSize: '0.8rem', background: '#0f172a', padding: '10px 14px', borderRadius: '6px', border: '1px solid #1e293b' }}>
+              {typingText2}
+            </div>
+          )}
+
+          {/* 3行目：魔物急襲サプライズ（！） */}
+          {typingText3 && (
+            <div style={{ color: '#f43f5e', fontSize: '0.8rem', fontWeight: 'bold', border: '1px dashed #ef4444', padding: '10px 14px', borderRadius: '6px', background: '#1a0505', textAlign: 'center', animation: 'shake 0.3s ease-in-out' }}>
+              {typingText3}
+              <style>{`
+                @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-4px); } 40%, 80% { transform: translateX(4px); } }
+              `}</style>
+            </div>
+          )}
+
+        </div>
+      ) : (!isBattleOver && isLogCollapsed) ? (
+        /* ⚔️ 【目隠しON ＆ 演出終了後（通常戦闘中）】中央にエレガントな激闘インジケーターを点灯！ */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', background: '#020617' }}>
           <div style={{ color: '#f43f5e', fontSize: '1.2rem', fontWeight: 'black', letterSpacing: '2px', animation: 'pulse 1.5s infinite' }}>
             ⚔️ ── 討 伐 激 闘 中 ── ⚔️
@@ -2695,7 +2816,7 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           `}</style>
         </div>
       ) : (
-        /* 📜 【目隠しOFF・または戦闘終了時】すべての詳細なストーリー文と戦闘ダメージ履歴を美しくスクロール描画！ */
+        /* 📜 【目隠しOFF・または戦闘終了時】すべての詳細な戦闘ダメージ履歴を美しくスクロール描画！ */
         <div ref={scrollRef} style={{ flex: 1, padding: '15px', overflowY: 'auto', fontSize: '0.8rem', lineHeight: '1.7', background: '#020617', fontFamily: 'monospace' }}>
           {displayedLogs.map(log => (
             <div key={log.id} style={{ marginBottom: '6px', padding: '4px 8px', borderRadius: '4px', background: log.type === 'system' ? '#1e1b4b' : 'none', color: log.type === 'battle' ? '#f43f5e' : log.type === 'success' ? '#34d399' : log.type === 'system' ? '#f59e0b' : '#94a3b8', whiteSpace: 'pre-wrap' }}>
@@ -2705,19 +2826,23 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 15px', background: '#1a0505', borderTop: '1px solid #451a1a', borderBottom: '1px solid #451a1a' }}>
-        {enemies.map((enemyItem) => (
-          <div key={enemyItem.instanceId} style={{ opacity: enemyItem.hp <= 0 ? 0.4 : 1, transition: 'opacity 0.3s' }}>
-            <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#f43f5e', display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-              <span>{enemyItem.hp <= 0 ? `💀 [DEFEATED] ${enemyItem.name}` : `😈 ${enemyItem.name} (${enemyItem.element}/${enemyItem.size})`}</span>
-              <span style={{ fontFamily: 'monospace' }}>{enemyItem.hp} / {enemyItem.mhp}</span>
+      {/* 👑 【三土手神特注：敵HPバーのフライング出演完全封鎖ゲート】 */}
+      {/* 演出ステップが完了（ready）するまでは、下の真っ赤なエネミー情報ブロックを丸ごと非表示にします！ */}
+      {prologueStep === 'ready' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 15px', background: '#1a0505', borderTop: '1px solid #451a1a', borderBottom: '1px solid #451a1a' }}>
+          {enemies.map((enemyItem) => (
+            <div key={enemyItem.instanceId} style={{ opacity: enemyItem.hp <= 0 ? 0.4 : 1, transition: 'opacity 0.3s' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#f43f5e', display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                <span>{enemyItem.hp <= 0 ? `💀 [DEFEATED] ${enemyItem.name}` : `😈 ${enemyItem.name} (${enemyItem.element}/${enemyItem.size})`}</span>
+                <span style={{ fontFamily: 'monospace' }}>{enemyItem.hp} / {enemyItem.mhp}</span>
+              </div>
+              <div style={{ height: '5px', background: '#311010', borderRadius: '2.5px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.max(0, (enemyItem.hp / enemyItem.mhp) * 100)}%`, background: enemyItem.hp <= 0 ? '#4b5563' : '#f43f5e', transition: 'width 0.1s ease' }}></div>
+              </div>
             </div>
-            <div style={{ height: '5px', background: '#311010', borderRadius: '2.5px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${Math.max(0, (enemyItem.hp / enemyItem.mhp) * 100)}%`, background: enemyItem.hp <= 0 ? '#4b5563' : '#f43f5e', transition: 'width 0.1s ease' }}></div>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* 🧭 🆕 【三土手ローグライク専用：アクションゲーム選択バー】 */}
       <div style={{ padding: '12px 20px', background: '#0f172a', borderBottom: '1px solid #1e293b', textAlign: 'center' }}>
@@ -2762,11 +2887,11 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
         {/* ③ その階層を完全に制圧した場合（RemainingBattlesが0になった時） ➔ 帰還か上の階への進軍か選択 */}
         {adventureStatus === 'floor_cleared' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {/* 🛠️ 🆕 最終階層なら「クエスト完了！」、道中なら階層制圧を表示する三土手神仕様！ */}
-            <span style={{ fontSize: '0.7rem', color: '#34d399', fontWeight: 'bold', display: 'block', marginBottom: '2px' }}>
+            {/* 🛠️ 🆕 最終階層なら「クエスト完了！」、道中なら「階段を発見」を表示するTRPG仕様！ */}
+            <span style={{ fontSize: '0.7rem', color: '#34d399', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
               {currentFloor >= (currentQuestState?.floors || 1) 
-                ? "🏆 🎉 最終階層突破！クエスト完全完了！" 
-                : `🎉 【B${currentFloor}階】制圧完了！どうしますか？`}
+                ? "🏆 🎉 最終階層のボスを撃破！クエスト完全踏破！" 
+                : `🕳️ 地下へと続く階段を見つけた・・・ 【B${currentFloor + 1}階】へ進みますか？`}
             </span>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
               {currentFloor < (currentQuestState?.floors || 1) ? (
@@ -2779,7 +2904,7 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                 </div>
               )}
               <button onClick={handleTownCommit} disabled={isSaving} style={{ padding: '12px', borderRadius: '10px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#0f172a', border: 'none', fontWeight: '900', fontSize: '0.82rem' }}>
-                💰 帰還して報酬を獲得
+                💰 一旦帰還して報酬を獲得
               </button>
             </div>
           </div>
@@ -2885,6 +3010,63 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
           </div>
         );
       })()}
+
+      {/* 👑 🆕 【三土手神特注：全画面クエストクリア・大勲章シアター】 */}
+      {showQuestClearTheater && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(2, 6, 23, 0.95)', zIndex: 3000,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          animation: 'fadeInTheater 0.5s ease-out forwards', fontFamily: 'monospace'
+        }}>
+          {/* 金色の光背サークルリング */}
+          <div style={{
+            position: 'absolute', width: '280px', height: '280px',
+            background: 'radial-gradient(circle, rgba(245,158,11,0.15) 0%, rgba(0,0,0,0) 70%)',
+            animation: 'pulseGlow 2s infinite ease-in-out'
+          }}></div>
+
+          <div style={{
+            fontSize: '1.8rem', fontWeight: '900', color: '#f59e0b',
+            letterSpacing: '4px', textShadow: '0 0 20px rgba(245,158,11,0.6), 0 0 40px rgba(245,158,11,0.3)',
+            animation: 'scaleUpBanner 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px'
+          }}>
+            <span>👑 QUEST CLEAR 👑</span>
+            <div style={{ width: '140px', height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)', marginTop: '8px' }}></div>
+          </div>
+
+          <span style={{ 
+            fontSize: '0.78rem', color: '#94a3b8', marginTop: '15px', letterSpacing: '1px',
+            animation: 'fadeInText 1s ease-out 0.4s both'
+          }}>
+            ✨ 【{currentQuestState?.name}】 完全踏破達成 ✨
+          </span>
+
+          <button 
+            onClick={() => setShowQuestClearTheater(false)} // 幕を閉じて元のリザルト操作画面へ復帰
+            style={{
+              marginTop: '40px', padding: '10px 24px', borderRadius: '20px',
+              background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+              color: '#020617', border: 'none', fontWeight: '900', fontSize: '0.8rem',
+              cursor: 'pointer', boxShadow: '0 4px 15px rgba(217,119,6,0.4)',
+              animation: 'fadeInText 1s ease-out 0.8s both', transition: 'transform 0.1s'
+            }}
+            onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+            onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          >
+            戦果を確認する 📜
+          </button>
+
+          {/* シネマ用インラインKeyframes */}
+          <style>{`
+            @keyframes fadeInTheater { from { opacity: 0; } to { opacity: 1; } }
+            @keyframes scaleUpBanner { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+            @keyframes fadeInText { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+            @keyframes pulseGlow { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.2); opacity: 1; } }
+          `}</style>
+        </div>
+      )}
 
       {/* 🎁 戦闘終了時のみポップアップするリザルトモーダルへ総獲得Zeny・EXPのバトンを託す！ */}
       <QuestResultModal 
