@@ -36,25 +36,65 @@ const AdventureInventory = ({ userId, onBack }) => {
         setZeny(partyData.zeny || 0);
       }
 
-      // 2. gameServicesを中継し、共有倉庫内のアイテムとマスタ情報を一括ロード
-      const warehouseStocks = await gameServices.getPlayerInventory(userId);
+      // 2. Supabaseからインベントリとマスターアイテム情報を直接JOIN取得！
+      const { data: warehouseStocks, error: invError } = await supabase
+        .from('game_inventory')
+        .select(`
+          id,
+          item_id,
+          count,
+          is_favorite,
+          game_master_items!game_inventory_item_id_fkey (
+            name,
+            item_type,
+            rarity,
+            sell_price,
+            description
+          )
+        `)
+        .eq('user_id', userId);
+
+      if (invError) throw invError;
       
       if (warehouseStocks) {
-        const cleanedStocks = warehouseStocks.map(stock => {
-          const master = stock.game_master_items;
-          return {
-            id: stock.id, 
-            item_id: stock.item_id, 
-            name: master?.name || '未知のアイテム',
-            type: master?.item_type || 'etc',
-            rarity: master?.rarity || 'common',
-            count: Number(stock.count || 0),
-            value: Number(master?.sell_price || 100),
-            desc: master?.description || '詳細情報なし'
-          };
-        }).filter(item => item.count > 0);
+        // 👑 🆕 同じ item_id のデータを1つに集約（スタック）する集計マップ処理！
+        const groupedMap = {};
 
-        setItems(cleanedStocks);
+        warehouseStocks.forEach(stock => {
+          if (!stock.item_id || Number(stock.count || 0) <= 0) return;
+
+          const master = stock.game_master_items;
+          const itemId = stock.item_id;
+          const basePrice = Number(master?.sell_price || 0);
+          const finalSellValue = basePrice > 0 ? basePrice : 10;
+
+          if (!groupedMap[itemId]) {
+            // まだマップに登録されていないアイテムなら新規作成
+            groupedMap[itemId] = {
+              id: stock.id, // 一括操作用の代表ID
+              ids: [stock.id], // 統合された全レコードのIDリスト
+              item_id: itemId,
+              name: master?.name || '未知のアイテム',
+              type: master?.item_type || 'etc',
+              rarity: master?.rarity || 'common',
+              count: Number(stock.count || 0),
+              value: finalSellValue,
+              desc: master?.description || '詳細情報なし',
+              is_favorite: stock.is_favorite || false
+            };
+          } else {
+            // すでに登録済みのアイテムなら個数を加算し、IDを追加！
+            groupedMap[itemId].count += Number(stock.count || 0);
+            groupedMap[itemId].ids.push(stock.id);
+            // 統合した中に1つでも「お気に入り」があれば★表示を維持
+            if (stock.is_favorite) {
+              groupedMap[itemId].is_favorite = true;
+            }
+          }
+        });
+
+        // オブジェクトから配列に変換してStateへ格納！
+        setItems(Object.values(groupedMap));
       }
     } catch (err) {
       console.error("倉庫データロードエラー:", err);
@@ -99,19 +139,24 @@ const AdventureInventory = ({ userId, onBack }) => {
     try {
       const totalEarned = sellTargetItem.value * sellCount;
 
-      // 1. Supabaseの game_party_status テーブルの所持金をダイレクト加算
+      // 1. Supabaseの game_party_status テーブルの所持金をダイレクト加算（存在しない場合は自動生成）
       const { data: currentWallet } = await supabase
         .from('game_party_status')
         .select('user_id, zeny')
         .eq('user_id', userId)
         .maybeSingle();
 
-      if (currentWallet) {
-        await supabase
-          .from('game_party_status')
-          .update({ zeny: Number(currentWallet.zeny || 0) + totalEarned })
-          .eq('user_id', userId);
-      }
+      const currentZeny = Number(currentWallet?.zeny || 0);
+      const nextZeny = currentZeny + totalEarned;
+
+      const { error: walletError } = await supabase
+        .from('game_party_status')
+        .upsert({ 
+          user_id: userId, 
+          zeny: nextZeny 
+        }, { onConflict: 'user_id' });
+
+      if (walletError) throw walletError;
 
       // 2. Supabaseの game_inventory テーブルの在庫数を引き算
       const nextCount = sellTargetItem.count - sellCount;
@@ -138,6 +183,86 @@ const AdventureInventory = ({ userId, onBack }) => {
       alert("🚨 買い取り通信に失敗しました。ギルド窓口の接続を確認してください。");
     }
   };
+
+  // 🌟 👑 【ここから追加】お気に入り（ロック）のトグル切り替えコミット
+  const handleToggleFavorite = async (item) => {
+    if (!item || !userId) return;
+    const nextStatus = !item.is_favorite;
+
+    // ローカルStateを最速先行更新
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_favorite: nextStatus } : i));
+    if (selectedItem && selectedItem.id === item.id) {
+      setSelectedItem(prev => ({ ...prev, is_favorite: nextStatus }));
+    }
+
+    try {
+      const { error } = await supabase
+        .from('game_inventory')
+        .update({ is_favorite: nextStatus })
+        .eq('id', item.id);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error("お気に入り更新失敗:", err);
+      // エラー時は書き戻し
+      await loadWarehouseLogistics();
+    }
+  };
+
+  // 🧹 👑 【ここから追加】お気に入り以外を一括全売却する物流エンジン
+  const handleBulkSell = async () => {
+    // 対象：お気に入り未設定 且つ クエスト品以外のアイテム
+    const targetItems = items.filter(i => !i.is_favorite && i.type !== 'quest' && i.count > 0);
+
+    if (targetItems.length === 0) {
+      alert("⚠️ 売却可能な「お気に入り未設定アイテム」はありません。");
+      return;
+    }
+
+    // 総売却個数 ＆ 合計金額をリアルタイム算出
+    const totalCount = targetItems.reduce((sum, i) => sum + i.count, 0);
+    const totalEarned = targetItems.reduce((sum, i) => sum + (i.value * i.count), 0);
+
+    const confirmMsg = `🧹 【一括売却の確認】\n\nお気に入り【未設定】のアイテム ${targetItems.length}バリエーション（計 ${totalCount} 個）を一括売却します。\n\n💰 獲得予定資金: +${totalEarned.toLocaleString()} Zeny\n\n本当に実行しますか？`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setLoading(true);
+    try {
+      const targetIds = targetItems.flatMap(i => i.ids || [i.id]);
+
+      // 1. 対象インベントリを一括物理削除
+      const { error: delError } = await supabase
+        .from('game_inventory')
+        .delete()
+        .in('id', targetIds);
+
+      if (delError) throw delError;
+
+      // 2. 所持金（Zeny）を一括合算加算
+      const { data: currentWallet } = await supabase
+        .from('game_party_status')
+        .select('user_id, zeny')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const currentZeny = Number(currentWallet?.zeny || 0);
+      const nextZeny = currentZeny + totalEarned;
+
+      await supabase
+        .from('game_party_status')
+        .upsert({ user_id: userId, zeny: nextZeny }, { onConflict: 'user_id' });
+
+      alert(`💸 一括売却完了！\nアイテムを整理し、+${totalEarned.toLocaleString()} Zeny を金庫に格納しました！`);
+      await loadWarehouseLogistics();
+
+    } catch (err) {
+      console.error("一括売却エラー:", err);
+      alert("🚨 一括売却処理中にエラーが発生しました。");
+    } finally {
+      setLoading(false);
+    }
+  }; // 👑 【ここまで追加】
 
   if (loading) return <div style={{ color: '#34d399', textAlign: 'center', padding: '50px', fontFamily: 'monospace', fontSize: '0.85rem' }}>🎒 ギルド共有倉庫の在庫原帳を照合中...</div>;
 
@@ -173,6 +298,21 @@ const AdventureInventory = ({ userId, onBack }) => {
             {zeny.toLocaleString()} <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 'normal' }}>Zeny</span>
           </span>
         </div>
+
+        {/* 👑 🆕 一括売却実行ボタン */}
+        <button 
+          onClick={handleBulkSell}
+          style={{
+            width: '100%', padding: '10px', borderRadius: '10px',
+            background: 'linear-gradient(135deg, #374151 0%, #1f2937 100%)',
+            color: '#f59e0b', border: '1px solid #f59e0b44',
+            fontSize: '0.78rem', fontWeight: 'bold', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+          }}
+        >
+          🧹 お気に入り以外を一括売却
+        </button>
       </div>
 
       {/* 🧭 アイテム種別フィルタータブ */}
@@ -215,8 +355,9 @@ const AdventureInventory = ({ userId, onBack }) => {
             
             {/* Name & Desc */}
             <div style={{ overflow: 'hidden', paddingRight: '8px' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: getRarityColor(item.rarity) }}>
-                {item.name}
+              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: getRarityColor(item.rarity), display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {item.is_favorite && <span style={{ color: '#ffd700', fontSize: '0.85rem' }}>★</span>}
+                <span>{item.name}</span>
               </div>
               <div style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                 {item.desc}
@@ -278,12 +419,33 @@ const AdventureInventory = ({ userId, onBack }) => {
               </div>
             </div>
 
+            {/* 👑 🆕 お気に入り（ロック）スイッチボタン */}
+            <div style={{ marginBottom: '16px' }}>
+              <button 
+                onClick={() => handleToggleFavorite(selectedItem)}
+                style={{
+                  width: '100%', padding: '8px', borderRadius: '8px',
+                  background: selectedItem.is_favorite ? '#312e81' : '#0f172a',
+                  color: selectedItem.is_favorite ? '#ffd700' : '#94a3b8',
+                  border: selectedItem.is_favorite ? '1px solid #6366f1' : '1px solid #334155',
+                  fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+                }}
+              >
+                {selectedItem.is_favorite ? '★ お気に入り解除 (ロック中)' : '☆ お気に入りに登録 (ロック)'}
+              </button>
+            </div>
+
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setSelectedItem(null)} style={{ flex: 1, padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}>
                 閉じる
               </button>
               
-              {selectedItem.type !== 'quest' ? (
+              {selectedItem.is_favorite ? (
+                <button disabled style={{ flex: 2, padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#ffd700', border: '1px solid #ffd70044', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'not-allowed' }}>
+                  🔒 ロック中 (売却不可)
+                </button>
+              ) : selectedItem.type !== 'quest' ? (
                 <button 
                   onClick={() => { setSellTargetItem(selectedItem); setSellCount(1); }}
                   style={{ flex: 2, padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)', color: '#fff', border: 'none', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 12px rgba(239,68,68,0.2)' }}

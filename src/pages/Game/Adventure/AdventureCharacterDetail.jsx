@@ -253,7 +253,9 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   // 🛡️ 【神仕様リフォーム】直接ギルド共有倉庫（guildInventory）からサジェスト！
   const getEligibleItemsForSlot = (slotKey) => {
     if (!guildInventory || guildInventory.length === 0) return [];
-    return guildInventory.filter(inv => {
+
+    // 1. まず該当部位に装備可能なアイテムを抽出
+    const eligibleList = guildInventory.filter(inv => {
       if (!inv.count || inv.count <= 0) return false;
       const master = inv.game_master_items;
       if (!master) return false;
@@ -269,6 +271,25 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       if (slotKey === 'accessory') return master.item_subtype === 'アクセサリ';
       return false;
     });
+
+    // 2. 同じ item_id を1つの表示枠にまとめて count を合算！
+    const groupedMap = {};
+    eligibleList.forEach(inv => {
+      const master = inv.game_master_items;
+      const itemId = inv.item_id || master?.id;
+      if (!itemId) return;
+
+      if (!groupedMap[itemId]) {
+        groupedMap[itemId] = {
+          ...inv,
+          count: Number(inv.count || 0)
+        };
+      } else {
+        groupedMap[itemId].count += Number(inv.count || 0);
+      }
+    });
+
+    return Object.values(groupedMap);
   };
 
   // 🎴 🆕 ギルド倉庫から「現在選んでいる部位に有効なカード」だけを逆引きサジェストする関数

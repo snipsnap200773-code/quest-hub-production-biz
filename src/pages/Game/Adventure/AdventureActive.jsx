@@ -600,66 +600,63 @@ roStatus: ch.roStatus || {},
       ? `🚨 ── 激震！奥地から巨大なボスが立ちはだかった！ ──` 
       : `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ ──`;
 
-    // ── 【ステップA：1行目のタイピング（一文字ずつ送る）】 ──
+    // ── 【ステップA：1行目のタイピング】 ──
     if (prologueStep === 'typing_1') {
       if (typingText1.length < welcomeStr.length) {
         const timer = setTimeout(() => {
           setTypingText1(welcomeStr.slice(0, typingText1.length + 1));
-        }, 60);
+        }, 25); // ⚡ 60 -> 25ms へ高速化
         return () => clearTimeout(timer);
       } else {
         setPrologueStep('interval_1');
       }
     }
 
-    // ── 【ステップB：1行目終了後の3.5秒間の静寂】 ──
+    // ── 【ステップB：1行目終了後のウエイト】 ──
     if (prologueStep === 'interval_1') {
       const timer = setTimeout(() => {
         setPrologueStep('typing_2');
-      }, 3500);
+      }, 800); // ⚡ 3500 -> 800ms (0.8秒) へ短縮
       return () => clearTimeout(timer);
     }
 
-    // ── 【ステップC：2行目のタイピング（一文字ずつ送る）】 ──
+    // ── 【ステップC：2行目のタイピング】 ──
     if (prologueStep === 'typing_2') {
       if (typingText2.length < situationStr.length) {
         const timer = setTimeout(() => {
           setTypingText2(situationStr.slice(0, typingText2.length + 1));
-        }, 60);
+        }, 25); // ⚡ 60 -> 25ms
         return () => clearTimeout(timer);
       } else {
         setPrologueStep('interval_2');
       }
     }
 
-    // ── 【ステップD：2行目終了後の3.5秒間の静寂 ➔ 🚨急襲（演出）へ】 ──
+    // ── 【ステップD：2行目終了後のウエイト】 ──
     if (prologueStep === 'interval_2') {
       const timer = setTimeout(() => {
         setPrologueStep('surprise');
-      }, 3500);
+      }, 800); // ⚡ 3500 -> 800ms (0.8秒)
       return () => clearTimeout(timer);
     }
 
-    // ── 【ステップE：急襲テキストを一文字ずつ送る】 ──
+    // ── 【ステップE：急襲テキスト】 ──
     if (prologueStep === 'surprise') {
-      // 👑 解決：環境データによって末尾の空白や改行コードが混じるのを防ぐため、trim() を噛ませて厳密に文字数を比較！
       if (typingText3.trim().length < surpriseStr.trim().length) {
         const timer = setTimeout(() => {
           setTypingText3(surpriseStr.slice(0, typingText3.length + 1));
-        }, 40); 
+        }, 20); // ⚡ 40 -> 20ms
         return () => clearTimeout(timer);
       } else {
-        // すべての演出用タイピングが完了した瞬間に、表示用の文字ログ配列をガッチャンコ同期！
         setDisplayedLogs([
           { id: 'story-start', text: welcomeStr, type: 'system' },
           { id: 'story-prologue', text: situationStr, type: 'system' },
           { id: 'story-encounter', text: surpriseStr, type: 'system' }
         ]);
         
-        // 2秒のウエイトの後、確実にバリケードを解除！
         const timer = setTimeout(() => {
           setPrologueStep('ready');
-        }, 2000);
+        }, 800); // ⚡ 2000 -> 800ms (0.8秒)
         return () => clearTimeout(timer);
       }
     }
