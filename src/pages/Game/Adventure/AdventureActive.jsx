@@ -48,6 +48,8 @@ const AdventureActive = ({
   
   // 🛡️ 🆕 追加：敵の武器データを逆引きするためにアイテムマスターを保持する器
   const masterItemsRef = useRef([]); 
+  // 💎 🆕 三土手神特注：宝箱から出現させる「強化石」のマスターIDを記憶するRef
+  const enhancementStoneIdRef = useRef(null); 
 
   // 🐾 🆕 【三土手神特注】酒場の待機メンバーも含めた、自分が所持する全キャラクターリストを記憶する器！
   const allPlayerCharactersRef = useRef([]);
@@ -107,8 +109,13 @@ const AdventureActive = ({
       console.log("📦 【デバッグ1】取得した全アイテムマスター:", allMasterItems);
 
       masterSkillsRef.current = allMasterSkills;
-      // 🛡️ 🆕 追加：ここでアイテム一覧を保存！
       masterItemsRef.current = allMasterItems; 
+
+      // 💎 🆕 「強化石」または「オリデオコン」という名前のアイテムマスターIDを全自動検出！
+      const stoneItem = allMasterItems.find(i => i.name?.includes('強化石') || i.name?.includes('オリデオコン'));
+      if (stoneItem) {
+        enhancementStoneIdRef.current = stoneItem.id;
+      } 
 
       // 🐾 🆕 【結線！】TEST_USER_ID から一本釣りした全キャラデータをRefにガチッと記憶！
       allPlayerCharactersRef.current = charList || [];
@@ -845,8 +852,67 @@ roStatus: ch.roStatus || {},
           // 残り戦数が0になった ➔ 完璧なタイミングで「階層制圧完了・B2へ進む」のボタンが出現！
           setAdventureStatus('floor_cleared');
 
+          // 🎁 👑 【三土手神特注：宝箱開封 ＆ 強化石獲得ロジック】
+          const activeQuestData = currentQuestState;
+          const fConfigs = activeQuestData?.floor_configs || [];
+          const currentFloorCfg = fConfigs.find(f => f.floor === currentFloor) || { chest_count: 1 };
+          const chestCount = Number(currentFloorCfg.chest_count || 0);
+
+          if (chestCount > 0) {
+            let chestLogs = [];
+            let chestDrops = [];
+            let bonusChestZeny = 0;
+
+            for (let c = 0; c < chestCount; c++) {
+              // 👑 宝箱1個ごとのダイス抽選（5% : 強化石 / 60% : Zeny / 35% : 空っぽ）
+              const dice = Math.random() * 100;
+              const stoneMasterId = enhancementStoneIdRef.current;
+              const stoneMasterItem = masterItemsRef.current.find(i => i.id === stoneMasterId);
+
+              if (dice < 5 && stoneMasterItem) {
+                // 💎 超激レア！ 強化石獲得（5%）
+                chestDrops.push({
+                  id: stoneMasterItem.id,
+                  name: stoneMasterItem.name,
+                  rarity: stoneMasterItem.rarity || 'legendary'
+                });
+                chestLogs.push({
+                  id: `chest-stone-${Date.now()}-${c}`,
+                  text: `🎁✨ 奇跡！宝箱から眩い光と共に【${stoneMasterItem.name}】を手に入れた！`,
+                  type: "system"
+                });
+              } else if (dice < 65) {
+                // 💰 ボーナスZeny獲得（60%）
+                const chestZeny = Math.floor(Math.random() * 300) + 100;
+                bonusChestZeny += chestZeny;
+                chestLogs.push({
+                  id: `chest-zeny-${Date.now()}-${c}`,
+                  text: `🎁 宝箱を発見！小袋から +${chestZeny} Zeny を獲得！`,
+                  type: "system"
+                });
+              } else {
+                // 📦 ハズレ（35%）
+                chestLogs.push({
+                  id: `chest-empty-${Date.now()}-${c}`,
+                  text: `🎁 宝箱を発見！…しかし中は古びたガラクタばかりだった。`,
+                  type: "system"
+                });
+              }
+            }
+
+            // 獲得した強化石をドロップ品プールへ追加！
+            if (chestDrops.length > 0) {
+              setDroppedItems(prev => [...prev, ...chestDrops]);
+            }
+            // ボーナスZenyを累積報酬へ追加！
+            if (bonusChestZeny > 0) {
+              setAccumulatedRewards(prev => ({ ...prev, gold: prev.gold + bonusChestZeny }));
+            }
+            // ログを一括出力！
+            setDisplayedLogs(prev => [...prev, ...chestLogs]);
+          }
+
           // 👑 🆕 【三土手創世神特注：最深部ボス討伐検知センサー】
-          // 今クリアした階層が、クエストの「最大総階層数」に到達していれば、勝利のファンファーレシアターを起動！
           const isMaxFloorCleared = currentFloor >= (currentQuestState?.floors || 1);
           if (isMaxFloorCleared) {
             setShowQuestClearTheater(true);

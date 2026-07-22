@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-// 🐾 🆕 牧場（ファーム）用に「Dog」アイコンをインポートに追加
-import { Users, Backpack, ChevronRight, Dog } from 'lucide-react';
+// 🔨 鍛冶屋用に Hammer アイコンと AdventureBlacksmith コンポーネントを追加！
+import { Users, Backpack, ChevronRight, Dog, Hammer } from 'lucide-react';
 import AdventureCharacterList from './AdventureCharacterList'; 
 import AdventureCharacterDetail from './AdventureCharacterDetail'; 
 import AdventureInventory from './AdventureInventory'; 
-import { supabase } from '../../../supabaseClient'; // 🚚 物流通信用のインポートを確保
+import AdventureBlacksmith from './AdventureBlacksmith'; // 👈 🆕 追加
+import { supabase } from '../../../supabaseClient';
 
 // 🆕 固定の TEST_USER_ID の定義を物理的に完全消去！
 
@@ -226,6 +227,16 @@ const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）か�
     );
   }
 
+  // 🔨 👑 【ここから追加】5. 鍛冶屋（精錬・強化工房）画面を呼び出す！
+  if (subView === 'blacksmith') {
+    return (
+      <AdventureBlacksmith 
+        userId={userId} 
+        onBack={() => setSubView('top')} 
+      />
+    );
+  }
+
   // 5. 👑 酒場トップ（スッキリした3枚のカードUI）
   return (
     <div style={{ padding: '24px 20px 0 20px', color: '#fff' }}>
@@ -355,6 +366,46 @@ const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）か�
               </h3>
               <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>
                 調教した魔物の管理・テイマーへの同行バインド
+              </p>
+            </div>
+          </div>
+          <ChevronRight size={20} color="#475569" />
+        </div>
+
+        {/* 💳 🔨 【ここから追加】カード④：伝説の鍛冶屋（精錬・強化） */}
+        <div 
+          onClick={() => setSubView('blacksmith')}
+          style={{
+            background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+            border: '1px solid #334155',
+            borderRadius: '16px',
+            padding: '20px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+            transition: 'transform 0.2s, border-color 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#f59e0b';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = '#334155';
+            e.currentTarget.style.transform = 'none';
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ background: 'rgba(245, 158, 11, 0.1)', padding: '12px', borderRadius: '12px', color: '#f59e0b' }}>
+              <Hammer size={24} />
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem', color: '#fff', fontWeight: 'bold' }}>
+                伝説の鍛冶屋
+              </h3>
+              <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>
+                武具の精錬・強化・Zenyと強化石で装備強化
               </p>
             </div>
           </div>

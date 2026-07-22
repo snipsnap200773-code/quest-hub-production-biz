@@ -44,6 +44,7 @@ const AdventureInventory = ({ userId, onBack }) => {
           item_id,
           count,
           is_favorite,
+          refine_level,
           game_master_items!game_inventory_item_id_fkey (
             name,
             item_type,
@@ -74,7 +75,8 @@ const AdventureInventory = ({ userId, onBack }) => {
               id: stock.id, // 一括操作用の代表ID
               ids: [stock.id], // 統合された全レコードのIDリスト
               item_id: itemId,
-              name: master?.name || '未知のアイテム',
+              refine_level: Number(stock.refine_level || 0),
+            name: stock.refine_level > 0 ? `+${stock.refine_level} ${master?.name}` : (master?.name || '未知のアイテム'),
               type: master?.item_type || 'etc',
               rarity: master?.rarity || 'common',
               count: Number(stock.count || 0),
