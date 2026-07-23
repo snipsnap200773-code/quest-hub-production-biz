@@ -71,6 +71,8 @@ const AdventureActive = ({
   // 'typing_1' (1行目入力中) ➔ 'interval_1' (間) ➔ 'typing_2' (2行目) ➔ 'interval_2' (間) ➔ 'surprise' (！) ➔ 'ready' (戦闘開始)
   const [prologueStep, setPrologueStep] = useState('typing_1');
   const [typingText1, setTypingText1] = useState('');
+  const [typingChestText, setTypingChestText] = useState('');
+  const [chestSchedule, setChestSchedule] = useState([]); // 👈 🎁 【ここに追加！】その階層での宝箱出現戦数リスト（例: [1, 2]）
   const [typingText2, setTypingText2] = useState('');
   const [typingText3, setTypingText3] = useState('');
   
@@ -450,11 +452,18 @@ roStatus: ch.roStatus || {},
 
         const fConfigs = activeQuestData?.floor_configs || [];
         const currentFloorCfg = fConfigs.find(f => f.floor === 1) || { 
-          battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: enemyIds, boss_id: '' 
+          battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: enemyIds, boss_id: '', chest_count: 1 
         };
 
         setRemainingBattles(currentFloorCfg.battle_count);
         remainingBattlesRef.current = currentFloorCfg.battle_count;
+
+        // 🎁 👑 【ここを追加！】B1階突入時に宝箱の出現戦数スケジュールを即座に確定！
+        const totalBattleB1 = Number(currentFloorCfg.battle_count || 3);
+        const targetChestCountB1 = Math.min(totalBattleB1, Number(currentFloorCfg.chest_count || 0));
+        const possibleBattlesB1 = Array.from({ length: totalBattleB1 }, (_, i) => i + 1);
+        const shuffledB1 = possibleBattlesB1.sort(() => 0.5 - Math.random());
+        setChestSchedule(shuffledB1.slice(0, targetChestCountB1));
 
         // 👑 🆕 【1戦目のボス判定＆出現数ロジック】
         const isInitialBoss = currentFloorCfg.battle_count === 1 && currentFloorCfg.boss_id;
@@ -582,13 +591,11 @@ roStatus: ch.roStatus || {},
     initAdventure();
   }, []); // 👈 1つ目の初回ロードuseEffectの終わり
 
-  // =========================================================================
-  // 👑 【ここから追加：TRPG式 1文字ずつ出力＆時間ウエイト自動進行エンジン】
-  // =========================================================================
+  const [chestTextAnimated, setChestTextAnimated] = useState(''); // 1文字ずつ表示用の内部State
+
   useEffect(() => {
     if (loading || !currentQuestState || party.length === 0) return;
 
-    // 👑 🆕 シチュエーション別の重厚なテキスト分岐！
     const welcomeStr = encounterType === 'boss' 
       ? `🚪 最奥部へと到達した。重苦しい空気が立ち込めている。` 
       : encounterType === 'floor_start' 
@@ -607,71 +614,116 @@ roStatus: ch.roStatus || {},
       ? `🚨 ── 激震！奥地から巨大なボスが立ちはだかった！ ──` 
       : `🚨 ── 前方の物陰から急襲！魔物の群れが牙を剥いた！ ──`;
 
-    // ── 【ステップA：1行目のタイピング】 ──
+    // ── 【ステップA：1行目（進軍）タイピング】 ──
     if (prologueStep === 'typing_1') {
       if (typingText1.length < welcomeStr.length) {
+        setChestTextAnimated('');
         const timer = setTimeout(() => {
           setTypingText1(welcomeStr.slice(0, typingText1.length + 1));
-        }, 25); // ⚡ 60 -> 25ms へ高速化
+        }, 25);
+        return () => clearTimeout(timer);
+      } else {
+        // 1行目のタイピング完了時に、スケジュールと照合して宝箱を出現させる！
+        const activeQuestData = currentQuestState;
+        const fConfigs = activeQuestData?.floor_configs || [];
+        const currentFloorCfg = fConfigs.find(f => f.floor === currentFloor) || { battle_count: 3, chest_count: 1 };
+        
+        // 現在の「何戦目か」を逆算（総戦数 - 残り戦数 + 1）
+        const totalBattles = Number(currentFloorCfg.battle_count || 3);
+        const currentBattleIndex = totalBattles - remainingBattlesRef.current + 1;
+
+        let foundChestStr = '';
+
+        // 今の戦数が宝箱スケジュールに含まれていれば、確実に宝箱出現！
+        if (chestSchedule.includes(currentBattleIndex)) {
+          const dice = Math.random() * 100;
+          const stoneMasterId = enhancementStoneIdRef.current;
+          const stoneMasterItem = masterItemsRef.current.find(i => i.id === stoneMasterId);
+
+          if (dice < 5 && stoneMasterItem) {
+            setDroppedItems(prev => [...prev, { id: stoneMasterItem.id, name: stoneMasterItem.name, rarity: stoneMasterItem.rarity || 'legendary' }]);
+            foundChestStr = `🎁✨ 奇跡！進軍途中で【${stoneMasterItem.name}】の入った宝箱を発見した！`;
+          } else if (dice < 65) {
+            const chestZeny = Math.floor(Math.random() * 300) + 100;
+            setAccumulatedRewards(prev => ({ ...prev, gold: prev.gold + chestZeny }));
+            foundChestStr = `🎁 進軍途中で古びた小箱を発見！小袋から +${chestZeny} Zeny を獲得！`;
+          } else {
+            foundChestStr = `🎁 進軍途中で木箱を発見！…しかし中は埃を被ったガラクタだった。`;
+          }
+        }
+
+        setTypingChestText(foundChestStr);
+        setChestTextAnimated('');
+        setPrologueStep(foundChestStr ? 'typing_chest' : 'interval_1');
+      }
+    }
+
+    // ── 【ステップA-2：宝箱メッセージも1文字ずつタイピング！】 ──
+    if (prologueStep === 'typing_chest') {
+      if (chestTextAnimated.length < typingChestText.length) {
+        const timer = setTimeout(() => {
+          setChestTextAnimated(typingChestText.slice(0, chestTextAnimated.length + 1));
+        }, 25); // 他と同じ速度でカタカタ表示
         return () => clearTimeout(timer);
       } else {
         setPrologueStep('interval_1');
       }
     }
 
-    // ── 【ステップB：1行目終了後のウエイト】 ──
+    // ── 【ステップB：ウエイト】 ──
     if (prologueStep === 'interval_1') {
       const timer = setTimeout(() => {
         setPrologueStep('typing_2');
-      }, 800); // ⚡ 3500 -> 800ms (0.8秒) へ短縮
+      }, 600);
       return () => clearTimeout(timer);
     }
 
-    // ── 【ステップC：2行目のタイピング】 ──
+    // ── 【ステップC：3行目（気配）タイピング】 ──
     if (prologueStep === 'typing_2') {
       if (typingText2.length < situationStr.length) {
         const timer = setTimeout(() => {
           setTypingText2(situationStr.slice(0, typingText2.length + 1));
-        }, 25); // ⚡ 60 -> 25ms
+        }, 25);
         return () => clearTimeout(timer);
       } else {
         setPrologueStep('interval_2');
       }
     }
 
-    // ── 【ステップD：2行目終了後のウエイト】 ──
+    // ── 【ステップD：ウエイト】 ──
     if (prologueStep === 'interval_2') {
       const timer = setTimeout(() => {
         setPrologueStep('surprise');
-      }, 800); // ⚡ 3500 -> 800ms (0.8秒)
+      }, 600);
       return () => clearTimeout(timer);
     }
 
-    // ── 【ステップE：急襲テキスト】 ──
+    // ── 【ステップE：4行目（急襲）タイピング ＆ 戦闘開始へ】 ──
     if (prologueStep === 'surprise') {
       if (typingText3.trim().length < surpriseStr.trim().length) {
         const timer = setTimeout(() => {
           setTypingText3(surpriseStr.slice(0, typingText3.length + 1));
-        }, 20); // ⚡ 40 -> 20ms
+        }, 20);
         return () => clearTimeout(timer);
       } else {
-        setDisplayedLogs([
-          { id: 'story-start', text: welcomeStr, type: 'system' },
-          { id: 'story-prologue', text: situationStr, type: 'system' },
-          { id: 'story-encounter', text: surpriseStr, type: 'system' }
-        ]);
-        
+        const logs = [
+          { id: 'story-start', text: welcomeStr, type: 'system' }
+        ];
+        if (typingChestText) {
+          logs.push({ id: `story-chest-${Date.now()}`, text: typingChestText, type: 'system' });
+        }
+        logs.push({ id: 'story-prologue', text: situationStr, type: 'system' });
+        logs.push({ id: 'story-encounter', text: surpriseStr, type: 'system' });
+
+        setDisplayedLogs(logs);
+
         const timer = setTimeout(() => {
           setPrologueStep('ready');
-        }, 800); // ⚡ 2000 -> 800ms (0.8秒)
+        }, 800);
         return () => clearTimeout(timer);
       }
     }
-  }, [loading, prologueStep, typingText1, typingText2, typingText3, currentQuestState, party]);
-  // =========================================================================
-  // 👑 【追加ここまで：次の戦闘ループuseEffectへと美しくバトンを繋ぎます】
-  // =========================================================================
-
+  }, [loading, prologueStep, typingText1, typingChestText, chestTextAnimated, typingText2, typingText3, currentQuestState, party]);
   // 2. 🧠 超軽量・高速カウント保証型戦闘ループ（※この間は通信回数完全に「0」！）
   useEffect(() => {
     // 👑 【三土手神特注：プロローグ演出バリケード】
@@ -849,70 +901,10 @@ roStatus: ch.roStatus || {},
           setTameCandidate(tamedEnemyInfo);
           setAdventureStatus('tame_event');
         } else if (nextCount <= 0) {
-          // 残り戦数が0になった ➔ 完璧なタイミングで「階層制圧完了・B2へ進む」のボタンが出現！
+          // 残り戦数が0になった ➔ 階層制圧完了！
           setAdventureStatus('floor_cleared');
 
-          // 🎁 👑 【三土手神特注：宝箱開封 ＆ 強化石獲得ロジック】
-          const activeQuestData = currentQuestState;
-          const fConfigs = activeQuestData?.floor_configs || [];
-          const currentFloorCfg = fConfigs.find(f => f.floor === currentFloor) || { chest_count: 1 };
-          const chestCount = Number(currentFloorCfg.chest_count || 0);
-
-          if (chestCount > 0) {
-            let chestLogs = [];
-            let chestDrops = [];
-            let bonusChestZeny = 0;
-
-            for (let c = 0; c < chestCount; c++) {
-              // 👑 宝箱1個ごとのダイス抽選（5% : 強化石 / 60% : Zeny / 35% : 空っぽ）
-              const dice = Math.random() * 100;
-              const stoneMasterId = enhancementStoneIdRef.current;
-              const stoneMasterItem = masterItemsRef.current.find(i => i.id === stoneMasterId);
-
-              if (dice < 5 && stoneMasterItem) {
-                // 💎 超激レア！ 強化石獲得（5%）
-                chestDrops.push({
-                  id: stoneMasterItem.id,
-                  name: stoneMasterItem.name,
-                  rarity: stoneMasterItem.rarity || 'legendary'
-                });
-                chestLogs.push({
-                  id: `chest-stone-${Date.now()}-${c}`,
-                  text: `🎁✨ 奇跡！宝箱から眩い光と共に【${stoneMasterItem.name}】を手に入れた！`,
-                  type: "system"
-                });
-              } else if (dice < 65) {
-                // 💰 ボーナスZeny獲得（60%）
-                const chestZeny = Math.floor(Math.random() * 300) + 100;
-                bonusChestZeny += chestZeny;
-                chestLogs.push({
-                  id: `chest-zeny-${Date.now()}-${c}`,
-                  text: `🎁 宝箱を発見！小袋から +${chestZeny} Zeny を獲得！`,
-                  type: "system"
-                });
-              } else {
-                // 📦 ハズレ（35%）
-                chestLogs.push({
-                  id: `chest-empty-${Date.now()}-${c}`,
-                  text: `🎁 宝箱を発見！…しかし中は古びたガラクタばかりだった。`,
-                  type: "system"
-                });
-              }
-            }
-
-            // 獲得した強化石をドロップ品プールへ追加！
-            if (chestDrops.length > 0) {
-              setDroppedItems(prev => [...prev, ...chestDrops]);
-            }
-            // ボーナスZenyを累積報酬へ追加！
-            if (bonusChestZeny > 0) {
-              setAccumulatedRewards(prev => ({ ...prev, gold: prev.gold + bonusChestZeny }));
-            }
-            // ログを一括出力！
-            setDisplayedLogs(prev => [...prev, ...chestLogs]);
-          }
-
-          // 👑 🆕 【三土手創世神特注：最深部ボス討伐検知センサー】
+          // 👑 🆕 【最深部ボス討伐検知センサー】
           const isMaxFloorCleared = currentFloor >= (currentQuestState?.floors || 1);
           if (isMaxFloorCleared) {
             setShowQuestClearTheater(true);
@@ -2502,6 +2494,72 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
       battle_count: 3, min_spawn: 1, max_spawn: 2, enemy_ids: [] 
     };
 
+    // 🎁 👑 【階層切り替え時に宝箱の出現スケジュールを厳密計算！】
+    if (forcedNextFloor) {
+      const totalBattle = Number(targetFloorCfg.battle_count || 3);
+      const targetChestCount = Math.min(totalBattle, Number(targetFloorCfg.chest_count || 0));
+      
+      const possibleBattles = Array.from({ length: totalBattle }, (_, i) => i + 1);
+      const shuffled = possibleBattles.sort(() => 0.5 - Math.random());
+      setChestSchedule(shuffled.slice(0, targetChestCount));
+    }
+
+    if (forcedNextFloor) {
+      if (targetFloorCfg.has_fountain) {
+        partyStateRef.current = partyStateRef.current.map(p => ({ ...p, hp: p.mhp, sp: p.msp }));
+        setParty(partyStateRef.current);
+        alert(`⛲ 【B${nextFloorNum}階】に設置された「回復の泉」を発見！部隊全員のHP・SPが全回復した！`);
+      }
+      setRemainingBattles(targetFloorCfg.battle_count);
+      remainingBattlesRef.current = targetFloorCfg.battle_count;
+    }
+
+    // 🎁 👑 【三土手神特注：奥進移動中・リアル宝箱発見＆開封イベント】
+    let chestLogs = [];
+    const totalChestCount = Number(targetFloorCfg.chest_count || 0);
+
+    // 階層に宝箱が設定されていれば、移動時に 70% の確率で発見！
+    if (totalChestCount > 0 && Math.random() < 0.70) {
+      const dice = Math.random() * 100;
+      const stoneMasterId = enhancementStoneIdRef.current;
+      const stoneMasterItem = masterItemsRef.current.find(i => i.id === stoneMasterId);
+
+      if (dice < 5 && stoneMasterItem) {
+        // 💎 5% : 超激レア 強化石
+        setDroppedItems(prev => [...prev, {
+          id: stoneMasterItem.id,
+          name: stoneMasterItem.name,
+          rarity: stoneMasterItem.rarity || 'legendary'
+        }]);
+        chestLogs.push({
+          id: `chest-stone-${Date.now()}`,
+          text: `🎁✨ 奇跡！奥へ進む道中の壁際で【${stoneMasterItem.name}】の入った宝箱を発見した！`,
+          type: "system"
+        });
+      } else if (dice < 65) {
+        // 💰 60% : ボーナスZeny
+        const chestZeny = Math.floor(Math.random() * 300) + 100;
+        setAccumulatedRewards(prev => ({ ...prev, gold: prev.gold + chestZeny }));
+        chestLogs.push({
+          id: `chest-zeny-${Date.now()}`,
+          text: `🎁 一行は移動中に古びた小箱を発見！小袋から +${chestZeny} Zeny を獲得！`,
+          type: "system"
+        });
+      } else {
+        // 📦 35% : 空っぽ
+        chestLogs.push({
+          id: `chest-empty-${Date.now()}`,
+          text: `🎁 一行は移動中に木箱を発見！…しかし中は埃を被ったガラクタだった。`,
+          type: "system"
+        });
+      }
+    }
+
+    // 宝箱発見ログがあれば、画面のログ一覧へ即座に追加！
+    if (chestLogs.length > 0) {
+      setDisplayedLogs(prev => [...prev, ...chestLogs]);
+    }
+
     if (forcedNextFloor) {
       // 泉が設置されている階層へ進んだ場合、神の慈悲で味方全員のHP・SPを100%全回復！
       if (targetFloorCfg.has_fountain) {
@@ -2609,6 +2667,8 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
     // 👑 🆕 【タイピング演出へのバトンパス】
     // 即座にログを出さず、バリケードを再構築してプロローグ演出をやり直す！
     setTypingText1('');
+    setTypingChestText('');
+    setChestTextAnimated('');
     setTypingText2('');
     setTypingText3('');
     setPrologueStep('typing_1'); 
@@ -2839,24 +2899,30 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
 
       {/* 👑 【三土手神特注：カジュアル目隠しシアターインフラ】 */}
       {prologueStep !== 'ready' ? (
-        /* 🎭 【演出進行中】1文字ずつ、指定した間でドラマチックにテキストを浮かび上がらせるシネマモード */
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '30px', background: '#020617', fontFamily: 'monospace', gap: '20px', lineHeight: '1.8' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '30px', background: '#020617', fontFamily: 'monospace', gap: '16px', lineHeight: '1.8' }}>
           
-          {/* 1行目：クエスト出発宣告 */}
+          {/* 1行目：進軍 */}
           {typingText1 && (
             <div style={{ color: '#ffd700', fontSize: '0.85rem', fontWeight: 'bold', background: '#1e1b4b', padding: '10px 14px', borderRadius: '6px', border: '1px solid #4338ca33' }}>
               {typingText1}
             </div>
           )}
 
-          {/* 2行目：環境・状況プロローグ */}
+          {/* 2行目：宝箱発見（前後と完全に同じ自然なデザイン＆1文字ずつ流れる仕様！） */}
+          {chestTextAnimated && (
+            <div style={{ color: '#ffd700', fontSize: '0.8rem', background: '#0f172a', padding: '10px 14px', borderRadius: '6px', border: '1px solid #1e293b' }}>
+              {chestTextAnimated}
+            </div>
+          )}
+
+          {/* 3行目：気配 */}
           {typingText2 && (
             <div style={{ color: '#ffd700', fontSize: '0.8rem', background: '#0f172a', padding: '10px 14px', borderRadius: '6px', border: '1px solid #1e293b' }}>
               {typingText2}
             </div>
           )}
 
-          {/* 3行目：魔物急襲サプライズ（！） */}
+          {/* 4行目：急襲 */}
           {typingText3 && (
             <div style={{ color: '#f43f5e', fontSize: '0.8rem', fontWeight: 'bold', border: '1px dashed #ef4444', padding: '10px 14px', borderRadius: '6px', background: '#1a0505', textAlign: 'center', animation: 'shake 0.3s ease-in-out' }}>
               {typingText3}

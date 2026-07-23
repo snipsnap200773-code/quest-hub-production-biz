@@ -5,6 +5,7 @@ import { supabase } from '../../../supabaseClient';
 const AdventureBlacksmith = ({ userId, onBack }) => {
   const [items, setItems] = useState([]);
   const [stoneCount, setStoneCount] = useState(0);
+  const [stoneItemId, setStoneItemId] = useState(null);
   const [zeny, setZeny] = useState(0);
   const [selectedItem, setSelectedItem] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,13 +30,17 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
       const { data: allMasterItems } = await supabase.from('game_master_items').select('*');
       const masterMap = allMasterItems ? Object.fromEntries(allMasterItems.map(m => [m.id, m])) : {};
 
+      // 強化石マスターID特定
+      const stoneMaster = allMasterItems?.find(i => i.name?.includes('強化石') || i.name?.includes('オリデオコン'));
+      if (stoneMaster) setStoneItemId(stoneMaster.id);
+
       // ① 共有倉庫（game_inventory）のアイテム取得
       const { data: invData } = await supabase
         .from('game_inventory')
         .select('*')
         .eq('user_id', userId);
 
-      // ② 全キャラクターの装備状態を取得（誰が何を装備しているかスキャン）
+      // ② 全キャラクターの装備状態を取得
       const { data: charData } = await supabase
         .from('game_characters')
         .select('*')
@@ -50,7 +55,7 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
           const master = masterMap[inv.item_id];
           if (!master) return;
 
-          if (master.name?.includes('強化石') || master.name?.includes('オリデオコン')) {
+          if (stoneMaster && inv.item_id === stoneMaster.id) {
             totalStones += Number(inv.count || 0);
           } else if (['weapon', 'armor'].includes(master.item_type) && inv.count > 0) {
             rawEquipList.push({
@@ -64,14 +69,14 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
               refine_level: Number(inv.refine_level || 0),
               base_atk: Number(master.atk || 0),
               base_def: Number(master.def || 0),
-              equipped_by: null, // 誰にも装備されていない
+              equipped_by: null,
               count: Number(inv.count || 0)
             });
           }
         });
       }
 
-      // B. キャラの着用中装備をスキャンしてリストへ合流！
+      // B. キャラの着用中装備をスキャン（refineはmetaから安全取得）
       if (charData) {
         const slotKeys = [
           'equip_right_hand', 'equip_left_hand', 'equip_head', 'equip_face',
@@ -80,22 +85,28 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
 
         charData.forEach(ch => {
           slotKeys.forEach(sKey => {
-            const itemId = ch[sKey];
-            if (itemId && masterMap[itemId]) {
-              const master = masterMap[itemId];
-              const refineVal = Number(ch[`${sKey}_refine`] || 0);
+            const equipVal = ch[sKey]; // UUID または マスターID
+            if (!equipVal) return;
+
+            // ① まず UUID で game_inventory のレコードを探す
+            const invRecord = invData?.find(i => i.id === equipVal);
+            const master = invRecord ? masterMap[invRecord.item_id] : masterMap[equipVal];
+
+            if (master) {
+              const refineVal = invRecord ? Number(invRecord.refine_level || 0) : 0;
 
               rawEquipList.push({
                 source: 'character',
                 character_id: ch.id,
+                character_raw: ch,
                 slot_key: sKey,
                 id: `char_${ch.id}_${sKey}`,
-                item_id: itemId,
+                item_id: master.id,
                 name: master.name,
                 type: master.item_type,
                 subtype: master.item_subtype,
                 rarity: master.rarity || 'common',
-                refine_level: refineVal,
+                refine_level: refineVal, // 倉庫側の本物の精錬値！
                 base_atk: Number(master.atk || 0),
                 base_def: Number(master.def || 0),
                 equipped_by: ch.custom_name || ch.job || '仲間',
@@ -106,16 +117,14 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
         });
       }
 
-      // C. 未強化品（+0かつ着用者なし）はアイテムIDごとにまとめて ×N 表示にするグループ化！
+      // C. 未強化品（+0かつ着用者なし）のグループ化
       const groupedMap = {};
       const finalList = [];
 
       rawEquipList.forEach(eq => {
-        // 装備中、またはすでに精錬(+1以上)されているものはまとめずに単独表示
         if (eq.equipped_by || eq.refine_level > 0) {
           finalList.push(eq);
         } else {
-          // 未強化の倉庫ストックは item_id で合算
           if (!groupedMap[eq.item_id]) {
             groupedMap[eq.item_id] = { ...eq };
           } else {
@@ -124,13 +133,11 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
         }
       });
 
-      // グループ化した未強化品をリストにドッキング
       Object.values(groupedMap).forEach(g => finalList.push(g));
 
       setStoneCount(totalStones);
       setItems(finalList);
 
-      // 選択中アイテムがあれば最新データへ自動更新
       if (selectedItem) {
         const updated = finalList.find(i => i.id === selectedItem.id);
         if (updated) setSelectedItem(updated);
@@ -189,19 +196,24 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
       // 1. Zeny減算
       await supabase.from('game_party_status').update({ zeny: zeny - cost.zeny }).eq('user_id', userId);
 
-      // 2. 強化石減算
-      const { data: stoneInv } = await supabase
-        .from('game_inventory')
-        .select('id, count, game_master_items!inner(name)')
-        .eq('user_id', userId)
-        .or('game_master_items.name.ilike.%強化石%,game_master_items.name.ilike.%オリデオコン%')
-        .gt('count', 0)
-        .limit(1)
-        .maybeSingle();
+      // 2. 強化石減算（シンプル＆確実なクエリへ改善）
+      if (stoneItemId) {
+        const { data: stoneInv } = await supabase
+          .from('game_inventory')
+          .select('id, count')
+          .eq('user_id', userId)
+          .eq('item_id', stoneItemId)
+          .gt('count', 0)
+          .limit(1)
+          .maybeSingle();
 
-      if (stoneInv) {
-        if (stoneInv.count <= 1) await supabase.from('game_inventory').delete().eq('id', stoneInv.id);
-        else await supabase.from('game_inventory').update({ count: stoneInv.count - 1 }).eq('id', stoneInv.id);
+        if (stoneInv) {
+          if (stoneInv.count <= 1) {
+            await supabase.from('game_inventory').delete().eq('id', stoneInv.id);
+          } else {
+            await supabase.from('game_inventory').update({ count: stoneInv.count - 1 }).eq('id', stoneInv.id);
+          }
+        }
       }
 
       // 3. 成功 / 失敗による計算
@@ -218,13 +230,18 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
         }
       }
 
-      // 4. ソース別（倉庫アイテムか、キャラ着用アイテムか）でDB更新の宛先を切り替え！
-      if (selectedItem.source === 'inventory') {
-        await supabase.from('game_inventory').update({ refine_level: nextRefine }).eq('id', selectedItem.id);
-      } else if (selectedItem.source === 'character') {
-        const updateData = {};
-        updateData[`${selectedItem.slot_key}_refine`] = nextRefine;
-        await supabase.from('game_characters').update(updateData).eq('id', selectedItem.character_id);
+      // 4. DB更新処理
+      // 👑 アプローチB：対象アイテムのインベントリUUID（game_inventoryのid）を特定して一発更新！
+      let targetInvId = selectedItem.id;
+      if (selectedItem.source === 'character') {
+        const { data: charRecord } = await supabase
+          .from('game_characters')
+          .select(selectedItem.slot_key)
+          .eq('id', selectedItem.character_id)
+          .single();
+        if (charRecord) {
+          targetInvId = charRecord[selectedItem.slot_key];
+        }
       }
 
       await loadBlacksmithData();

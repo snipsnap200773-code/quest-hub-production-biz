@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Sword, Sparkles, Archive, Coins, X, Key, ChevronUp, ChevronDown } from 'lucide-react';
+import { Shield, Sword, Sparkles, Archive, Coins, X, Key, ChevronUp, ChevronDown, UserCheck } from 'lucide-react';
 import { supabase } from '../../../supabaseClient';
 import { gameServices } from '../../../gameServices';
 
@@ -36,68 +36,108 @@ const AdventureInventory = ({ userId, onBack }) => {
         setZeny(partyData.zeny || 0);
       }
 
-      // 2. Supabaseからインベントリとマスターアイテム情報を直接JOIN取得！
+      // 2. アイテムマスター取得
+      const { data: allMasterItems } = await supabase.from('game_master_items').select('*');
+      const masterMap = allMasterItems ? Object.fromEntries(allMasterItems.map(m => [m.id, m])) : {};
+
+      // 3. Supabaseからインベントリ（倉庫）データを取得！
       const { data: warehouseStocks, error: invError } = await supabase
         .from('game_inventory')
-        .select(`
-          id,
-          item_id,
-          count,
-          is_favorite,
-          refine_level,
-          game_master_items!game_inventory_item_id_fkey (
-            name,
-            item_type,
-            rarity,
-            sell_price,
-            description
-          )
-        `)
+        .select('*')
         .eq('user_id', userId);
 
       if (invError) throw invError;
-      
-      if (warehouseStocks) {
-        // 👑 🆕 同じ item_id のデータを1つに集約（スタック）する集計マップ処理！
-        const groupedMap = {};
 
+      // 4. キャラクター装着中アイテムの取得（誰が何を装備しているかスキャン）
+      const { data: charData } = await supabase
+        .from('game_characters')
+        .select('*')
+        .eq('user_id', userId);
+
+      const rawItems = [];
+
+      // A. 倉庫ストックの抽出
+      if (warehouseStocks) {
         warehouseStocks.forEach(stock => {
           if (!stock.item_id || Number(stock.count || 0) <= 0) return;
 
-          const master = stock.game_master_items;
-          const itemId = stock.item_id;
+          const master = masterMap[stock.item_id];
           const basePrice = Number(master?.sell_price || 0);
           const finalSellValue = basePrice > 0 ? basePrice : 10;
+          const refineVal = Number(stock.refine_level || 0);
 
-          if (!groupedMap[itemId]) {
-            // まだマップに登録されていないアイテムなら新規作成
-            groupedMap[itemId] = {
-              id: stock.id, // 一括操作用の代表ID
-              ids: [stock.id], // 統合された全レコードのIDリスト
-              item_id: itemId,
-              refine_level: Number(stock.refine_level || 0),
-            name: stock.refine_level > 0 ? `+${stock.refine_level} ${master?.name}` : (master?.name || '未知のアイテム'),
-              type: master?.item_type || 'etc',
-              rarity: master?.rarity || 'common',
-              count: Number(stock.count || 0),
-              value: finalSellValue,
-              desc: master?.description || '詳細情報なし',
-              is_favorite: stock.is_favorite || false
-            };
-          } else {
-            // すでに登録済みのアイテムなら個数を加算し、IDを追加！
-            groupedMap[itemId].count += Number(stock.count || 0);
-            groupedMap[itemId].ids.push(stock.id);
-            // 統合した中に1つでも「お気に入り」があれば★表示を維持
-            if (stock.is_favorite) {
-              groupedMap[itemId].is_favorite = true;
-            }
-          }
+          rawItems.push({
+            id: stock.id,
+            ids: [stock.id],
+            item_id: stock.item_id,
+            refine_level: refineVal,
+            name: master?.name || '未知のアイテム',
+            type: master?.item_type || 'etc',
+            rarity: master?.rarity || 'common',
+            count: Number(stock.count || 0),
+            value: finalSellValue,
+            desc: master?.description || '詳細情報なし',
+            is_favorite: stock.is_favorite || false,
+            equipped_by: null // 倉庫ストック
+          });
         });
-
-        // オブジェクトから配列に変換してStateへ格納！
-        setItems(Object.values(groupedMap));
       }
+
+      // B. キャラの着用中武具の精査＆合流！
+      if (charData) {
+        const slotKeys = [
+          'equip_right_hand', 'equip_left_hand', 'equip_head', 'equip_face',
+          'equip_body', 'equip_glove', 'equip_garment', 'equip_shoes', 'equip_accessory'
+        ];
+
+        charData.forEach(ch => {
+          slotKeys.forEach(sKey => {
+            const equipVal = ch[sKey];
+            if (!equipVal) return;
+
+            const invRecord = warehouseStocks?.find(i => i.id === equipVal);
+            const master = invRecord ? masterMap[invRecord.item_id] : masterMap[equipVal];
+
+            if (master) {
+              rawItems.push({
+                id: `char_${ch.id}_${sKey}`,
+                ids: [`char_${ch.id}_${sKey}`],
+                item_id: master.id,
+                refine_level: invRecord ? Number(invRecord.refine_level || 0) : 0,
+                name: master.name,
+                type: master.item_type,
+                rarity: master.rarity || 'common',
+                count: 1,
+                value: Number(master.sell_price || 10),
+                desc: master.description || '詳細情報なし',
+                is_favorite: true,
+                equipped_by: ch.custom_name || ch.job || '仲間'
+              });
+            }
+          });
+        });
+      }
+
+      // C. 👑 精錬値・着用状況を識別して賢くグループ化！
+      const groupedMap = {};
+
+      rawItems.forEach(item => {
+        // グループ化キー：「アイテムID_精錬値_装備者」
+        // これにより「+2ロングソード [ファイター装備中]」と「未強化ロングソード」が絶対に混ざりません！
+        const groupKey = `${item.item_id}_refine:${item.refine_level}_eq:${item.equipped_by || 'none'}`;
+
+        if (!groupedMap[groupKey]) {
+          groupedMap[groupKey] = { ...item };
+        } else {
+          groupedMap[groupKey].count += item.count;
+          groupedMap[groupKey].ids.push(...item.ids);
+          if (item.is_favorite) groupedMap[groupKey].is_favorite = true;
+        }
+      });
+
+      // Stateへ格納！
+      setItems(Object.values(groupedMap));
+
     } catch (err) {
       console.error("倉庫データロードエラー:", err);
     } finally {
@@ -133,15 +173,19 @@ const AdventureInventory = ({ userId, onBack }) => {
   // 💳 売却コミット物流エンジン
   const handleFinalSell = async () => {
     if (!sellTargetItem || !userId) return;
+    if (sellTargetItem.equipped_by) {
+      alert("⚠️ キャラクターが装備中の武具は売却できません。装備を外してからお売りください。");
+      return;
+    }
 
-    const confirmMessage = `💰 【ギルド買取最終確認】\n\n${sellTargetItem.name} を [ ${sellCount} 個 ] 売却します。\n獲得資金: ${(sellTargetItem.value * sellCount).toLocaleString()} Zeny\n\n本当によろしいですか？`;
+    const confirmMessage = `💰 【ギルド買取最終確認】\n\n${sellTargetItem.refine_level > 0 ? `+${sellTargetItem.refine_level} ` : ''}${sellTargetItem.name} を [ ${sellCount} 個 ] 売却します。\n獲得資金: ${(sellTargetItem.value * sellCount).toLocaleString()} Zeny\n\n本当によろしいですか？`;
     
     if (!window.confirm(confirmMessage)) return;
 
     try {
       const totalEarned = sellTargetItem.value * sellCount;
 
-      // 1. Supabaseの game_party_status テーブルの所持金をダイレクト加算（存在しない場合は自動生成）
+      // 1. 所持金の加算
       const { data: currentWallet } = await supabase
         .from('game_party_status')
         .select('user_id, zeny')
@@ -160,7 +204,7 @@ const AdventureInventory = ({ userId, onBack }) => {
 
       if (walletError) throw walletError;
 
-      // 2. Supabaseの game_inventory テーブルの在庫数を引き算
+      // 2. 在庫数の減算
       const nextCount = sellTargetItem.count - sellCount;
       if (nextCount <= 0) {
         await supabase
@@ -186,12 +230,13 @@ const AdventureInventory = ({ userId, onBack }) => {
     }
   };
 
-  // 🌟 👑 【ここから追加】お気に入り（ロック）のトグル切り替えコミット
+  // お気に入りのトグル切り替えコミット
   const handleToggleFavorite = async (item) => {
     if (!item || !userId) return;
+    if (item.equipped_by) return; // 装備中は常に常時ロック扱い
+
     const nextStatus = !item.is_favorite;
 
-    // ローカルStateを最速先行更新
     setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_favorite: nextStatus } : i));
     if (selectedItem && selectedItem.id === item.id) {
       setSelectedItem(prev => ({ ...prev, is_favorite: nextStatus }));
@@ -206,22 +251,20 @@ const AdventureInventory = ({ userId, onBack }) => {
       if (error) throw error;
     } catch (err) {
       console.error("お気に入り更新失敗:", err);
-      // エラー時は書き戻し
       await loadWarehouseLogistics();
     }
   };
 
-  // 🧹 👑 【ここから追加】お気に入り以外を一括全売却する物流エンジン
+  // お気に入り以外を一括全売却する物流エンジン
   const handleBulkSell = async () => {
-    // 対象：お気に入り未設定 且つ クエスト品以外のアイテム
-    const targetItems = items.filter(i => !i.is_favorite && i.type !== 'quest' && i.count > 0);
+    // 対象：お気に入り未設定 且つ クエスト品以外のアイテム（装備中のものも自動保護）
+    const targetItems = items.filter(i => !i.is_favorite && !i.equipped_by && i.type !== 'quest' && i.count > 0);
 
     if (targetItems.length === 0) {
       alert("⚠️ 売却可能な「お気に入り未設定アイテム」はありません。");
       return;
     }
 
-    // 総売却個数 ＆ 合計金額をリアルタイム算出
     const totalCount = targetItems.reduce((sum, i) => sum + i.count, 0);
     const totalEarned = targetItems.reduce((sum, i) => sum + (i.value * i.count), 0);
 
@@ -233,7 +276,6 @@ const AdventureInventory = ({ userId, onBack }) => {
     try {
       const targetIds = targetItems.flatMap(i => i.ids || [i.id]);
 
-      // 1. 対象インベントリを一括物理削除
       const { error: delError } = await supabase
         .from('game_inventory')
         .delete()
@@ -241,7 +283,6 @@ const AdventureInventory = ({ userId, onBack }) => {
 
       if (delError) throw delError;
 
-      // 2. 所持金（Zeny）を一括合算加算
       const { data: currentWallet } = await supabase
         .from('game_party_status')
         .select('user_id, zeny')
@@ -264,7 +305,7 @@ const AdventureInventory = ({ userId, onBack }) => {
     } finally {
       setLoading(false);
     }
-  }; // 👑 【ここまで追加】
+  };
 
   if (loading) return <div style={{ color: '#34d399', textAlign: 'center', padding: '50px', fontFamily: 'monospace', fontSize: '0.85rem' }}>🎒 ギルド共有倉庫の在庫原帳を照合中...</div>;
 
@@ -301,7 +342,7 @@ const AdventureInventory = ({ userId, onBack }) => {
           </span>
         </div>
 
-        {/* 👑 🆕 一括売却実行ボタン */}
+        {/* 一括売却実行ボタン */}
         <button 
           onClick={handleBulkSell}
           style={{
@@ -342,7 +383,7 @@ const AdventureInventory = ({ userId, onBack }) => {
             onClick={() => setSelectedItem(item)} 
             style={{
               background: '#111827', border: '1px solid #1e293b', borderRadius: '12px', padding: '12px 15px', 
-              display: 'grid', gridTemplateColumns: '40px 1fr 45px', alignItems: 'center', cursor: 'pointer',
+              display: 'grid', gridTemplateColumns: '40px 1fr auto', alignItems: 'center', cursor: 'pointer',
               transition: 'border-color 0.15s, transform 0.15s'
             }}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#34d399'; e.currentTarget.style.transform = 'scale(1.01)'; }}
@@ -357,9 +398,16 @@ const AdventureInventory = ({ userId, onBack }) => {
             
             {/* Name & Desc */}
             <div style={{ overflow: 'hidden', paddingRight: '8px' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: getRarityColor(item.rarity), display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: item.refine_level > 0 ? '#ffd700' : getRarityColor(item.rarity), display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                 {item.is_favorite && <span style={{ color: '#ffd700', fontSize: '0.85rem' }}>★</span>}
-                <span>{item.name}</span>
+                <span>{item.refine_level > 0 ? `+${item.refine_level} ` : ''}{item.name}</span>
+
+                {/* 👤 装備中の仲間バッジ表示！ */}
+                {item.equipped_by && (
+                  <span style={{ fontSize: '0.58rem', background: '#0284c7', color: '#fff', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                    <UserCheck size={10} /> {item.equipped_by} 装備中
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                 {item.desc}
@@ -367,7 +415,7 @@ const AdventureInventory = ({ userId, onBack }) => {
             </div>
 
             {/* Count */}
-            <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: '900', color: '#94a3b8', background: '#1e293b', padding: '4px 0', borderRadius: '6px', width: '100%', textAlign: 'center' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', fontWeight: '900', color: '#94a3b8', background: '#1e293b', padding: '4px 8px', borderRadius: '6px', textAlign: 'center' }}>
               x{item.count}
             </div>
           </div>
@@ -388,7 +436,7 @@ const AdventureInventory = ({ userId, onBack }) => {
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            style={{ background: '#0f172a', width: '100%', maxWidth: '360px', borderRadius: '20px', border: `2px solid ${getRarityColor(selectedItem.rarity)}`, padding: '24px', position: 'relative', cursor: 'default' }}
+            style={{ background: '#0f172a', width: '100%', maxWidth: '360px', borderRadius: '20px', border: `2px solid ${selectedItem.refine_level > 0 ? '#ffd700' : getRarityColor(selectedItem.rarity)}`, padding: '24px', position: 'relative', cursor: 'default' }}
           >
             <button onClick={() => setSelectedItem(null)} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}><X size={20} /></button>
 
@@ -398,11 +446,13 @@ const AdventureInventory = ({ userId, onBack }) => {
               </div>
             </div>
 
-            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: getRarityColor(selectedItem.rarity), textAlign: 'center', fontWeight: 'bold' }}>{selectedItem.name}</h3>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', color: selectedItem.refine_level > 0 ? '#ffd700' : getRarityColor(selectedItem.rarity), textAlign: 'center', fontWeight: 'bold' }}>
+              {selectedItem.refine_level > 0 ? `+${selectedItem.refine_level} ` : ''}{selectedItem.name}
+            </h3>
             
             <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-              <span style={{ fontSize: '0.6rem', color: selectedItem.type === 'quest' ? '#f43f5e' : '#94a3b8', background: selectedItem.type === 'quest' ? '#270510' : '#1e293b', padding: '2px 8px', borderRadius: '4px', border: selectedItem.type === 'quest' ? '1px solid #e11d48' : 'none', fontWeight: 'bold' }}>
-                {selectedItem.type === 'weapon' ? '武器・装備' : selectedItem.type === 'card' ? 'カード型秘宝' : selectedItem.type === 'quest' ? '⚠️ 貴重なクエストアイテム' : '消耗品アイテム'}
+              <span style={{ fontSize: '0.6rem', color: selectedItem.equipped_by ? '#38bdf8' : (selectedItem.type === 'quest' ? '#f43f5e' : '#94a3b8'), background: selectedItem.equipped_by ? '#0369a1' : (selectedItem.type === 'quest' ? '#270510' : '#1e293b'), padding: '2px 8px', borderRadius: '4px', border: selectedItem.type === 'quest' ? '1px solid #e11d48' : 'none', fontWeight: 'bold' }}>
+                {selectedItem.equipped_by ? `👤 ${selectedItem.equipped_by} 装備中` : (selectedItem.type === 'weapon' ? '武器・装備' : selectedItem.type === 'card' ? 'カード型秘宝' : selectedItem.type === 'quest' ? '⚠️ 貴重なクエストアイテム' : '消耗品アイテム')}
               </span>
             </div>
 
@@ -421,29 +471,35 @@ const AdventureInventory = ({ userId, onBack }) => {
               </div>
             </div>
 
-            {/* 👑 🆕 お気に入り（ロック）スイッチボタン */}
-            <div style={{ marginBottom: '16px' }}>
-              <button 
-                onClick={() => handleToggleFavorite(selectedItem)}
-                style={{
-                  width: '100%', padding: '8px', borderRadius: '8px',
-                  background: selectedItem.is_favorite ? '#312e81' : '#0f172a',
-                  color: selectedItem.is_favorite ? '#ffd700' : '#94a3b8',
-                  border: selectedItem.is_favorite ? '1px solid #6366f1' : '1px solid #334155',
-                  fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
-                }}
-              >
-                {selectedItem.is_favorite ? '★ お気に入り解除 (ロック中)' : '☆ お気に入りに登録 (ロック)'}
-              </button>
-            </div>
+            {/* お気に入り（ロック）スイッチボタン */}
+            {!selectedItem.equipped_by && (
+              <div style={{ marginBottom: '16px' }}>
+                <button 
+                  onClick={() => handleToggleFavorite(selectedItem)}
+                  style={{
+                    width: '100%', padding: '8px', borderRadius: '8px',
+                    background: selectedItem.is_favorite ? '#312e81' : '#0f172a',
+                    color: selectedItem.is_favorite ? '#ffd700' : '#94a3b8',
+                    border: selectedItem.is_favorite ? '1px solid #6366f1' : '1px solid #334155',
+                    fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+                  }}
+                >
+                  {selectedItem.is_favorite ? '★ お気に入り解除 (ロック中)' : '☆ お気に入りに登録 (ロック)'}
+                </button>
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setSelectedItem(null)} style={{ flex: 1, padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}>
                 閉じる
               </button>
               
-              {selectedItem.is_favorite ? (
+              {selectedItem.equipped_by ? (
+                <button disabled style={{ flex: 2, padding: '10px', borderRadius: '8px', background: '#0284c722', color: '#38bdf8', border: '1px solid #0284c7', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'not-allowed' }}>
+                  👤 装備中 (売却不可)
+                </button>
+              ) : selectedItem.is_favorite ? (
                 <button disabled style={{ flex: 2, padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#ffd700', border: '1px solid #ffd70044', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'not-allowed' }}>
                   🔒 ロック中 (売却不可)
                 </button>
@@ -478,7 +534,9 @@ const AdventureInventory = ({ userId, onBack }) => {
               <span style={{ fontSize: '0.7rem', color: '#ef4444', background: '#311010', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold' }}>
                 ⚖️ ギルド買取カウンター
               </span>
-              <h4 style={{ margin: '12px 0 4px 0', fontSize: '0.95rem', color: '#fff' }}>{sellTargetItem.name}</h4>
+              <h4 style={{ margin: '12px 0 4px 0', fontSize: '0.95rem', color: '#fff' }}>
+                {sellTargetItem.refine_level > 0 ? `+${sellTargetItem.refine_level} ` : ''}{sellTargetItem.name}
+              </h4>
               <p style={{ margin: 0, fontSize: '0.65rem', color: '#64748b' }}>売却する数量を選んでください（最大: {sellTargetItem.count}個）</p>
             </div>
 
