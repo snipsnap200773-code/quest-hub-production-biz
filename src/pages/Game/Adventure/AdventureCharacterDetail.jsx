@@ -257,6 +257,10 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
     // 1. まず該当部位に装備可能なアイテムを抽出
     const eligibleList = guildInventory.filter(inv => {
       if (!inv.count || inv.count <= 0) return false;
+      
+      // 💡 すでに誰かが装備中のレコード自体は、着せ替え候補一覧から除外する！
+      if (inv.equipped_character_id) return false;
+
       const master = inv.game_master_items;
       if (!master) return false;
       
@@ -1211,13 +1215,19 @@ const slotRefineVal = Number(equippedItem?.refine_level || 0);
                             key={inv.id} 
                             // 別の武具へ変更する際のクリック処理（アプローチB・個体UUIDの厳密な一意割り当て）
   onClick={() => {
-    // 1. 倉庫（guildInventory）から、この item_id を持っており、かつ誰にも装備されていない個体を探す
-    const availableInv = guildInventory.find(i => i.item_id === inv.item_id && Number(i.count || 0) > 0);
+    // 1. 倉庫（guildInventory）から「同じ item_id」かつ「誰にも装備されていない (equipped_character_id が空)」個体を1つ抽出！
+    const availableInv = guildInventory.find(i => 
+      i.item_id === inv.item_id && 
+      !i.equipped_character_id && 
+      Number(i.count || 0) > 0
+    );
+
     if (!availableInv) {
-      alert("⚠️ 倉庫に有効な在庫がありません。");
+      alert("⚠️ 未装備の在庫が共有倉庫にありません！");
       return;
     }
-    // 2. その個体の完全な固有UUID (availableInv.id) を装備関数へ手渡す！
+
+    // 2. 確実に被っていない未着用の固有UUIDを渡す！
     handleEquipItem(slot.key, availableInv.id);
   }}
                             style={{ background: '#130e09', padding: '6px 10px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', border: '1px solid #23190e', marginBottom: '3px' }}
