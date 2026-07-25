@@ -49,7 +49,24 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
       let totalStones = 0;
       const rawEquipList = [];
 
-      // A. 倉庫内の装備・強化石をスキャン
+      // 1. 各インベントリUUIDが現在誰かに装備されているかをカウント集計
+      const equippedUuidMap = {};
+      if (charData) {
+        const slotKeys = [
+          'equip_right_hand', 'equip_left_hand', 'equip_head', 'equip_face',
+          'equip_body', 'equip_glove', 'equip_garment', 'equip_shoes', 'equip_accessory'
+        ];
+        charData.forEach(ch => {
+          slotKeys.forEach(sKey => {
+            const equipVal = ch[sKey];
+            if (equipVal) {
+              equippedUuidMap[equipVal] = (equippedUuidMap[equipVal] || 0) + 1;
+            }
+          });
+        });
+      }
+
+      // A. 倉庫内の装備・強化石をスキャン（装備中の分を引き算！）
       if (invData) {
         invData.forEach(inv => {
           const master = masterMap[inv.item_id];
@@ -57,21 +74,27 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
 
           if (stoneMaster && inv.item_id === stoneMaster.id) {
             totalStones += Number(inv.count || 0);
-          } else if (['weapon', 'armor'].includes(master.item_type) && inv.count > 0) {
-            rawEquipList.push({
-              source: 'inventory',
-              id: inv.id,
-              item_id: inv.item_id,
-              name: master.name,
-              type: master.item_type,
-              subtype: master.item_subtype,
-              rarity: master.rarity || 'common',
-              refine_level: Number(inv.refine_level || 0),
-              base_atk: Number(master.atk || 0),
-              base_def: Number(master.def || 0),
-              equipped_by: null,
-              count: Number(inv.count || 0)
-            });
+          } else if (['weapon', 'armor'].includes(master.item_type)) {
+            // 💡 装備されている数を差し引いた倉庫の実際の未着用在庫数を算出
+            const equippedCount = equippedUuidMap[inv.id] || 0;
+            const remainCount = Number(inv.count || 0) - equippedCount;
+
+            if (remainCount > 0) {
+              rawEquipList.push({
+                source: 'inventory',
+                id: inv.id,
+                item_id: inv.item_id,
+                name: master.name,
+                type: master.item_type,
+                subtype: master.item_subtype,
+                rarity: master.rarity || 'common',
+                refine_level: Number(inv.refine_level || 0),
+                base_atk: Number(master.atk || 0),
+                base_def: Number(master.def || 0),
+                equipped_by: null,
+                count: remainCount // ⭕ 差し引き後の正確な余剰個数！
+              });
+            }
           }
         });
       }
@@ -230,8 +253,7 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
         }
       }
 
-      // 4. DB更新処理
-      // 👑 アプローチB：対象アイテムのインベントリUUID（game_inventoryのid）を特定して一発更新！
+      // 4. DB更新処理（特定したUUIDの game_inventory レコードを直接更新）
       let targetInvId = selectedItem.id;
       if (selectedItem.source === 'character') {
         const { data: charRecord } = await supabase
@@ -242,6 +264,15 @@ const AdventureBlacksmith = ({ userId, onBack }) => {
         if (charRecord) {
           targetInvId = charRecord[selectedItem.slot_key];
         }
+      }
+
+      if (targetInvId) {
+        const { error: invErr } = await supabase
+          .from('game_inventory')
+          .update({ refine_level: nextRefine })
+          .eq('id', targetInvId);
+
+        if (invErr) throw invErr;
       }
 
       await loadBlacksmithData();

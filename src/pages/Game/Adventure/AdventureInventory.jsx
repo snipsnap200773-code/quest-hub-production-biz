@@ -56,34 +56,57 @@ const AdventureInventory = ({ userId, onBack }) => {
 
       const rawItems = [];
 
-      // A. 倉庫ストックの抽出
+      // 1. 各 warehouseStock (UUID) が現在誰かに装備されているかカウント集計
+      const equippedUuidMap = {}; // uuid -> 装備されている数
+      if (charData) {
+        const slotKeys = [
+          'equip_right_hand', 'equip_left_hand', 'equip_head', 'equip_face',
+          'equip_body', 'equip_glove', 'equip_garment', 'equip_shoes', 'equip_accessory'
+        ];
+        charData.forEach(ch => {
+          slotKeys.forEach(sKey => {
+            const equipVal = ch[sKey];
+            if (equipVal) {
+              equippedUuidMap[equipVal] = (equippedUuidMap[equipVal] || 0) + 1;
+            }
+          });
+        });
+      }
+
+      // A. 倉庫ストックの抽出（装備されている分を差し引く！）
       if (warehouseStocks) {
         warehouseStocks.forEach(stock => {
-          if (!stock.item_id || Number(stock.count || 0) <= 0) return;
+          if (!stock.item_id) return;
 
           const master = masterMap[stock.item_id];
           const basePrice = Number(master?.sell_price || 0);
           const finalSellValue = basePrice > 0 ? basePrice : 10;
           const refineVal = Number(stock.refine_level || 0);
 
-          rawItems.push({
-            id: stock.id,
-            ids: [stock.id],
-            item_id: stock.item_id,
-            refine_level: refineVal,
-            name: master?.name || '未知のアイテム',
-            type: master?.item_type || 'etc',
-            rarity: master?.rarity || 'common',
-            count: Number(stock.count || 0),
-            value: finalSellValue,
-            desc: master?.description || '詳細情報なし',
-            is_favorite: stock.is_favorite || false,
-            equipped_by: null // 倉庫ストック
-          });
+          // 💡 装備されている数を引いた「純粋な倉庫未着用ストック数」を計算
+          const equippedCount = equippedUuidMap[stock.id] || 0;
+          const remainCount = Number(stock.count || 0) - equippedCount;
+
+          if (remainCount > 0) {
+            rawItems.push({
+              id: stock.id,
+              ids: [stock.id],
+              item_id: stock.item_id,
+              refine_level: refineVal,
+              name: master?.name || '未知のアイテム',
+              type: master?.item_type || 'etc',
+              rarity: master?.rarity || 'common',
+              count: remainCount, // ⭕ 差し引き後の数をセット！
+              value: finalSellValue,
+              desc: master?.description || '詳細情報なし',
+              is_favorite: stock.is_favorite || false,
+              equipped_by: null
+            });
+          }
         });
       }
 
-      // B. キャラの着用中武具の精査＆合流！
+      // B. キャラの着用中武具を単独枠として追加
       if (charData) {
         const slotKeys = [
           'equip_right_hand', 'equip_left_hand', 'equip_head', 'equip_face',

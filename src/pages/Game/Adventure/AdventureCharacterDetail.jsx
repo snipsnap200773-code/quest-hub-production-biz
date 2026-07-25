@@ -49,12 +49,20 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   const [equippedCards, setEquippedCards] = useState([]);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState(null); // カードを挿しようとしているスロットの番号
 
+  // 🆕 全キャラクター一覧を保持するStateを先頭に追加
+  const [allCharactersList, setAllCharactersList] = useState([]);
+
+  // ⚔️ 👑 🆕 【ここを追加！】装備比較ポップアップ用のState
+  const [comparingItem, setComparingItem] = useState(null);
+  const [comparingSlotKey, setComparingSlotKey] = useState(null);
+
   const loadCharAndInventoryData = async () => {
     setLoading(true);
-    // 🆕 固定の testUserId の変数定義を完全撤去！
     
-    // 🆕 Props から流れてくる動的な userId を引数へダイレクトにマウント！
+    // Props から流れてくる動的な userId を引数へダイレクトにマウント！
     const charList = await gameServices.getPlayerCharacters(userId);
+    if (charList) setAllCharactersList(charList); // ⭕ 全キャラのデータを保持！
+
     const data = charList?.find(c => c.id === characterId);
     const invData = await gameServices.getPlayerInventory(userId);
     if (invData) setGuildInventory(invData);
@@ -250,20 +258,23 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
     finally { setIsEquipping(false); }
   };
 
-  // 🛡️ 【神仕様リフォーム】直接ギルド共有倉庫（guildInventory）からサジェスト！
+// 🛡️ 装備選択候補リストの取得（自分が今着けている品は除外）
   const getEligibleItemsForSlot = (slotKey) => {
     if (!guildInventory || guildInventory.length === 0) return [];
 
-    // 1. まず該当部位に装備可能なアイテムを抽出
+    // 💡 1. 現在開いているキャラクターがこのスロット(slotKey)に装備しているUUIDを取得
+    const currentEquippedId = character.equips?.[slotKey]?.inventory_id || character.equips?.[slotKey]?.id;
+
+    // 2. 部位に適合するアイテムを抽出
     const eligibleList = guildInventory.filter(inv => {
       if (!inv.count || inv.count <= 0) return false;
-      
-      // 💡 すでに誰かが装備中のレコード自体は、着せ替え候補一覧から除外する！
-      if (inv.equipped_character_id) return false;
+
+      // 🛑 自分が現在このスロットに装備中のレコードそのものは候補から除外！
+      if (currentEquippedId && inv.id === currentEquippedId) return false;
 
       const master = inv.game_master_items;
       if (!master) return false;
-      
+
       if (slotKey === 'right_hand') return master.item_type === 'weapon';
       if (slotKey === 'left_hand') return master.item_subtype === '盾' || master.item_type === 'weapon';
       if (slotKey === 'head') return master.item_subtype === '兜';
@@ -276,18 +287,29 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       return false;
     });
 
-    // 2. 同じ item_id を1つの表示枠にまとめて count を合算！
+    // 3. 「マスターID_精錬値_装備者」ごとにグループ化
     const groupedMap = {};
     eligibleList.forEach(inv => {
       const master = inv.game_master_items;
       const itemId = inv.item_id || master?.id;
       if (!itemId) return;
-      
+
       const refineVal = Number(inv.refine_level || 0);
-      const groupKey = `${itemId}_refine:${refineVal}`; // 精錬値ごとにグループ化
+      
+      // 誰が装備しているかを判定
+      const eqChar = allCharactersList.find(c => c.id === inv.equipped_character_id);
+      const eqBy = eqChar ? (eqChar.custom_name || eqChar.meta?.job || '仲間') : null;
+      const isEquippedByMe = inv.equipped_character_id === character.id;
+
+      const groupKey = `${itemId}_refine:${refineVal}_eq:${eqBy || 'none'}`;
 
       if (!groupedMap[groupKey]) {
-        groupedMap[groupKey] = { ...inv, count: Number(inv.count || 0) };
+        groupedMap[groupKey] = { 
+          ...inv, 
+          equipped_by: eqBy,
+          is_equipped_by_me: isEquippedByMe, // 自分自身の装備かどうかのフラグ
+          count: Number(inv.count || 0) 
+        };
       } else {
         groupedMap[groupKey].count += Number(inv.count || 0);
       }
@@ -295,7 +317,6 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
 
     return Object.values(groupedMap);
   };
-
   // 🎴 🆕 ギルド倉庫から「現在選んでいる部位に有効なカード」だけを逆引きサジェストする関数
   const getEligibleCardsForSlot = (slotKey) => {
     if (!guildInventory || guildInventory.length === 0) return [];
@@ -328,30 +349,23 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
 };
 const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
 
-// 🔨 👑 精錬値 (refine_level) リアルタイムステータス合算エンジン
+// 🔨 👑 精錬値ボーナスの画面表示用内訳計算（二重足し算は削除！）
 let refineAtkBonus = 0;
 let refineDefBonus = 0;
-// JSON文字列化されているケースも考慮して安全にパース
-const charMeta = character.meta || {};
-const charRefines = typeof charMeta === 'string' ? (JSON.parse(charMeta).refines || {}) : (charMeta.refines || {});
 
 EQUIP_SLOTS.forEach(slot => {
   const eqItem = character.equips?.[slot.key];
   if (eqItem) {
-    const rVal = Number(charRefines[`equip_${slot.key}_refine`] || eqItem.refine_level || 0);
+    const rVal = Number(eqItem.refine_level || 0);
     if (rVal > 0) {
       if (eqItem.item_type === 'weapon') {
         refineAtkBonus += rVal * 5; // ⚔️ 武器1精錬あたり ATK+5
       } else {
-        refineDefBonus += rVal * 2; // 🛡️ 防具1精錬あたり DEF+2 (武器以外は一律防具扱い)
+        refineDefBonus += rVal * 2; // 🛡️ 防具1精錬あたり DEF+2
       }
     }
   }
 });
-
-// 計算された最終ステータスへ直撃合流！
-ro.atk = ro.atk + refineAtkBonus;
-ro.def = ro.def + refineDefBonus;
 
 // 🔮 👑 【三土手創世神特注：常時発動型パッシブスキル・詳細画面リアルタイム同期インジェクション】
 let passiveFleeBonus = 0;
@@ -1210,46 +1224,66 @@ const slotRefineVal = Number(equippedItem?.refine_level || 0);
                         const masterItem = inv.game_master_items;
                         if (!masterItem) return null;
 
+                        const refineVal = Number(inv.refine_level || 0);
+                        const isOtherCharEquipped = inv.equipped_by && !inv.is_equipped_by_me;
+
                         return (
                           <div 
                             key={inv.id} 
-                            // 別の武具へ変更する際のクリック処理（アプローチB・個体UUIDの厳密な一意割り当て）
-  onClick={() => {
-    // 1. 倉庫（guildInventory）から「同じ item_id」かつ「誰にも装備されていない (equipped_character_id が空)」個体を1つ抽出！
-    const availableInv = guildInventory.find(i => 
-      i.item_id === inv.item_id && 
-      !i.equipped_character_id && 
-      Number(i.count || 0) > 0
-    );
+                            onClick={() => {
+                              if (inv.is_equipped_by_me) return; // 自分の現在の装備なら無視
 
-    if (!availableInv) {
-      alert("⚠️ 未装備の在庫が共有倉庫にありません！");
-      return;
-    }
+                              // 💡 他のキャラクターが装備している場合のみ横取り確認アラートを出す
+                              if (isOtherCharEquipped) {
+                                const confirmMsg = `⚔️ 【装備の横取り確認】\n\nこの武具は現在【${inv.equipped_by}】が装備中です。\n${character.custom_name || character.meta?.job} に装備させ替えますか？`;
+                                if (!window.confirm(confirmMsg)) return;
+                              }
 
-    // 2. 確実に被っていない未着用の固有UUIDを渡す！
-    handleEquipItem(slot.key, availableInv.id);
-  }}
+                              // 🚀 ⭕ いきなり装備せず、比較モーダルを起動！
+                              setComparingSlotKey(slot.key);
+                              setComparingItem(inv);
+                            }}
                             style={{ background: '#130e09', padding: '6px 10px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', border: '1px solid #23190e', marginBottom: '3px' }}
                           >
                             <div>
-                              <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#eee' }}>
-                                {masterItem.name} <span style={{ color: '#ba9a6f', fontSize: '0.62rem' }}>[{masterItem.slot_count || 0}穴]</span>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#eee', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                {refineVal > 0 && <span style={{ color: '#ffd700' }}>+{refineVal}</span>}
+                                <span>{masterItem.name}</span>
+                                <span style={{ color: '#ba9a6f', fontSize: '0.62rem' }}>[{masterItem.slot_count || 0}穴]</span>
+                                
+                                {/* 👤 装備者バッジ */}
+                                {inv.equipped_by && (
+                                  <span style={{ 
+                                    fontSize: '0.55rem', 
+                                    background: inv.is_equipped_by_me ? '#059669' : '#0284c7', 
+                                    color: '#fff', 
+                                    padding: '1px 5px', 
+                                    borderRadius: '3px',
+                                    fontWeight: 'bold'
+                                  }}>
+                                    👤 {inv.equipped_by} 装備中
+                                  </span>
+                                )}
                               </div>
-                              {/* 🔮 🆕 武具選択ポップアップ直撃：ATKやDEFを色鮮やかにハイライト強調して視認性爆上げ！ */}
+
                               <div style={{ fontSize: '0.58rem', color: '#887355', marginTop: '1px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-  {/* 🏹 🆕 レンジ表示を追加 */}
-  <span style={{ color: masterItem.weapon_range === 'L' ? '#34d399' : '#f59e0b', fontWeight: 'bold' }}>
-    {masterItem.weapon_range === 'L' ? '🏹Lレンジ' : '🗡️Sレンジ'}
-  </span>
-  {masterItem.atk ? <span style={{ color: '#f43f5e', fontWeight: 'bold' }}>⚔️ATK:{masterItem.atk}</span> : null}
-                                {masterItem.def ? <span style={{ color: '#34d399', fontWeight: 'bold' }}>🛡️DEF:+{masterItem.def}</span> : null}
-                                {masterItem.mdef ? <span style={{ color: '#38bdf8', fontWeight: 'bold' }}>🔮MDEF:+{masterItem.mdef}</span> : null}
-                                <span style={{ color: '#64748b' }}>({masterItem.description})</span>
+                                <span style={{ color: masterItem.weapon_range === 'L' ? '#34d399' : '#f59e0b', fontWeight: 'bold' }}>
+                                  {masterItem.weapon_range === 'L' ? '🏹Lレンジ' : '🗡️Sレンジ'}
+                                </span>
+                                {masterItem.atk ? <span style={{ color: '#f43f5e', fontWeight: 'bold' }}>⚔️ATK:{masterItem.atk + (refineVal * 5)}</span> : null}
+                                {masterItem.def ? <span style={{ color: '#34d399', fontWeight: 'bold' }}>🛡️DEF:+{masterItem.def + (refineVal * 2)}</span> : null}
                                 <span style={{ color: '#ffd700' }}>(残:{inv.count}個)</span>
                               </div>
                             </div>
-                            <span style={{ fontSize: '0.6rem', color: '#34d399', fontWeight: 'bold' }}>装着 ➔</span>
+
+                            {/* 💡 ボタン表示の制御：自分が装備中なら非表示、他キャラなら横取りボタン */}
+                            {inv.is_equipped_by_me ? (
+                              <span style={{ fontSize: '0.6rem', color: '#059669', fontWeight: 'bold' }}>装着中</span>
+                            ) : (
+                              <span style={{ fontSize: '0.6rem', color: '#34d399', fontWeight: 'bold' }}>
+                                {inv.equipped_by ? '付け替える ➔' : '装着 ➔'}
+                              </span>
+                            )}
                           </div>
                         );
                       })}
@@ -1274,31 +1308,47 @@ const slotRefineVal = Number(equippedItem?.refine_level || 0);
               // 未強化品（+0かつ非着用）を1行にまとめるグループ化処理
               const rawInvItems = [];
               
-              // 1. 倉庫のアイテム
+              // 1. 現在装備されているアイテム（UUID）を判定
+              const currentEquippedUuid = character.equips ? Object.values(character.equips).map(e => e?.inventory_id || e?.id).filter(Boolean) : [];
+
+              // 2. 倉庫のアイテム（装備分を引いてプッシュ）
               guildInventory.forEach(inv => {
                 const item = inv.game_master_items;
                 if (!item || inv.count <= 0) return;
-                rawInvItems.push({
-                   ...inv,
-                   refine_level: Number(inv.refine_level || 0),
-                   equipped_by: null
-                });
+
+                // 自分が装備している場合はその分引き算
+                const isEq = inv.equipped_character_id === character.id || currentEquippedUuid.includes(inv.id);
+                const realCount = isEq ? Math.max(0, Number(inv.count || 0) - 1) : Number(inv.count || 0);
+
+                if (realCount > 0) {
+                  rawInvItems.push({
+                     ...inv,
+                     count: realCount, // ⭕ 引き算後の余剰ストック数
+                     refine_level: Number(inv.refine_level || 0),
+                     equipped_by: null
+                  });
+                }
               });
 
-              // 2. 現在のキャラが装備しているアイテム（アプローチB）
-EQUIP_SLOTS.forEach(slot => {
-  const eqItem = character.equips?.[slot.key];
-  if (eqItem) {
-    rawInvItems.push({
-      id: `char_eq_${slot.key}`,
-      game_master_items: eqItem,
-      item_id: eqItem.id,
-      count: 1,
-      refine_level: Number(eqItem.refine_level || 0), // 結合済みの精錬値！
-      equipped_by: character.custom_name || character.job || '装備中'
-    });
-  }
-});
+              // 2. 現在のキャラが装備しているアイテム
+              if (allCharactersList && allCharactersList.length > 0) {
+                allCharactersList.forEach(ch => {
+                  EQUIP_SLOTS.forEach(slot => {
+                    const eqItem = ch.equips?.[slot.key];
+                    if (eqItem) {
+                      rawInvItems.push({
+                        id: `char_${ch.id}_eq_${slot.key}`,
+                        game_master_items: eqItem,
+                        item_id: eqItem.id,
+                        count: 1,
+                        refine_level: Number(eqItem.refine_level || 0),
+                        // ⭕ 装備しているそれぞれのキャラクター名を表示！
+                        equipped_by: ch.custom_name || ch.meta?.job || '仲間'
+                      });
+                    }
+                  });
+                });
+              }
 
               // グループ化処理
               const groupedMap = {};
@@ -1327,10 +1377,18 @@ EQUIP_SLOTS.forEach(slot => {
                 return (
                   <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#130e09', padding: '8px 12px', borderRadius: '6px', fontSize: '0.72rem', border: '1px solid #1c140a' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 'bold', color: refineVal > 0 ? '#ffd700' : (item.rarity === 'legendary' ? '#f59e0b' : '#fff') }}>
                           {refineVal > 0 ? `+${refineVal} ` : ''}{item.name}
                         </span>
+
+                        {/* 👤 装備中のキャラ名バッジを表示！ */}
+                        {inv.equipped_by && (
+                          <span style={{ fontSize: '0.58rem', background: '#0284c7', color: '#fff', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                            👤 {inv.equipped_by} 装備中
+                          </span>
+                        )}
+
                         <span style={{ fontSize: '0.58rem', color: '#ba9a6f', background: '#22150b', padding: '1px 5px', borderRadius: '3px', border: '1px solid #3a2d1a' }}>
                           {item.item_subtype}
                         </span>
@@ -1371,6 +1429,110 @@ EQUIP_SLOTS.forEach(slot => {
           </div>
         </div>
       )}
+
+      {/* ⚔️ 👑 🆕 【ここから末尾へ丸ごと追加！】装備比較プレビューモーダル ─── */}
+      {comparingItem && comparingSlotKey && (() => {
+        const currentEq = character.equips?.[comparingSlotKey];
+        const newMaster = comparingItem.game_master_items;
+        const newRefine = Number(comparingItem.refine_level || 0);
+
+        // 現在の攻撃力/防御力補正
+        const curAtk = currentEq ? (currentEq.atk || 0) + (Number(currentEq.refine_level || 0) * 5) : 0;
+        const curDef = currentEq ? (currentEq.def || 0) + (Number(currentEq.refine_level || 0) * 2) : 0;
+
+        // 装着後の攻撃力/防御力補正
+        const newAtk = newMaster ? (newMaster.atk || 0) + (newRefine * 5) : 0;
+        const newDef = newMaster ? (newMaster.def || 0) + (newRefine * 2) : 0;
+
+        // 差分計算
+        const diffAtk = newAtk - curAtk;
+        const diffDef = newDef - curDef;
+
+        return (
+          <div 
+            onClick={() => setComparingItem(null)}
+            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 3000, padding: '20px', backdropFilter: 'blur(6px)' }}
+          >
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: '#0e0b07', width: '100%', maxWidth: '360px', borderRadius: '16px', border: '1px solid #ffd700', padding: '20px', boxShadow: '0 0 25px rgba(255,215,0,0.15)' }}
+            >
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '1rem', color: '#ffd700', textAlign: 'center', fontWeight: 'bold', fontFamily: 'serif' }}>
+                ⚔️ 装備比較プレビュー
+              </h3>
+
+              {/* 武具のビフォーアフター比較 */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 30px 1fr', gap: '8px', alignItems: 'center', background: '#161109', padding: '12px', borderRadius: '10px', border: '1px solid #3a2d1a', marginBottom: '16px' }}>
+                {/* 現在 */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '0.58rem', color: '#887355', display: 'block', marginBottom: '4px' }}>【現在装着中】</span>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: currentEq ? '#fff' : '#64748b' }}>
+                    {currentEq ? `${currentEq.refine_level > 0 ? `+${currentEq.refine_level} ` : ''}${currentEq.name}` : '未装備'}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', color: '#ffd700', fontWeight: 'bold' }}>➔</div>
+
+                {/* 変更後 */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '0.58rem', color: '#34d399', display: 'block', marginBottom: '4px' }}>【変更候補】</span>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ffd700' }}>
+                    {newRefine > 0 ? `+${newRefine} ` : ''}{newMaster?.name}
+                  </div>
+                </div>
+              </div>
+
+              {/* ステータス変化（差分） */}
+              <div style={{ background: '#120d08', padding: '12px', borderRadius: '10px', border: '1px solid #23190e', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px', fontSize: '0.75rem' }}>
+                {newMaster?.item_type === 'weapon' ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#887355' }}>⚔️ 物理ATK変化:</span>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>
+                      <span style={{ color: '#94a3b8' }}>{ro.atk}</span>
+                      <span style={{ color: '#ffd700', margin: '0 6px' }}>➔</span>
+                      <span style={{ color: diffAtk >= 0 ? '#34d399' : '#f43f5e' }}>
+                        {ro.atk + diffAtk} ({diffAtk >= 0 ? `+${diffAtk}` : diffAtk})
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#887355' }}>🛡️ 物理DEF変化:</span>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>
+                      <span style={{ color: '#94a3b8' }}>+{ro.def}</span>
+                      <span style={{ color: '#ffd700', margin: '0 6px' }}>➔</span>
+                      <span style={{ color: diffDef >= 0 ? '#34d399' : '#f43f5e' }}>
+                        +{ro.def + diffDef} ({diffDef >= 0 ? `+${diffDef}` : diffDef})
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* アクションボタン */}
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button 
+                  onClick={() => setComparingItem(null)} 
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', background: '#161109', color: '#ba9a6f', border: '1px solid #3a2d1a', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  やめる
+                </button>
+                <button 
+                  onClick={() => {
+                    const targetId = comparingItem.id;
+                    setComparingItem(null);
+                    handleEquipItem(comparingSlotKey, targetId);
+                  }} 
+                  style={{ flex: 2, padding: '10px', borderRadius: '8px', background: 'linear-gradient(180deg, #856434 0%, #4a341b 100%)', color: '#fff', border: '1px solid #ffd70044', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  この武具を装備する！
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 };
