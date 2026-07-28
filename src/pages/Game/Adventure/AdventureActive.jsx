@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Timer, Trophy, ShieldAlert } from 'lucide-react';
 import QuestResultModal from './components/QuestResultModal';
-import { gameServices } from '../../../gameServices';
+import { gameServices, calculateRoStatus } from '../../../gameServices';
 import { supabase } from '../../../supabaseClient';
 import { calculateDamageModifier, calculateStatusInflictChance, RO_NEXT_EXP_TABLE, calculateTotalStatusPoints } from '../../../gameRules';
 
@@ -173,7 +173,19 @@ const AdventureActive = ({
           const cardElemEff = isScout ? { '地': 20, '地属性': 20 } : {};
 
           // 🔮 🆕 三土手神特注：ループの内部でキャラクター毎に個別の装備データを確実に透視！（ここで宣言）
-          const weaponId = ch.equip_right_hand || (ch.equips && ch.equips.equip_right_hand) || null;
+          // 精錬システム対応：詳細画面用にJOINされたオブジェクト（ch.equips）の master_id(item_id) を最優先で透視！
+          const rightHandObj = ch.equips?.right_hand;
+          let weaponId = null;
+          
+          if (rightHandObj && rightHandObj.item_id) {
+            weaponId = rightHandObj.item_id; // インベントリのマスター参照ID
+          } else if (rightHandObj && rightHandObj.id) {
+            weaponId = rightHandObj.id;
+          } else if (typeof ch.equip_right_hand === 'object' && ch.equip_right_hand !== null) {
+            weaponId = ch.equip_right_hand.item_id || ch.equip_right_hand.id;
+          } else {
+            weaponId = ch.equip_right_hand; // 最後のフォールバック
+          }
           
           // 🚨 ⬇️ デバッグ用トラップ2：各キャラの装備IDと照合結果を丸裸にする！
           console.log(`=== 🕵️ 【デバッグ2】${ch.custom_name} の武器判定 ===`);
@@ -309,7 +321,14 @@ const AdventureActive = ({
               if (sk.skill_type === 'passive') {
                 if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
-                if (sk.effect_type === 'パッシブATK増幅') passiveAtkBonus += Number(sk.effect_value || 0);
+                
+                // ⬇️ 🆕 ここにデバッグ用ログを追加！
+                if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
+  const pVal = Number(sk.effect_value || sk.buff_value || 0);
+  passiveAtkBonus += pVal;
+  console.log(`⚔️ 【パッシブ検知】${ch.custom_name} の「${sk.name}」により ATK +${pVal} 増加！`);
+}
+
                 if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
@@ -339,25 +358,46 @@ const AdventureActive = ({
             });
           }
 
+          // 👑 🆕 【三土手神特注】仲間詳細画面（AdventureCharacterDetail.jsx）と完全同一の計算式で
+          // その場で素Defを再計算！古い ch.roStatus のキャッシュ値（Defズレの元凶）は使わない！
+          const charBonus = ch.bonus || {};
+          const tempCharForRoCalc = {
+            ...ch,
+            bonus: { ...charBonus },
+            str: (ch.meta?.stat_str || 1) + (charBonus.str || 0),
+            agi: (ch.meta?.stat_agi || 1) + (charBonus.agi || 0),
+            vit: (ch.meta?.stat_vit || 1) + (charBonus.vit || 0),
+            int: (ch.meta?.stat_int || 1) + (charBonus.int || 0),
+            dex: (ch.meta?.stat_dex || 1) + (charBonus.dex || 0),
+            luk: (ch.meta?.stat_luk || 1) + (charBonus.luk || 0),
+          };
+          const ro = calculateRoStatus(tempCharForRoCalc, ch.equips || {});
+
           return {
             id: ch.id,
             name: ch.custom_name,
             level: myLevel,
-            exp: ch.exp || 0, // 👑 修正：戦闘前の現在の経験値をここで確実にロード！
+            exp: ch.exp || 0,
             weaponName,
-            weaponRange: ch.equips?.right_hand?.range || 'S',
+            weaponRange: masterWeapon?.weapon_range || rightHandObj?.weapon_range || rightHandObj?.range || 'S',
+            weaponAtk: Number(masterWeapon?.atk || masterWeapon?.attack || 0) + (Number(rightHandObj?.refine_level || rightHandObj?.refine || 0) * 5),
             position,
-            mhp: Math.floor((ch.max_hp || ch.mhp || 0) * passiveHpMultiplier), 
-            hp: Math.floor((ch.max_hp || ch.mhp || 0) * passiveHpMultiplier),
-            msp: Math.floor((ch.max_sp || ch.msp || 0) * passiveSpMultiplier),
-            sp: Math.floor((ch.max_sp || ch.msp || 0) * passiveSpMultiplier),
-            str: ch.roStatus?.str || ch.str || 0,
-            agi: ch.roStatus?.agi || ch.agi || (ch.meta?.stat_agi || 0) + (ch.bonus?.agi || 0),
-            vit: ch.roStatus?.vit || ch.vit || (ch.meta?.stat_vit || 0) + (ch.bonus?.vit || 0),
-            int: ch.roStatus?.int || ch.int || (ch.meta?.stat_int || 0) + (ch.bonus?.int || 0),
-            border_dex: (ch.roStatus?.dex || ch.dex || 0) + passiveDexBonus, 
-            dex: (ch.roStatus?.dex || ch.dex || 0) + passiveDexBonus, 
-            luk: ch.roStatus?.luk || ch.luk || 0,
+
+            // ❤️ 💙 HP / SP：ステータスやカード効果が乗った最新上限値(ro.maxHp/maxSp)にパッシブ倍率を乗算
+            mhp: Math.floor((ro.maxHp || ch.max_hp || ch.mhp || 100) * passiveHpMultiplier), 
+            hp: Math.floor((ro.maxHp || ch.max_hp || ch.mhp || 100) * passiveHpMultiplier),
+            msp: Math.floor((ro.maxSp || ch.max_sp || ch.msp || 10) * passiveSpMultiplier),
+            sp: Math.floor((ro.maxSp || ch.max_sp || ch.msp || 10) * passiveSpMultiplier),
+
+            // 💎 【6大ステータス全網羅】 DB値 + 手振り + ジョブ補正 + カード(札)の完全合算値(ro.xxx)から直撃取得！
+            str: Number(ro.str !== undefined ? ro.str : ch.str || 0),   // 💪 物理基本攻撃力
+            agi: Number(ro.agi !== undefined ? ro.agi : ch.agi || 0),   // 💨 攻撃速度＆回避率
+            vit: Number(ro.vit !== undefined ? ro.vit : ch.vit || 0),   // 🛡️ 最大HP＆物理防御力
+            int: Number(ro.int !== undefined ? ro.int : ch.int || 0),   // 🔮 魔法威力＆最大SP
+            dex: Number(ro.dex !== undefined ? ro.dex : ch.dex || 0) + passiveDexBonus, // 🎯 命中力＆詠唱短縮
+            border_dex: Number(ro.dex !== undefined ? ro.dex : ch.dex || 0) + passiveDexBonus, 
+            luk: Number(ro.luk !== undefined ? ro.luk : ch.luk || 0),   // 🍀 クリティカル率
+
             job: myJob,
             weaponSubtype,
             weaponElement,
@@ -367,49 +407,31 @@ const AdventureActive = ({
             skillsList: availableSkills,
             state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 },
             
-            // 🔮 バフ・デバフ用のアクティブ配列プール
             activeBuffs: [],
 
-            final_battle_critical: Number(alcoholCritical) + passiveCritBonus,
+            final_battle_critical: Number(ro.critical || alcoholCritical) + passiveCritBonus,
 
-            // 🩸 装備から吸い上げた吸血値をインジェクション
             hp_drain_chance: totalDrainChance,
             hp_drain_percent: totalDrainPercent,
 
             card_inflict_type: totalInflictType,
             card_inflict_chance: maxInflictChance,
 
-roStatus: ch.roStatus || {},
+            roStatus: ro,
             
-            // 物理攻撃力パッシブ合流
-            atk: Number(ch.roStatus?.atk || 0) + passiveAtkBonus,
-            // 魔法魔力パッシブ合流
-            passive_matk_bonus: passiveMatkBonus,
-            // 回避率パッシブ合流
-            flee: Number(ch.roStatus?.flee || 0) + passiveFleeBonus,
-            
-            // 🎯 👑 【Def / Mdef 電線完全同期】素の計算値にパッシブ数値をその場でドッキング！
-            def: Number(ch.roStatus?.def || 0) + passiveDefBonus,
-            mdef: Number(ch.roStatus?.mdef || 0) + passiveMdefBonus,
-            
-            // 🎯 👑 【連撃確率メモリ直結】バトルでいつでも確率ダイスを振れるように記憶！
+            // 📊 【全戦闘派生能力値（Derived Status）の完全マウント】
+            atk: Number(ro.atk || 0) + passiveAtkBonus,                     // ⚔️ 物理攻撃力
+            passive_matk_bonus: passiveMatkBonus,                           // 🔮 魔法攻撃力バフ
+            flee: Number(ro.flee || 0) + passiveFleeBonus,                  // 💨 物理回避率
+            def: Number(ro.def || 0) + passiveDefBonus,                     // 🛡️ 物理防御力
+            mdef: Number(ro.mdef || 0) + passiveMdefBonus,                  // ✨ 魔法防御力
+            critical: Number(ro.critical || 0) + passiveCritBonus,          // 💥 致命打率
+            hit: Number(ro.hit || 0) + ((masterWeapon?.weapon_range === 'L' || ch.equips?.right_hand?.range === 'L') ? passiveRangedHitBonus : 0), // 🎯 物理命中率
+            aspd: Number(ro.aspd || 150.0),                                 // ⚡ 攻撃速度
+
             twin_strike_chance: passiveTwinChance,
-            
-            // 🎯 👑 【自己治癒力メモリ直結】5秒周期タイマーが参照するための固定回復量を完全バインド！
             passive_hp_regen: passiveHpRegen,
-            // 🎯 🆕 【精神統一メモリ直結】5秒周期タイマーが参照するための固定SP回復量をバインド！
-            passive_sp_regen: passiveSpRegen,
-            
-            // 🎰 クリティカル率パッシブも戦闘初期スペックへ確実に焼き付ける
-            critical: Number(alcoholCritical || ch.roStatus?.critical || 0) + passiveCritBonus,
-            
-            // 🧼 変数未定義エラーを完全粉砕！ch.equip_right_hand やマスター武器データの射程をその場で正確に透視して判定！
-            hit: Number(ch.roStatus?.hit || 0) + (
-              (masterWeapon?.weapon_range === 'L' || ch.equips?.right_hand?.range === 'L') 
-                ? passiveRangedHitBonus 
-                : 0
-            ),
-            aspd: ch.roStatus?.aspd || 150.0 
+            passive_sp_regen: passiveSpRegen
           };
         });
         partyStateRef.current = loadedParty;
@@ -1154,16 +1176,24 @@ if (usedSkill) {
                     localParty = localParty.map(member => {
                       if (member.hp <= 0) return member;
                       
+                      // 🛡️ 👑 【修正】仲間詳細画面と完全同期した本物の素Def（19）を基準に使う！
+                      const memberDef = Number(
+                        member.def !== undefined ? member.def : (member.roStatus?.def ?? 19)
+                      );
+
                       let bonusDef = 0;
                       const activeBuffs = member.activeBuffs || [];
                       activeBuffs.forEach(b => {
-                        if (b.effect_type === '物理DEF増幅') {
-                          if (b.buff_value_type === 'fixed') bonusDef += b.buff_value;
-                          else if (b.buff_value_type === 'percent') bonusDef += Math.floor((member.vit || 0) * b.buff_value / 100);
+                        if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            bonusDef += b.buff_value;
+                          } else {
+                            // 🛡️ 👑 【修正】基準をVITから「素Def(19)」へ変更！
+                            bonusDef += Math.round((memberDef * b.buff_value) / 100);
+                          }
                         }
                       });
 
-                      const memberDef = member.vit || 0;
                       // 物理ダメージ計算（最低1ダメージ）
                       const aoeDmg = Math.max(1, calculatedPower - (memberDef + bonusDef));
                       const nextHp = Math.max(0, member.hp - aoeDmg);
@@ -1186,26 +1216,61 @@ if (usedSkill) {
                     logText = ""; // 固有ログを出したのでメインログは空にする
                   } else {
                     // 🛡️ 既存の単体物理ルート
+                    // 🛡️ 👑 【修正】仲間詳細画面と完全同期した本物の素Def（19）を基準に使う！
+                    const targetDef = Number(
+                      target.def !== undefined ? target.def : (target.roStatus?.def ?? 19)
+                    );
+
                     let bonusDef = 0;
                     const activeBuffs = target.activeBuffs || [];
                     activeBuffs.forEach(b => {
-                      if (b.effect_type === '物理DEF増幅') {
-                        if (b.buff_value_type === 'fixed') bonusDef += b.buff_value;
-                        else if (b.buff_value_type === 'percent') bonusDef += Math.floor((target.vit || 0) * b.buff_value / 100);
+                      if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
+                        if (b.buff_value_type === 'fixed') {
+                          bonusDef += b.buff_value;
+                        } else {
+                          // 🛡️ 👑 【修正】基準をVITから「素Def(19)」へ変更！
+                          bonusDef += Math.round((targetDef * b.buff_value) / 100);
+                        }
                       }
                     });
 
-                    const targetDef = target.vit || 0;
                     dmg = Math.max(1, calculatedPower - (targetDef + bonusDef));
+
+                    // 🛡️ 🆕 【デバッグ用】F12 コンソールにDEF増幅の計算内訳を出力！
+                    if (bonusDef > 0) {
+                      console.log(`🛡️ 【DEFバフ計算デバッグ(スキル)】 対象: ${target.name} | 素Def: ${targetDef} | バフ追加Def: +${bonusDef} | 最終総Def: ${targetDef + bonusDef} | 被ダメージ: ${dmg}`);
+                    }
 
                     // 🛡️ 👑 【三土手神特注：物理スキル被弾時のバフ値連動型ディボーションセンサー】
                     const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.duration_turns > 0);
                     const casterMember = devotionBuff ? localParty.find(m => m.id === devotionBuff.casterId && m.hp > 0) : null;
 
                     if (devotionBuff && casterMember) {
+                      // 🛡️ 👑 【三土手神特注：通常攻撃被弾時のバフ値連動型ディボーションセンサー】
+                      // 通常攻撃被弾側も同様に range_damage_cut_pct から「50%」を取り出す設計に変更！
                       const cutPct = Number(devotionBuff.range_damage_cut_pct !== undefined ? devotionBuff.range_damage_cut_pct : 100);
-                      const transferredDmg = Math.floor(dmg * (cutPct / 100)); 
-                      const originalRemainingDmg = Math.max(0, dmg - transferredDmg); 
+                      
+                      // 通常攻撃ダメージを割合で分配計算（まずスライム側のDefのみで計算した生dmgを分配）
+                      let transferredDmg = Math.floor(dmg * (cutPct / 100)); // ファイター側（まだ軽減前）
+                      const originalRemainingDmg = Math.max(0, dmg - transferredDmg); // スライム側
+
+                      // 🛡️ 👑 🆕 【肩代わり分にも術者自身のDEFバフを反映！】
+                      // ファイターが実際に「自分の身体で受け止める」ダメージとして、
+                      // 自身のactiveBuffs（selfBuff）にある物理DEF増幅を、肩代わり分に対して追加軽減する！
+                      let casterBonusDef = 0;
+                      const casterActiveBuffs = casterMember.activeBuffs || [];
+                      casterActiveBuffs.forEach(b => {
+                        if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            casterBonusDef += b.buff_value;
+                          } else {
+                            const casterBaseDef = Number(casterMember.def !== undefined ? casterMember.def : (casterMember.roStatus?.def ?? 19));
+                            casterBonusDef += Math.round((casterBaseDef * b.buff_value) / 100);
+                          }
+                        }
+                      });
+                      // 軽減後の肩代わりダメージ（最低1）
+                      transferredDmg = Math.max(1, transferredDmg - casterBonusDef);
                       
                       localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
                       
@@ -1256,17 +1321,42 @@ if (usedSkill) {
                   if (randomRoll < cappedFleeChance) {
                     logText = `💨 [MISS] ${enemyItem.name} が 【${target.name}】 を強襲！しかし、ヒラリとかわされた！ (回避率:${Math.max(0, cappedFleeChance)}%)`;
                   } else {
+                    // 🛡️ 仲間詳細画面と完全同期した本物の素Def（19）を先に確定させる！
+                    // 👑 🆕 %バフの基準値としても使うため、bonusDef計算より先に取得する！
+                    const baseDefValue = Number(
+                      target.def !== undefined ? target.def : (target.roStatus?.def ?? 19)
+                    );
+
                     // 🛡️ 🆕 通常攻撃時のバフ効果（物理DEF増幅）の集計
                     let bonusDef = 0;
                     const activeBuffs = target.activeBuffs || [];
+
                     activeBuffs.forEach(b => {
-                      if (b.effect_type === '物理DEF増幅') {
-                        if (b.buff_value_type === 'fixed') bonusDef += b.buff_value;
-                        else if (b.buff_value_type === 'percent') bonusDef += Math.floor((target.vit || 0) * b.buff_value / 100);
+                      if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
+                        const val = Number(b.buff_value || 0);
+                        const type = String(b.buff_value_type || '').toLowerCase();
+
+                        // 固定値指定（fixed / 固定値プラス）の場合
+                        if (type === 'fixed' || type.includes('固定')) {
+                          bonusDef += val;
+                        } 
+                        // %上昇（percent / %上昇 / 未定義時はデフォルト%）の場合
+                        else {
+                          // 🛡️ 👑 【修正】基準をVITから「素Def(19)」へ変更！19の10%→2、19の100%→19！
+                          bonusDef += Math.round((baseDefValue * val) / 100);
+                        }
                       }
                     });
 
-                    dmg = Math.max(1, baseAtk - (target.vit + bonusDef));
+                    const totalDefWithBuff = baseDefValue + bonusDef;
+
+                    // 物理被ダメージ算出（敵ダイスATK - 総Def）
+                    dmg = Math.max(1, baseAtk - totalDefWithBuff);
+
+                    // 🛡️ 🆕 【デバッグ用】F12 コンソールにDEF増幅の計算内訳を出力！（検証完了につき条件付きに戻す）
+                    if (bonusDef > 0) {
+                      console.log(`🛡️ 【DEFバフ計算デバッグ(通常攻撃)】 対象: ${target.name} | 敵基礎ATK: ${baseAtk} | 素Def: ${baseDefValue} | バフ追加Def: +${bonusDef} | 最終総Def: ${totalDefWithBuff} | 被ダメージ: ${dmg}`);
+                    }
 
                     // 🛡️ 🆕 【三土手神特注：通常攻撃被弾時のディボーション割り込みセンサー】
                     const devotionBuff = activeBuffs.find(b => b.is_range_damage_cut && b.duration_turns > 0);
@@ -1295,7 +1385,13 @@ if (usedSkill) {
                     } else {
                       // 通常の通常攻撃着弾処理
                       localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
-                      logText = `💥 ${enemyItem.name} の攻撃！ ${target.name} は ${dmg} の物理ダメージを受けた！`;
+                      
+                      // 🎲 🛡️ 正しい数値とバフ増幅の内訳をログに印字！
+                      const defDetailText = bonusDef > 0 
+                        ? `(素Def:${baseDefValue}+バフ:${bonusDef})` 
+                        : `(Def:${baseDefValue})`;
+
+                      logText = `💥 ${enemyItem.name} の攻撃！ ➔ (ダイス${baseAtk}-敵防${totalDefWithBuff}${defDetailText}) ➔ ${target.name} は ${dmg} の物理ダメージを受けた！`;
                     }
                   }
                 }
@@ -1449,7 +1545,6 @@ if (isBackRow && isShortRange) {
           let logText = "";
           
           // --- ✂️ ここから追加・修正ブロック ---
-          // 🛡️ 【三土手神特注】後衛キャラ行動制限エンジン
           if (member.position === 'back' && member.weaponRange === 'S') {
             // 現在使えるスキルを再計算（攻撃対象や回復対象がいなくても使えるか判定）
             const canUseSkill = member.skillsList.some(sk => member.sp >= Number(sk.sp_cost || 0));
@@ -1464,8 +1559,11 @@ if (isBackRow && isShortRange) {
 
           const myStr = member.str || 0;
           const myDex = member.dex || 0;
-          const minAtk = Math.floor(myStr + (myDex * 0.5));
-          const maxAtk = Math.floor(myStr * 2.5 + myDex);
+          const wAtk = member.weaponAtk || 0; // ⚔️ 🆕 装備している武器の攻撃力を取得
+          
+          // ⚔️ 🆕 基礎ステータスによる攻撃力に、武器の攻撃力を直接加算！
+          const minAtk = Math.floor(myStr + (myDex * 0.5)) + wAtk;
+          const maxAtk = Math.floor(myStr * 2.5 + myDex) + wAtk;
           const randomizedAtk = Math.floor(Math.random() * (maxAtk - minAtk + 1)) + minAtk;
 
           // 🏹 🆕 【三土手神特注】後衛時におけるSレンジスキルの暴発封印ゲート（ここで1度だけ宣言）
@@ -1530,7 +1628,7 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 3. 【さらに次点】バフ・支援特技（速度増加など）AI：誰も死にかけていない時だけかける
           if (!targetAlly) {
-            const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+            const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
             const availableBuffSkills = allowedSkills.filter(sk => buffEffectTypes.includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
             
             if (availableBuffSkills.length > 0) {
@@ -1600,10 +1698,15 @@ if (isBackRow && isShortRange) {
                   }
 
                   if (pFiltered.length > 0) {
-                    selectedBuffSkill = bSkill;
-                    selectedTarget = pFiltered[0]; // 先頭の味方に付与
-                    break;
-                  }
+  selectedBuffSkill = bSkill;
+  // 🎯 ターゲットが「自分自身」なら発動者本人(member)をロックオン！
+  if (bSkill.target_type === '自分自身') {
+    selectedTarget = member;
+  } else {
+    selectedTarget = pFiltered[0]; // それ以外は先頭の味方に付与
+  }
+  break;
+}
                 }
               }
 
@@ -1732,7 +1835,7 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 【三土手神特注：バフ・かばう（ディボーション）重複発動封印パッチ】
           // 決定されたスキルがバフ・支援系（物理DEF増幅など）の場合の重複チェック
-          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type)) {
+          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type)) {
   
   // 🎯 今回魔法をかける予定の「targetAlly」だけを狙い撃ちして、同じバフIDを持っているかチェック！
   const isAlreadyBuffed = (targetAlly.activeBuffs || []).some(b => b.id === playableSkill.id);
@@ -1800,7 +1903,7 @@ if (isBackRow && isShortRange) {
             // 🛡️ 👑 【三土手神特注】古いガバガバ判定をここで完全粉砕！バフと回復を100%厳密に仕分ける定義
             const isCureSkill = playableSkill.effect_type === '状態異常回復';
             const isHealSkill = playableSkill.effect_type === '回復' || playableSkill.name?.includes('ヒール');
-            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
+            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
 
             if (isCureSkill || isHealSkill) {
               // 🧪 ① 純粋な回復・キュア魔法専用ルート
@@ -1862,17 +1965,22 @@ if (isBackRow && isShortRange) {
                 }
               }
             } else if (isBuffSkill) {
-              // 🛡️ ② 特注：戦術支援・物理特技「かばう（ディボーション）」専用ルート
-              const successRoll = Math.random() * 100;
-              const effChance = Number(playableSkill.effect_chance !== undefined ? playableSkill.effect_chance : 100);
+  // 🛡️ ② 特注：戦術支援・物理特技「かばう（ディボーション）」専用ルート
+  const successRoll = Math.random() * 100;
+  const effChance = Number(playableSkill.effect_chance !== undefined ? playableSkill.effect_chance : 100);
 
-              // 🛡️ 【三土手神特注】かばう（ダメージ肩代わり）スキルの場合のみ、自分への使用を禁止して他の仲間へ
-              const isRangeCut = playableSkill.is_range_damage_cut === true;
-              if (isRangeCut && (!targetAlly || targetAlly.id === member.id)) {
-                targetAlly = localParty.find(p => p.hp > 0 && p.id !== member.id) || member;
-              } else if (!targetAlly) {
-                targetAlly = member; // 優先ターゲットもかばう指定もない場合の安全措置
-              }
+  // 🎯 【三土手神特注】ターゲットが「自分自身」なら絶対に自分自身に固定！
+  if (playableSkill.target_type === '自分自身') {
+    targetAlly = member;
+  } else {
+    // 🛡️ かばう（ダメージ肩代わり）スキルの場合のみ、自分への使用を禁止して他の仲間へ
+    const isRangeCut = playableSkill.is_range_damage_cut === true;
+    if (isRangeCut && (!targetAlly || targetAlly.id === member.id)) {
+      targetAlly = localParty.find(p => p.hp > 0 && p.id !== member.id) || member;
+    } else if (!targetAlly) {
+      targetAlly = member; // 優先ターゲットもかばう指定もない場合の安全措置
+    }
+  }
 
               if (successRoll > effChance) {
                 logText = `⚠️ [スキル失敗] ${member.name} は 【${playableSkill.name}】 を発動しようとしたが、失敗した！`;
@@ -1885,11 +1993,14 @@ if (isBackRow && isShortRange) {
                 const rangeCutPct = Number(playableSkill.range_damage_cut_pct !== undefined ? playableSkill.range_damage_cut_pct : 100);
                 const turns = Number(playableSkill.duration_turns || 3);
 
+                // 🛡️ 👑 【三土手神特注：かばう対象専用バフ】
+                // is_range_damage_cutがtrueの時、この newBuff は「かばう情報」専用にする！
+                // effect_type は絶対に物理DEF増幅を持たせない（＝かばわれた対象＝スライムが誤ってDEF上昇しないように隔離）
                 const newBuff = {
                   id: playableSkill.id,
                   name: playableSkill.name,
-                  effect_type: playableSkill.effect_type,
-                  buff_value: bValue, // DEFバフ用に 20 をそのまま記憶
+                  effect_type: isRangeCut ? 'かばう発動中' : playableSkill.effect_type,
+                  buff_value: isRangeCut ? 0 : bValue,
                   buff_value_type: bValueType,
                   is_range_damage_cut: isRangeCut,
                   range_damage_cut_pct: rangeCutPct, // 🛡️ 肩代わり率専用キーに本来の 50 を格納！
@@ -1899,12 +2010,22 @@ if (isBackRow && isShortRange) {
                   isNew: true 
                     };
 
+                // 🛡️ 👑 🆕 【三土手神特注：術者自身への物理DEF増幅バフ】
+                // 「かばう」発動時は、術者（ファイター自身）にも同時に物理DEF増幅バフを別枠で付与する！
+                const selfBuff = {
+                  id: `${playableSkill.id}_self`,
+                  name: playableSkill.name,
+                  effect_type: playableSkill.effect_type,   // 物理DEF増幅 / 全防御増幅 など
+                  buff_value: bValue,
+                  buff_value_type: bValueType,
+                  is_range_damage_cut: false,
+                  duration_turns: turns,
+                  casterId: member.id,
+                  isNew: true
+                };
+
                 // スキルの効果タイプを判別して、ログの文字列を切り替える！
                 let buffMsg = "ステータスが上昇した！";
-if (playableSkill.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
-else if (playableSkill.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
-else if (playableSkill.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
-else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill.effect_type === '魔法防御MDEF増幅') buffMsg = "魔法防御が上昇した！";
 
                 const isAreaBuff = playableSkill.target_type === '味方全体';
 
@@ -1921,7 +2042,7 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                     }
 
                     const currentBuffs = ally.activeBuffs || [];
-                    const filteredBuffs = currentBuffs.filter(b => b.id === playableSkill.id);
+                    const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
                     // 🌟 ここ！ "強化効果【...】が宿った！" の代わりに、作った buffMsg を使う
                     newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
                     return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
@@ -1934,9 +2055,19 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                     const currentBuffs = localParty[targetFindIdx].activeBuffs || [];
                     const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
                     localParty[targetFindIdx].activeBuffs = [...filteredBuffs, newBuff];
+
+                    // 🛡️ 👑 🆕 かばう発動時は、術者（ファイター）自身にも物理DEF増幅バフを同時付与！
+                    if (isRangeCut) {
+                      const casterFindIdx = localParty.findIndex(p => p.id === member.id);
+                      if (casterFindIdx !== -1) {
+                        const casterCurrentBuffs = localParty[casterFindIdx].activeBuffs || [];
+                        const casterFilteredBuffs = casterCurrentBuffs.filter(b => b.id !== selfBuff.id);
+                        localParty[casterFindIdx].activeBuffs = [...casterFilteredBuffs, selfBuff];
+                      }
+                    }
                     
                     if (isRangeCut) {
-                      logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 と命の絆を結んだ！ (${turns}T / 残SP: ${member.sp})`;
+                      logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 と命の絆を結び(${rangeCutPct}%肩代わり)、自身のDEFも上昇した！ (${turns}T / 残SP: ${member.sp})`;
                     } else {
                       // 🌟 ここ！ "物理防御が上昇した！" 固定ではなく、作った buffMsg を使う
                       logText = `✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
@@ -2201,34 +2332,44 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                 }
               } 
               // 🛡️ 2. 👑 【三土手創世神特注】戦術支援バフ・支援特技の超最優先ゲート！攻撃魔法ルートへのすり抜けを完全遮断！
-              else if (['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(skillToUse.effect_type)) {
+              else if (['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(skillToUse.effect_type)) {
                 
                 // 🎯 確率発動ルートでも「優先職業」を確実にスキャンして、かつ【まだバフがかかっていない仲間】を厳選！
                 const rPriorityJobs = skillToUse.target_priority_jobs || [];
                 let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === skillToUse.id));
                 let validTargetFound = false;
 
-                // 🚨 かばう（献身）スキルの場合は自分以外、通常のバフなら自分も含めて選考
-                const isRangeCut = skillToUse.is_range_damage_cut === true;
-                if (isRangeCut) {
-                  rFilteredAllies = rFilteredAllies.filter(p => p.id !== member.id);
-                }
+                // 🎯 ターゲットが「自分自身」の場合の強制ロック判定
+if (skillToUse.target_type === '自分自身') {
+  // 自分に既にそのバフがかかっているかチェック
+  const isAlreadyBuffed = (member.activeBuffs || []).some(b => b.id === skillToUse.id);
+  if (!isAlreadyBuffed) {
+    targetAlly = member;
+    validTargetFound = true;
+  }
+} else {
+  // 🚨 かばう（献身）スキルの場合は自分以外、通常のバフなら自分も含めて選考
+  const isRangeCut = skillToUse.is_range_damage_cut === true;
+  if (isRangeCut) {
+    rFilteredAllies = rFilteredAllies.filter(p => p.id !== member.id);
+  }
 
-                if (rPriorityJobs.length > 0) {
-                  for (let jobReq of rPriorityJobs) {
-                    const matchedAlly = rFilteredAllies.find(p => p.name.includes(jobReq) || p.job === jobReq);
-                    if (matchedAlly) {
-                      targetAlly = matchedAlly;
-                      validTargetFound = true;
-                      break;
-                    }
-                  }
-                } else {
-                  if (rFilteredAllies.length > 0) {
-                    targetAlly = rFilteredAllies[0];
-                    validTargetFound = true;
-                  }
-                }
+  if (rPriorityJobs.length > 0) {
+    for (let jobReq of rPriorityJobs) {
+      const matchedAlly = rFilteredAllies.find(p => p.name.includes(jobReq) || p.job === jobReq);
+      if (matchedAlly) {
+        targetAlly = matchedAlly;
+        validTargetFound = true;
+        break;
+      }
+    }
+  } else {
+    if (rFilteredAllies.length > 0) {
+      targetAlly = rFilteredAllies[0];
+      validTargetFound = true;
+    }
+  }
+}
 
                 // 🎯 もし対象の職が全員すでにバフ状態、または誰もいないなら発動を安全にキャンセル（通常攻撃ルートへスルー！）
                 if (!validTargetFound) {
@@ -2263,10 +2404,11 @@ else if (playableSkill.effect_type === '魔法防御Mdef増幅' || playableSkill
                     };
 
                     let buffMsg = "ステータスが上昇した！";
-                    if (skillToUse.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
-                    else if (skillToUse.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
-                    else if (skillToUse.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
-                    else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大幅に上昇した！";
+if (skillToUse.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
+else if (skillToUse.effect_type === '全防御増幅') buffMsg = "物理・魔法防御が共に大幅上昇した！"; // 👈 🆕 ここを追加！
+else if (skillToUse.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
+else if (skillToUse.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
+else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大幅に上昇した！";
 
                     const isAreaBuff = skillToUse.target_type === '味方全体';
 

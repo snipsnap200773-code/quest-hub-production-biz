@@ -96,7 +96,6 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
 
       if (isMonsterClass) {
         // 😈 魔物の場合は引き継いだスキル枠(skill_01〜03)からピンポイントロード
-        // 💡 修正箇所：data ではなく直接取得した directCharData から確実なIDを読み込む！
         const tamerSkillIds = [
           directCharData?.skill_01 || data.skill_01, 
           directCharData?.skill_02 || data.skill_02, 
@@ -105,11 +104,23 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
         data.skillsList = (allSkills || []).filter(sk => tamerSkillIds.includes(sk.id));
       } else {
         // 👤 人間の場合は職業とレベル連動
-        data.skillsList = (allSkills || []).filter(sk => {
+        const eligibleSkills = (allSkills || []).filter(sk => {
           const jobReq = sk.job_requirement;
           const lvReq = Number(sk.level_requirement || 1);
           return (jobReq === '全職業' || jobReq === myJob) && myLevel >= lvReq;
         });
+
+        // 👑 🆕 同名スキルの中で最も必要レベルが高い（最高ランク）のものだけを選抜上書き！
+        const skillMap = {};
+        eligibleSkills.forEach(sk => {
+          const sName = sk.name;
+          if (!skillMap[sName] || Number(sk.level_requirement) > Number(skillMap[sName].level_requirement)) {
+            skillMap[sName] = sk;
+          }
+        });
+
+        // 重複が排除された最高レベルのスキルリストのみをセット！
+        data.skillsList = Object.values(skillMap);
       }
       
       // 🐾 🆕 【ミドテディレクター特注：勝手なポイント逆算引き算を完全粉砕パッチ】
@@ -381,13 +392,21 @@ let passiveSpMultiplier = 1.0;
 const characterSkills = character?.skillsList || [];
 
 characterSkills.forEach(sk => {
-  if (sk.skill_type === 'passive') {
+  // 🔮 sk.skill_type === 'passive' の縛りを外し、効果タイプやスキル名でも二重包囲網で検知！
+  const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー');
+
+  if (isPassive) {
     if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
     if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
-    if (sk.effect_type === 'パッシブATK増幅') passiveAtkBonus += Number(sk.effect_value || 0);
+    
+    // ⚔️ 【剣術の極意 / パッシブATK増幅】を確実につかみ取る！
+    if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
+      passiveAtkBonus += Number(sk.effect_value || sk.buff_value || 0);
+    }
+
     if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
-    if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);  // 👈 🆕 データベースからDefをスキャン！
-    if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0); // 👈 🆕 データベースからMdefをスキャン！
+    if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
+    if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
     if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
     if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
   }
@@ -799,25 +818,41 @@ ro.mdef = ro.mdef + passiveMdefBonus;
                     
                     // 同じ職業制限（または共通）かつ、全く同じ名前のスキルをすべて抽出して必要Lv順にソート
                     const siblingSkills = masterList
-  .filter(s => s.sp_cost !== undefined && s.name === sk.name && (s.job_requirement === '全職業' || s.job_requirement === '魔物共通' || s.job_requirement === character.meta?.job))
+                      .filter(s => s.sp_cost !== undefined && s.name === sk.name && (s.job_requirement === '全職業' || s.job_requirement === '魔物共通' || s.job_requirement === character.meta?.job))
                       .sort((a, b) => Number(a.level_requirement) - Number(b.level_requirement));
                     
                     // ソートした配列の中で、自分が何番目にいるか（インデックス + 1 = 現在のスキルLv）
                     const mySkillRank = siblingSkills.findIndex(s => s.id === sk.id) + 1;
                     const isMaxRank = mySkillRank === siblingSkills.length && siblingSkills.length > 1;
 
+                    // 🔮 パッシブスキル判別フラグ（二重包囲網）
+                    const isPassiveSkill = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('センス') || sk.name?.includes('スタンス') || sk.name?.includes('ブレス') || sk.name?.includes('ファング');
+
+                    // 💎 🆕 effect_valueが0の場合は buff_value をフォールバック取得する安全な数値抽出！
+                    const displayVal = Number(sk.effect_value || sk.buff_value || 0);
+
                     return (
                       <div key={sk.id} style={{ background: '#0e0b07', border: '1px solid #23190e', padding: '10px 12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, paddingRight: '8px' }}>
                           {/* ─── 1行目：スキル名 ＆ 分類バッジ ─── */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.52rem', background: sk.skill_type === 'magic' ? '#1e3a8a' : '#311005', color: sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
-                              {sk.skill_type === 'magic' ? '魔法' : '特技'}
+                            <span style={{ 
+                              fontSize: '0.52rem', 
+                              background: isPassiveSkill ? '#3b0764' : (sk.skill_type === 'magic' ? '#1e3a8a' : '#311005'), 
+                              color: isPassiveSkill ? '#c084fc' : (sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e'), 
+                              padding: '1px 5px', 
+                              borderRadius: '3px', 
+                              fontWeight: 'bold' 
+                            }}>
+                              {isPassiveSkill ? 'パッシブ' : (sk.skill_type === 'magic' ? '魔法' : '特技')}
                             </span>
-                            <span style={{ fontSize: '0.52rem', background: sk.skill_range === 'L' ? '#064e3b' : '#3f3f46', color: sk.skill_range === 'L' ? '#34d399' : '#e4e4e7', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
-                              {sk.skill_range === 'L' ? 'Lレンジ' : 'Sレンジ'}
-                            </span>
-                            {/* 💡 ⚙️ スキル名の後ろに自動計算した [Lv.X] をドッキング！最上位なら極上ライトアップ！ */}
+
+                            {!isPassiveSkill && (
+                              <span style={{ fontSize: '0.52rem', background: sk.skill_range === 'L' ? '#064e3b' : '#3f3f46', color: sk.skill_range === 'L' ? '#34d399' : '#e4e4e7', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
+                                {sk.skill_range === 'L' ? 'Lレンジ' : 'Sレンジ'}
+                              </span>
+                            )}
+
                             <strong style={{ fontSize: '0.8rem', color: '#ffd700' }}>
                               {sk.name} <span style={{ color: isMaxRank ? '#34d399' : '#38bdf8', fontSize: '0.75rem', fontFamily: 'monospace' }}>[Lv.{mySkillRank}]</span>
                             </strong>
@@ -829,37 +864,62 @@ ro.mdef = ro.mdef + passiveMdefBonus;
                             <span style={{ fontSize: '0.55rem', color: '#887055' }}>(必要Lv.{sk.level_requirement})</span>
                           </div>
 
-                          {/* ─── 2行目：🆕 創世神拡張・オリジナル高度戦術スペックバッジ ─── */}
+                          {/* ─── 2行目：スペックバッジ ─── */}
                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '1px' }}>
-                            <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>
-                              🎯 {sk.target_type || '単体エネミー'}
-                            </span>
+                            {isPassiveSkill ? (
+                              <span style={{ fontSize: '0.55rem', background: '#2e1065', border: '1px solid #581c87', color: '#e9d5ff', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
+                                ♾️ 常時発動
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>
+                                🎯 {sk.target_type || '単体エネミー'}
+                              </span>
+                            )}
+
                             <span style={{ fontSize: '0.55rem', background: '#1a130b', border: '1px solid #5a3d1b', color: '#ffb834', padding: '1px 5px', borderRadius: '3px' }}>
                               🔥 {sk.element || '無'}属性
                             </span>
                             {sk.effect_type && sk.effect_type !== 'なし' && (
-                              <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
-                                ✨ {sk.effect_type} ({sk.effect_chance}% / {sk.duration_turns}T)
-                              </span>
-                            )}
-                            {sk.use_condition === '魔物調教' && (
-                              <span style={{ fontSize: '0.55rem', background: '#0a1a14', border: '1px solid #14402f', color: '#34d399', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
-                                🐾 調教モード
-                              </span>
-                            )}
+  <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
+    {(() => {
+      // 💡 バフ効果量（10）と単位（% または 固定）を取得
+      const bVal = sk.buff_value || 0;
+      const bUnit = sk.buff_value_type === 'fixed' ? '' : '%';
+      const bText = bVal > 0 ? ` +${bVal}${bUnit}` : '';
+
+      if (isPassiveSkill) {
+        return `✨ ${sk.effect_type} (+${displayVal})`;
+      } else {
+        // アクティブスキルの場合：バフ効果量もバッジに添えて表示！
+        return `✨ ${sk.effect_type}${bText} (${sk.effect_chance}% / ${sk.duration_turns}T)`;
+      }
+    })()}
+  </span>
+)}
                           </div>
 
                           {/* ─── 3行目：説明文 ─── */}
                           <p style={{ margin: '2px 0 0 0', fontSize: '0.65rem', color: '#887355', lineHeight: '1.2' }}>{sk.description}</p>
                         </div>
 
-                        {/* ─── 右側：SP消費 ＆ 威力・回復量表示 ─── */}
+                        {/* ─── 右側：SP消費 ＆ 威力・効果量表示 ─── */}
                         <div style={{ textAlign: 'right', fontSize: '0.65rem', fontFamily: 'monospace', minWidth: '75px' }}>
-                          <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>消費SP: {sk.sp_cost}</div>
-                          <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
-                            {sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} 
-                            <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span>
-                          </div>
+                          {isPassiveSkill ? (
+                            <>
+                              <div style={{ color: '#c084fc', fontWeight: 'bold' }}>消費SP: -</div>
+                              <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
+                                効果: <span style={{ color: '#fff', marginLeft: '2px' }}>+{displayVal}</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>消費SP: {sk.sp_cost}</div>
+                              <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
+                                {sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} 
+                                <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
