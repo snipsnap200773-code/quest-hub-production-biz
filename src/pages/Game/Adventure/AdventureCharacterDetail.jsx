@@ -393,11 +393,20 @@ const characterSkills = character?.skillsList || [];
 
 characterSkills.forEach(sk => {
   // 🔮 sk.skill_type === 'passive' の縛りを外し、効果タイプやスキル名でも二重包囲網で検知！
-  const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー');
+  const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ';
 
   if (isPassive) {
     if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
     if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
+    
+    // 🏹 ホークアイ判定（Lレンジ武器装備時限定）
+    if (sk.effect_type === 'ホークアイ' || sk.effect_type === '遠隔命中増幅' || sk.name?.includes('ホークアイ')) {
+      const rightEq = character.equips?.right_hand;
+      const isLRange = rightEq?.weapon_range === 'L' || rightEq?.range === 'L';
+      if (isLRange) {
+        passiveCritBonus += 10; // 弓装備時にCri+10%
+      }
+    }
     
     // ⚔️ 【剣術の極意 / パッシブATK増幅】を確実につかみ取る！
     if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
@@ -406,6 +415,7 @@ characterSkills.forEach(sk => {
 
     if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
     if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
+    if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
     if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
     if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
     if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
@@ -579,7 +589,7 @@ ro.mdef = ro.mdef + passiveMdefBonus;
         <span style={{ fontSize: '0.58rem', color: '#705c45', display: 'block', marginTop: '1px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{STAT_LABELS[statKey].desc}</span>
       </div>
       
-      {/* 📊 三土手式トリプル・エレメント：白（トータル）、青（手振り）、黄（職業）、赤（カード） */}
+      {/* 📊 三土手式クアッド・エレメント：白（トータル）、緑（特化ベース）、青（手振り）、黄（職業）、赤（カード） */}
       <div style={{ textAlign: 'right', paddingRight: '12px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
         
         {/* 1. 【白色】最も大きく表示される最終合算値 */}
@@ -587,8 +597,11 @@ ro.mdef = ro.mdef + passiveMdefBonus;
           {finalTotal}
         </div>
 
-        {/* 2. 【青・黄・赤】の3層サブインジケーター（左揃え縦列） */}
+        {/* 2. 【緑・青・黄・赤】の4層サブインジケーター（左揃え縦列） */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', fontSize: '0.55rem', fontFamily: 'monospace', fontWeight: 'bold', minWidth: '55px', lineHeight: '1.2' }}>
+          
+          {/* 🟢 緑色：🆕 モンスター特化ベース値（GMダッシュボードのタイプ別自動振り分け由来） */}
+          <span style={{ color: '#34d399' }}>特: {initialBase}</span>
           
           {/* 🔵 青色：自分が割り振ったポイント */}
           <span style={{ color: '#38bdf8' }}>振: {userAllocated}</span>

@@ -160,11 +160,23 @@ const AdventureActive = ({
             availableSkills = allMasterSkills.filter(sk => tamerSkillIds.includes(sk.id));
           } else {
             // 👤 ② 人間の仲間の場合は、今まで通り職業とレベル連動で自動習得
-            availableSkills = allMasterSkills.filter(sk => {
+            const eligibleSkills = allMasterSkills.filter(sk => {
               const jobReq = sk.job_requirement;
               const lvReq = Number(sk.level_requirement || 1);
               return (jobReq === '全職業' || jobReq === myJob) && myLevel >= lvReq;
             });
+
+            // 👑 🆕 【三土手神特注】仲間詳細画面（AdventureCharacterDetail.jsx）と完全同一のロジックで、
+            // 同名スキルの中で最も必要レベルが高い（最高ランク）のものだけを選抜！
+            // これでLv1とLv2の「剣術の極意」が二重に加算される事故を防止！
+            const skillMap = {};
+            eligibleSkills.forEach(sk => {
+              const sName = sk.name;
+              if (!skillMap[sName] || Number(sk.level_requirement) > Number(skillMap[sName].level_requirement)) {
+                skillMap[sName] = sk;
+              }
+            });
+            availableSkills = Object.values(skillMap);
           }
 
           const isScout = myJob === 'スカウト';
@@ -331,6 +343,7 @@ const AdventureActive = ({
 
                 if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
                 if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === 'ツインブレード型連撃') passiveTwinChance = Math.max(passiveTwinChance, Number(sk.effect_value || 0));
                 
@@ -339,9 +352,13 @@ const AdventureActive = ({
                   passiveDexBonus += Number(sk.effect_value || 0);
                 }
                 
-                // 🧼 ホークアイ（遠見の心眼）：Lレンジ武器装備時にHitを底上げする判定
-                if (sk.effect_type === '遠隔命中増幅' || sk.name?.includes('ホークアイ') || sk.name?.includes('遠見の心眼')) {
-                  passiveRangedHitBonus += Number(sk.effect_value || 0);
+                // 🏹 ホークアイ：Lレンジ武器装備時にHit（数値連動）＆ Cri+10%を底上げする判定
+                if (sk.effect_type === '遠隔命中増幅' || sk.effect_type === 'ホークアイ' || sk.name?.includes('ホークアイ') || sk.name?.includes('遠見の心眼')) {
+                  const isLRange = masterWeapon?.weapon_range === 'L' || rightHandObj?.weapon_range === 'L' || rightHandObj?.range === 'L';
+                  if (isLRange) {
+                    passiveRangedHitBonus += Number(sk.effect_value || sk.buff_value || 20);
+                    passiveCritBonus += 10; // 🏹 致命打率Cri+10%を加算！
+                  }
                 }
 
                 // 🎯 👑 【三土手創世神特注：効果タイプ ＆ スキル名 二重包囲網センサー】
@@ -425,8 +442,8 @@ const AdventureActive = ({
             flee: Number(ro.flee || 0) + passiveFleeBonus,                  // 💨 物理回避率
             def: Number(ro.def || 0) + passiveDefBonus,                     // 🛡️ 物理防御力
             mdef: Number(ro.mdef || 0) + passiveMdefBonus,                  // ✨ 魔法防御力
-            critical: Number(ro.critical || 0) + passiveCritBonus,          // 💥 致命打率
-            hit: Number(ro.hit || 0) + ((masterWeapon?.weapon_range === 'L' || ch.equips?.right_hand?.range === 'L') ? passiveRangedHitBonus : 0), // 🎯 物理命中率
+            critical: Number(ro.critical || 0) + passiveCritBonus,          // 💥 致命打率（ホークアイ発動時Cri+10%含む）
+            hit: Number(ro.hit || 0) + ((masterWeapon?.weapon_range === 'L' || ch.equips?.right_hand?.range === 'L' || ch.equips?.right_hand?.weapon_range === 'L') ? passiveRangedHitBonus : 0), // 🎯 物理命中率
             aspd: Number(ro.aspd || 150.0),                                 // ⚡ 攻撃速度
 
             twin_strike_chance: passiveTwinChance,
@@ -568,6 +585,8 @@ const AdventureActive = ({
               // 🎯 【三土手神特注】ダッシュボードのプレビュー数理法則と100%完全同期！
               hit: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_dex || dbEnemy?.dex || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 20),
               flee: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_agi || dbEnemy?.agi || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 10),
+              // 🛡️ 👑 【三土手神特注】ダッシュボードの「防御力(Def)予測」計算式と100%完全同期！VIT直読みの誤差を撲滅！
+              def: Math.floor(finalVit * 0.5 + Number(dbEnemy?.base_level || 1) * 0.1),
               
               // 💨 上書き設定があれば採用、なければ基本値150.0をマウント！
               enemy_aspd: dbEnemy?.enemy_aspd !== null && dbEnemy?.enemy_aspd !== undefined ? Number(dbEnemy.enemy_aspd) : 150.0,
@@ -1367,9 +1386,27 @@ if (usedSkill) {
                       // 通常攻撃被弾側も同様に range_damage_cut_pct から「50%」を取り出す設計に変更！
                       const cutPct = Number(devotionBuff.range_damage_cut_pct !== undefined ? devotionBuff.range_damage_cut_pct : 100);
                       
-                      // 通常攻撃ダメージを割合で分配計算
-                      const transferredDmg = Math.floor(dmg * (cutPct / 100)); // ファイター側
+                      // 通常攻撃ダメージを割合で分配計算（まずスライム側のDefのみで計算した生dmgを分配）
+                      let transferredDmg = Math.floor(dmg * (cutPct / 100)); // ファイター側（まだ軽減前）
                       const originalRemainingDmg = Math.max(0, dmg - transferredDmg); // クレリック側
+
+                      // 🛡️ 👑 🆕 【肩代わり分にも術者自身のDEFバフを反映！】
+                      // ファイターが実際に「自分の身体で受け止める」ダメージとして、
+                      // 自身のactiveBuffs（selfBuff）にある物理DEF増幅を、肩代わり分に対して追加軽減する！
+                      let casterBonusDef = 0;
+                      const casterActiveBuffs = casterMember.activeBuffs || [];
+                      casterActiveBuffs.forEach(b => {
+                        if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            casterBonusDef += b.buff_value;
+                          } else {
+                            const casterBaseDef = Number(casterMember.def !== undefined ? casterMember.def : (casterMember.roStatus?.def ?? 19));
+                            casterBonusDef += Math.round((casterBaseDef * b.buff_value) / 100);
+                          }
+                        }
+                      });
+                      // 軽減後の肩代わりダメージ（最低1）
+                      transferredDmg = Math.max(1, transferredDmg - casterBonusDef);
                       
                       // 各キャラクターのHPを引き算
                       localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
@@ -1858,16 +1895,18 @@ if (isBackRow && isShortRange) {
           // 🛡️ 👑 【三土手神特注】ホーリープラクティス専用・種族＆属性ハイブリッド特効判定線
           const hasHolyPractice = (member.skillsList || []).find(sk => 
   sk.name === 'ホーリープラクティス' || 
-  sk.name === 'ホーリーガーディアン' // 👈 ここにダッシュボードで付けた名前を完全一致で入れます
+  sk.name === 'ホーリーガーディアン' ||
+  sk.name === 'セイントブレス' ||
+  sk.effect_type === 'セイントブレス'
 );
           if (hasHolyPractice && primaryTarget) {
-            const bonusPct = Number(hasHolyPractice.effect_value || 20); // 登録した20%を取得
+            // ダッシュボードで設定した「基礎効果数値」の値をそのまま特効%（20や25や30など）として動的適用！
+            const bonusPct = Number(hasHolyPractice.effect_value || 0);
             
             // 敵の種族が「悪魔」「不死」、または敵の属性（element）が「不死」の場合に発動ゲートを全開にする
             const isTargetDemonicOrUndead = primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死';
             
-            if (isTargetDemonicOrUndead) {
-              // 独立数理室（gameRules.js）のどのオブジェクト判定線に引っかかってもいいように、すべてに20%を安全インジェクション！
+            if (isTargetDemonicOrUndead && bonusPct > 0) {
               cardRace['悪魔'] = (cardRace['悪魔'] || 0) + bonusPct;
               cardRace['不死'] = (cardRace['不死'] || 0) + bonusPct;
               cardElem['不死'] = (cardElem['不死'] || 0) + bonusPct; 
@@ -2087,7 +2126,13 @@ if (isBackRow && isShortRange) {
                   magicPassNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
                 }
 
-                logText = isMagic ? `${magicPassNotice}🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が炸裂！(残SP: ${member.sp})` : `${magicPassNotice}⚔️💥 【全体特技】${member.name} の【${playableSkill.name}】が一閃！(残SP: ${member.sp})`;
+                let holyNotice = "";
+                if (hasHolyPractice && primaryTarget && (primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死')) {
+                  const bPct = Number(hasHolyPractice.effect_value || 0);
+                  holyNotice = `✨[聖者調伏/対悪魔不死+${bPct}%!] `;
+                }
+
+                logText = isMagic ? `${holyNotice}🔮✨ 【全体大魔法】${member.name} の【${playableSkill.name}】が炸裂！(残SP: ${member.sp})` : `${holyNotice}⚔️💥 【全体特技】${member.name} の【${playableSkill.name}】が一閃！(残SP: ${member.sp})`;
                 newLogs.push({ id: `p-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
 
                 // 🔮 👑 【三土手神特注：全体魔法・特技用 バフ完全同期ベースパワー算出ゲート】
@@ -2488,7 +2533,8 @@ else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大�
                  return; 
               }
               const isEnemyDebuffed = ['スタン', '凍結', '石化'].includes(primaryTarget.state?.currentStatus);
-              const effectiveEnemyVit = isEnemyDebuffed ? 0 : (primaryTarget.vit || 0);
+              // 🛡️ 👑 【三土手神特注】VIT直読みをやめ、ダッシュボードと完全同期した本物の敵Def（primaryTarget.def）を参照！
+              const effectiveEnemyVit = isEnemyDebuffed ? 0 : (primaryTarget.def !== undefined ? primaryTarget.def : (primaryTarget.vit || 0));
               const isEnemyPoisoned = primaryTarget.state?.currentStatus === 'poison' || primaryTarget.state?.currentStatus === '毒';
               const finalEnemyVit = isEnemyPoisoned ? Math.floor(effectiveEnemyVit * 0.75) : effectiveEnemyVit;
 
@@ -2534,6 +2580,15 @@ else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大�
                 
                 const debuffMsg = isEnemyDebuffed ? `[敵防完全喪失!]` : (isEnemyPoisoned ? `[敵防25%低下!]` : '');
 
+                // 🧪 ✝️ 【セイントブレス検証用F12コンソールログ】
+                console.log(`=== ✝️ 【ダメージ計算検証ログ】 ${member.name} ➔ ${primaryTarget.name} ===`);
+                console.log(`・攻撃者: ${member.name} (基礎ATKダイス: ${randomizedAtk} / バフ込: ${finalTotalAtk})`);
+                console.log(`・対象種族/属性: ${primaryTarget.race} / ${primaryTarget.element} (敵Def: ${finalEnemyVit})`);
+                console.log(`・セイントブレス検知: ${hasHolyPractice ? `有効 (+${hasHolyPractice.effect_value}%)` : '無効'}`);
+                console.log(`・総合ダメージ倍率: ${totalMultiplier.toFixed(2)}倍`);
+                console.log(`・最終算出ダメージ: ${finalDmg}`);
+                console.log(`===================================================`);
+
                 // 🔮 👑 【三土手創世神特注：ツインブレード二刀連撃・ダメージ2分割＆2行ログ出力エンジン】
                 // 🏹 🆕 【武器制限ゲート】武器がLレンジ（弓など）の時は、二刀連撃が誤射されないように鉄壁ガード！
                 const isTwinStrikeActive = (member.twin_strike_chance || 0) > 0 && 
@@ -2558,7 +2613,8 @@ else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大�
                   let holyPracticeNotice = "";
                 // ✨ここを修正：属性（element）が「不死」の場合もログに文字を出すように包囲網を完全同期！
                 if (hasHolyPractice && (primaryTarget.race === '悪魔' || primaryTarget.race === '不死' || primaryTarget.element === '不死')) {
-                  holyPracticeNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
+                  const bPct = Number(hasHolyPractice.effect_value || 0);
+                  holyPracticeNotice = `✨[聖者調伏+${bPct}%!] `;
                 }
 
                 if (isTwinStrikeActive) {
@@ -2782,6 +2838,8 @@ else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大�
           int: dbEnemy?.int || dbEnemy?.stat_int || 0,
           hit: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_dex || dbEnemy?.dex || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 20),
           flee: Math.floor(Number(dbEnemy?.base_level || 1) + Number(dbEnemy?.stat_agi || dbEnemy?.agi || 0) + Number(dbEnemy?.stat_luk || dbEnemy?.luk || 0) * 0.2 + 10),
+          // 🛡️ 👑 【三土手神特注】ダッシュボードの「防御力(Def)予測」計算式と100%完全同期！VIT直読みの誤差を撲滅！
+          def: Math.floor((Number(dbEnemy?.vit || dbEnemy?.stat_vit || 0)) * 0.5 + Number(dbEnemy?.base_level || 1) * 0.1),
           enemy_aspd: dbEnemy?.enemy_aspd !== null && dbEnemy?.enemy_aspd !== undefined ? Number(dbEnemy.enemy_aspd) : 150.0,
           is_range_atk: isRanged,
           is_range_weapon: isRanged,
