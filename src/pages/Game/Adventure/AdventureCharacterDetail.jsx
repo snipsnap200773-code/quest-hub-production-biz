@@ -347,87 +347,94 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   if (loading) return <div style={{ color: '#ffd700', textAlign: 'center', padding: '50px', fontFamily: 'serif' }}>古代スクロール同期中...</div>;
   if (!character) return <div style={{ color: '#ef4444', padding: '20px' }}>冒険者が不在です。</div>;
 
+  // 1. 🟢 まずパッシブスキル用の加算バッファ変数を一番最初（上）で宣言する！[cite: 7]
+  let passiveFleeBonus = 0;
+  let passiveCritBonus = 0;
+  let passiveAtkBonus = 0;
+  let passiveMatkBonus = 0;
+  let passiveDefBonus = 0;   
+  let passiveMdefBonus = 0;
+  let passiveDexBonus = 0; // 👈 🟢 ここで安全に宣言！[cite: 7]
+  let passiveHpMultiplier = 1.0;
+  let passiveSpMultiplier = 1.0;
+
+  // 2. 🟢 パッシブスキルの一覧をスキャンして加算値を計算を完了させる！[cite: 7]
+  const characterSkills = character?.skillsList || [];
+
+  characterSkills.forEach(sk => {
+    const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ' || sk.name?.includes('プレダトリーセンス') || sk.effect_type === 'プレダトリーセンス';
+
+    if (isPassive) {
+      if (sk.effect_type === '回避Flee増幅' || sk.effect_type === 'シャドウセンス' || sk.name?.includes('シャドウセンス')) {
+        passiveFleeBonus += Number(sk.effect_value || sk.buff_value || 20);
+      }
+      if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
+      
+      // 🏹 ホークアイ判定（Lレンジ武器装備時限定）[cite: 7]
+      if (sk.effect_type === 'ホークアイ' || sk.effect_type === '遠隔命中増幅' || sk.name?.includes('ホークアイ')) {
+        const rightEq = character.equips?.right_hand;
+        const isLRange = rightEq?.weapon_range === 'L' || rightEq?.range === 'L';
+        if (isLRange) {
+          passiveCritBonus += 10; // 弓装備時にCri+10%[cite: 7]
+        }
+      }
+      
+      // 🎯 【プレダトリーセンス / ディバインアイ / パッシブDEX増幅】のDEX加算を蓄積[cite: 7]
+      if (sk.effect_type === 'パッシブDEX増幅' || sk.effect_type === 'プレダトリーセンス' || sk.name?.includes('プレダトリーセンス') || sk.name?.includes('ディバインアイ')) {
+        passiveDexBonus += Number(sk.effect_value || sk.buff_value || 10);
+      }
+
+      // ⚔️ 【剣術の極意 / パッシブATK増幅】[cite: 7]
+      if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
+        passiveAtkBonus += Number(sk.effect_value || sk.buff_value || 0);
+      }
+
+      if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
+      if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
+      if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
+      if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
+      if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
+      if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
+    }
+  });
+
+  // 3. 🟢 パッシブ計算が完了したあとで、安全に currentTempCharForCalc を組み立てる！[cite: 7]
   const currentTempCharForCalc = { 
   ...character, 
-  // 手振りStateを最優先でバインド
   bonus: { ...localBonuses },
   str: (character.meta?.stat_str || 1) + localBonuses.str,
   agi: (character.meta?.stat_agi || 1) + localBonuses.agi,
   vit: (character.meta?.stat_vit || 1) + localBonuses.vit,
   int: (character.meta?.stat_int || 1) + localBonuses.int,
-  dex: (character.meta?.stat_dex || 1) + localBonuses.dex,
+  dex: (character.meta?.stat_dex || 1) + localBonuses.dex, // 🟢 シンプルに手振り分のみ結合
   luk: (character.meta?.stat_luk || 1) + localBonuses.luk
 };
-const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {});
+  const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {}); //[cite: 7]
 
-// 🔨 👑 精錬値ボーナスの画面表示用内訳計算（二重足し算は削除！）
-let refineAtkBonus = 0;
-let refineDefBonus = 0;
+  // 4. 🔨 精錬値ボーナスの画面表示用内訳計算[cite: 7]
+  let refineAtkBonus = 0;
+  let refineDefBonus = 0;
 
-EQUIP_SLOTS.forEach(slot => {
-  const eqItem = character.equips?.[slot.key];
-  if (eqItem) {
-    const rVal = Number(eqItem.refine_level || 0);
-    if (rVal > 0) {
-      if (eqItem.item_type === 'weapon') {
-        refineAtkBonus += rVal * 5; // ⚔️ 武器1精錬あたり ATK+5
-      } else {
-        refineDefBonus += rVal * 2; // 🛡️ 防具1精錬あたり DEF+2
+  EQUIP_SLOTS.forEach(slot => {
+    const eqItem = character.equips?.[slot.key];
+    if (eqItem) {
+      const rVal = Number(eqItem.refine_level || 0);
+      if (rVal > 0) {
+        if (eqItem.item_type === 'weapon') {
+          refineAtkBonus += rVal * 5; //[cite: 7]
+        } else {
+          refineDefBonus += rVal * 2; //[cite: 7]
+        }
       }
     }
-  }
-});
+  });
 
-// 🔮 👑 【三土手創世神特注：常時発動型パッシブスキル・詳細画面リアルタイム同期インジェクション】
-let passiveFleeBonus = 0;
-let passiveCritBonus = 0;
-let passiveAtkBonus = 0;
-let passiveMatkBonus = 0;
-let passiveDefBonus = 0;   // 👈 🆕 Def用のボーナス受け皿を新設！
-let passiveMdefBonus = 0;
-let passiveHpMultiplier = 1.0;
-let passiveSpMultiplier = 1.0;
-
-// 🐾 🆕 常に最新の判定で結合された配列を参照させる
-const characterSkills = character?.skillsList || [];
-
-characterSkills.forEach(sk => {
-  // 🔮 sk.skill_type === 'passive' の縛りを外し、効果タイプやスキル名でも二重包囲網で検知！
-  const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ';
-
-  if (isPassive) {
-    if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
-    if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
-    
-    // 🏹 ホークアイ判定（Lレンジ武器装備時限定）
-    if (sk.effect_type === 'ホークアイ' || sk.effect_type === '遠隔命中増幅' || sk.name?.includes('ホークアイ')) {
-      const rightEq = character.equips?.right_hand;
-      const isLRange = rightEq?.weapon_range === 'L' || rightEq?.range === 'L';
-      if (isLRange) {
-        passiveCritBonus += 10; // 弓装備時にCri+10%
-      }
-    }
-    
-    // ⚔️ 【剣術の極意 / パッシブATK増幅】を確実につかみ取る！
-    if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
-      passiveAtkBonus += Number(sk.effect_value || sk.buff_value || 0);
-    }
-
-    if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
-    if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
-    if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
-    if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
-    if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
-    if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
-  }
-});
-
-// 各戦闘能力値・最大値へパッシブの恩恵をダイレクト上書き合流！
-ro.flee = ro.flee + passiveFleeBonus;
-ro.critical = ro.critical + passiveCritBonus;
-ro.atk = ro.atk + passiveAtkBonus;
-ro.def = ro.def + passiveDefBonus;     // 👈 🆕 計算後の最終Defにパッシブを直撃合流！
-ro.mdef = ro.mdef + passiveMdefBonus;
+  // 5. 各戦闘能力値・最大値へパッシブの恩恵をダイレクト上書き合流！[cite: 7]
+  ro.flee = ro.flee + passiveFleeBonus;
+  ro.critical = ro.critical + passiveCritBonus;
+  ro.atk = ro.atk + passiveAtkBonus;
+  ro.def = ro.def + passiveDefBonus;
+  ro.mdef = ro.mdef + passiveMdefBonus;
 
   // 🔮 🆕 カード効果による「純粋なVIT・INTの上昇値」をエンジン内部の最終Atk/Def等から逆引き計算して完全連動化！
   // エンジン内で str や vit を計算した後の最終合算値から、Base値と手振りBonus値を引き算してカード分のVITを特定します
@@ -736,6 +743,20 @@ ro.mdef = ro.mdef + passiveMdefBonus;
               scanEffect(item.card_effect_type, item.card_effect_target, item.card_effect_value, item.card_effect_target_2);
               scanEffect(item.card_effect_type_2, item.card_effect_target_2, item.card_effect_value_2, item.card_effect_target_2);
               scanEffect(item.card_effect_type_3, item.card_effect_target_3, item.card_effect_value_3, item.card_effect_target_3);
+            });
+
+            // 🏹 👑 【三土手神特注】習得パッシブスキル（プレダトリーセンス / セイントブレス）の特効補正をボードへ合算！
+            characterSkills.forEach(sk => {
+              if (sk.name === 'プレダトリーセンス' || sk.effect_type === 'プレダトリーセンス') {
+                masterSpecs.race['動物'] = (masterSpecs.race['動物'] || 0) + 20;
+                masterSpecs.race['植物'] = (masterSpecs.race['植物'] || 0) + 20;
+              }
+              if (sk.name === 'セイントブレス' || sk.effect_type === 'セイントブレス' || sk.name === 'ホーリープラクティス') {
+                const holyVal = Number(sk.effect_value || sk.buff_value || 20);
+                masterSpecs.race['悪魔'] = (masterSpecs.race['悪魔'] || 0) + holyVal;
+                masterSpecs.race['不死'] = (masterSpecs.race['不死'] || 0) + holyVal;
+                masterSpecs.elem['不死'] = (masterSpecs.elem['不死'] || 0) + holyVal;
+              }
             });
 
             const subSectionStyle = { fontSize: '0.62rem', color: '#887355', borderBottom: '1px solid #1a130b', paddingBottom: '2px', marginTop: '4px', fontWeight: 'bold', display: 'block' };

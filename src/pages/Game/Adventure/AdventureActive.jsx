@@ -331,7 +331,9 @@ const AdventureActive = ({
           if (availableSkills && availableSkills.length > 0) {
             availableSkills.forEach(sk => {
               if (sk.skill_type === 'passive') {
-                if (sk.effect_type === '回避Flee増幅')  passiveFleeBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === '回避Flee増幅' || sk.effect_type === 'シャドウセンス' || sk.name?.includes('シャドウセンス')) {
+                  passiveFleeBonus += Number(sk.effect_value || sk.buff_value || 20);
+                }
                 if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
                 
                 // ⬇️ 🆕 ここにデバッグ用ログを追加！
@@ -345,11 +347,17 @@ const AdventureActive = ({
                 if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
                 if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
                 if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
-                if (sk.effect_type === 'ツインブレード型連撃') passiveTwinChance = Math.max(passiveTwinChance, Number(sk.effect_value || 0));
+                if (sk.effect_type === 'ツインブレード型連撃' || sk.effect_type === 'デュアルファング' || sk.name?.includes('デュアルファング')) {
+                  // Sレンジ武器（短剣・剣など）を装備している時のみ30%連撃を有効化
+                  const isSRange = masterWeapon?.weapon_range === 'S' || rightHandObj?.weapon_range === 'S' || rightHandObj?.range === 'S';
+                  if (isSRange) {
+                    passiveTwinChance = Math.max(passiveTwinChance, Number(sk.effect_value || sk.buff_value || 30));
+                  }
+                }
                 
                 // 🧼 ディバインアイ（神識眼）：常時DEXを固定値プラスする判定
-                if (sk.effect_type === 'パッシブDEX増幅' || sk.name?.includes('ディバインアイ') || sk.name?.includes('神識眼')) {
-                  passiveDexBonus += Number(sk.effect_value || 0);
+                if (sk.effect_type === 'パッシブDEX増幅' || sk.effect_type === 'プレダトリーセンス' || sk.name?.includes('プレダトリーセンス') || sk.name?.includes('ディバインアイ') || sk.name?.includes('神識眼')) {
+                  passiveDexBonus += Number(sk.effect_value || sk.buff_value || 10);
                 }
                 
                 // 🏹 ホークアイ：Lレンジ武器装備時にHit（数値連動）＆ Cri+10%を底上げする判定
@@ -1332,7 +1340,21 @@ if (usedSkill) {
                 } else {
                   // 🔮 【Flee完全回避ジャッジ】
                   const enemyHit = Number(enemyItem.hit || 21);
-                  const playerFlee = Number(target.roStatus?.flee || target.flee || 0);
+                  let playerFlee = Number(target.roStatus?.flee || target.flee || 0);
+                  
+                  // 🌪️ ウインドマーチ等の Flee％バフをリアルタイム反映
+                  if (target.activeBuffs && target.activeBuffs.length > 0) {
+                    target.activeBuffs.forEach(b => {
+                      if (b.effect_type === '回避Flee増幅') {
+                        if (b.buff_value_type === 'percent') {
+                          playerFlee += Math.floor(playerFlee * (b.buff_value / 100));
+                        } else {
+                          playerFlee += Number(b.buff_value || 0);
+                        }
+                      }
+                    });
+                  }
+
                   const fleeChance = 20 + playerFlee - enemyHit;
                   const cappedFleeChance = Math.min(95, fleeChance);
                   const randomRoll = Math.floor(Math.random() * 100);
@@ -1533,6 +1555,9 @@ if (isBackRow && isShortRange) {
           // 自分が行動したタイミングで、パーティ全員にかかっている「自分がかけたバフ」のターンを1減らす！
           localParty.forEach(ally => {
   if (ally.activeBuffs && ally.activeBuffs.length > 0) {
+    // 💡 期限切れログの重複出力を防ぐための判定用Set（1人の味方につきスキル名1回だけ）
+    const clearedSkillNames = new Set();
+
     ally.activeBuffs = ally.activeBuffs.map(buff => {
       if (buff.casterId === member.id) {
         // かけたばかりのターンは引き算をスキップして保護する
@@ -1541,7 +1566,15 @@ if (isBackRow && isShortRange) {
         }
         const nextTurns = buff.duration_turns - 1;
         if (nextTurns <= 0) {
-          newLogs.push({ id: `buff-clear-${ally.id}-${buff.id}-${Date.now()}-${Math.random()}`, text: `✨ ${ally.name} の【${buff.name}】の効果が静かに切れた。`, type: "system" });
+          // 🎵 ウインドマーチ等、1つのスキルで複数の内部バフを持つ場合もメッセージを1回にまとめる
+          if (!clearedSkillNames.has(buff.name)) {
+            clearedSkillNames.add(buff.name);
+            newLogs.push({ 
+              id: `buff-clear-${ally.id}-${buff.name}-${Date.now()}-${Math.random()}`, 
+              text: `✨ ${ally.name} の【${buff.name}】の効果が静かに切れた。`, 
+              type: "system" 
+            });
+          }
         }
         return { ...buff, duration_turns: nextTurns };
       }
@@ -1610,7 +1643,7 @@ if (isBackRow && isShortRange) {
             if (sk.skill_type === 'passive') return false;
 
             // 🚑 👑 【三土手神特注パッチ】回復やバフなど「味方にかける支援魔法」は射程制限から免除！
-            const isSupportMagic = ['状態異常回復', '回復', '物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(sk.effect_type) || sk.name?.includes('ヒール');
+            const isSupportMagic = ['状態異常回復', '回復', '物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(sk.effect_type) || sk.name?.includes('ヒール');
 
             // 支援魔法ではなく、キャラが後衛かつSレンジなら除外
             if (!isSupportMagic && member.position === 'back' && sk.skill_range === 'S') {
@@ -1665,7 +1698,7 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 3. 【さらに次点】バフ・支援特技（速度増加など）AI：誰も死にかけていない時だけかける
           if (!targetAlly) {
-            const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+            const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
             const availableBuffSkills = allowedSkills.filter(sk => buffEffectTypes.includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
             
             if (availableBuffSkills.length > 0) {
@@ -1685,7 +1718,7 @@ if (isBackRow && isShortRange) {
                 priorityJobs = priorityJobs || [];
 
                 if (priorityJobs.length > 0) {
-                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id));
+                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id || b.id === `${bSkill.id}_aspd` || b.id === `${bSkill.id}_flee`));
                   if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
 
                   for (let jobReq of priorityJobs) {
@@ -1721,7 +1754,7 @@ if (isBackRow && isShortRange) {
                   }
 
                   const isAreaBuff = bSkill.target_type === '味方全体';
-                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id));
+                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id || b.id === `${bSkill.id}_aspd` || b.id === `${bSkill.id}_flee`));
                   if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
 
                   const totalTargetsCount = bSkill.is_range_damage_cut === true 
@@ -1775,7 +1808,7 @@ if (isBackRow && isShortRange) {
               exploitSkill = allowedSkills.find(sk => 
                 (sk.element === '無' || sk.element === '聖' || sk.name === 'ホーリーライト') && 
                 member.sp >= Number(sk.sp_cost || 0) &&
-                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(sk.effect_type) // ✨バフ魔法が攻撃として誤判定されるのを完全封鎖！
+                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(sk.effect_type)
               );
             }
 
@@ -1793,7 +1826,7 @@ if (isBackRow && isShortRange) {
               // 純粋な攻撃用アクティブスキル（支援バフや回復、パッシブを除外）をスキャン
               const attackSkillsPool = allowedSkills.filter(sk => 
                 sk.skill_type !== 'passive' && 
-                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅', '回復', '状態異常回復'].includes(sk.effect_type)
+                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅', '回復', '状態異常回復'].includes(sk.effect_type)
               );
 
               // 45%の確率ダイスに当選し、かつSP制限をクリアしていれば、プールからスキル（ブレス等）をランダム決定して強制起動！
@@ -1824,11 +1857,11 @@ if (isBackRow && isShortRange) {
             // ランダムに選ばれた支援スキル等を撃つかどうかの最終チェック
             if (playableSkill && member.sp >= Number(playableSkill.sp_cost || 0)) {
               // 🔮 👑 【三土手神特注：ランダム暴発ルート完全封印センサー】
-              const isBuffType = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
+              const isBuffType = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅'].includes(playableSkill.effect_type);
 
               if (isBuffType) {
                 const rPriorityJobs = playableSkill.target_priority_jobs || [];
-                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === playableSkill.id));
+                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === playableSkill.id || b.id === `${playableSkill.id}_aspd` || b.id === `${playableSkill.id}_flee`));
                 
                 // 🛡️ 👑 【三土手神特注パッチ】かばう（献身）系スキルの場合は、術者本人をターゲット候補から完全除外！
                 if (playableSkill.is_range_damage_cut === true) {
@@ -1872,10 +1905,10 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 【三土手神特注：バフ・かばう（ディボーション）重複発動封印パッチ】
           // 決定されたスキルがバフ・支援系（物理DEF増幅など）の場合の重複チェック
-          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type)) {
+          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅'].includes(playableSkill.effect_type)) {
   
   // 🎯 今回魔法をかける予定の「targetAlly」だけを狙い撃ちして、同じバフIDを持っているかチェック！
-  const isAlreadyBuffed = (targetAlly.activeBuffs || []).some(b => b.id === playableSkill.id);
+  const isAlreadyBuffed = (targetAlly.activeBuffs || []).some(b => b.id === playableSkill.id || b.id === `${playableSkill.id}_aspd` || b.id === `${playableSkill.id}_flee`);
   
   if (isAlreadyBuffed) {
     // この仲間はすでにそのバフがかかっているので、今ターンのスキル発動を安全にキャンセル
@@ -1913,6 +1946,19 @@ if (isBackRow && isShortRange) {
             }
           }
 
+          // 🏹 👑 【三土手神特注】プレダトリーセンス専用・動物＆植物種族特効判定線
+          const hasPredatorySense = (member.skillsList || []).find(sk => 
+            sk.name === 'プレダトリーセンス' || 
+            sk.effect_type === 'プレダトリーセンス'
+          );
+          if (hasPredatorySense && primaryTarget) {
+            const bonusPct = 20; // 特効+20%
+            if (primaryTarget.race === '動物' || primaryTarget.race === '植物') {
+              cardRace['動物'] = (cardRace['動物'] || 0) + bonusPct;
+              cardRace['植物'] = (cardRace['植物'] || 0) + bonusPct;
+            }
+          }
+
           const sizeValue = cardSize['小型'] || 0;
           const raceValue = cardRace['無形'] || 0;
           const elemValue = cardElem['地'] || 0;
@@ -1942,7 +1988,7 @@ if (isBackRow && isShortRange) {
             // 🛡️ 👑 【三土手神特注】古いガバガバ判定をここで完全粉砕！バフと回復を100%厳密に仕分ける定義
             const isCureSkill = playableSkill.effect_type === '状態異常回復';
             const isHealSkill = playableSkill.effect_type === '回復' || playableSkill.name?.includes('ヒール');
-            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅'].includes(playableSkill.effect_type);
+            const isBuffSkill = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅'].includes(playableSkill.effect_type);
 
             if (isCureSkill || isHealSkill) {
               // 🧪 ① 純粋な回復・キュア魔法専用ルート
@@ -2064,30 +2110,75 @@ if (isBackRow && isShortRange) {
                 };
 
                 // スキルの効果タイプを判別して、ログの文字列を切り替える！
+                const valText = bValue ? `${bValue}%` : '';
                 let buffMsg = "ステータスが上昇した！";
-
-                const isAreaBuff = playableSkill.target_type === '味方全体';
-
-                if (isAreaBuff) {
-                  logText = `🙌✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！`;
-                  newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
-
-                  localParty = localParty.map(ally => {
-                    if (ally.hp <= 0) return ally;
-                    
-                    // 🛡️ 【三土手神特注：セルフかばう無限ループ封印センサー】
-                    if (isRangeCut && ally.id === member.id) {
-                      return ally; // 自分自身はスキップしてバフを付与しない
+                    if (playableSkill.effect_type === 'ウインドマーチ') {
+                      // 💡 bValue (ダッシュボードで設定した10等の数値) を動的にログへ反映！
+                      const marchVal = bValue || 10;
+                      buffMsg = `行動速度(Aspd)と回避率(Flee)が${marchVal}%大幅上昇した！`;
+                    } else if (playableSkill.effect_type === '物理ATK増幅') {
+                      buffMsg = `物理ATKが${valText}大幅上昇した！`;
+                    } else if (playableSkill.effect_type === '物理DEF増幅') {
+                      buffMsg = `物理防御(DEF)が${valText}上昇した！`;
+                    } else if (playableSkill.effect_type === '全防御増幅') {
+                      buffMsg = `物理・魔法防御が${valText}大幅上昇した！`;
+                    } else if (playableSkill.effect_type === '行動速度Aspd増幅') {
+                      buffMsg = `行動速度(Aspd)が${valText}上昇した！`;
+                    } else if (playableSkill.effect_type === '魔力Matk増幅') {
+                      buffMsg = `魔力(Matk)が${valText}大幅上昇した！`;
                     }
 
-                    const currentBuffs = ally.activeBuffs || [];
-                    const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
-                    // 🌟 ここ！ "強化効果【...】が宿った！" の代わりに、作った buffMsg を使う
-                    newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
-                    return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
-                  });
-                  logText = "";
-                } else {
+                    const isAreaBuff = playableSkill.target_type === '味方全体';
+
+                    if (isAreaBuff) {
+                      logText = `🎵✨ [戦術曲演奏] ${member.name} が 【${playableSkill.name}】 を奏でた！`;
+                      newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
+
+                      // ウインドマーチ専用：Aspd増幅 と Flee増幅 の2つの効果オブジェクトを作成
+                      const isWindMarch = playableSkill.effect_type === 'ウインドマーチ';
+                      const marchAspdBuff = {
+                        id: `${playableSkill.id}_aspd`,
+                        name: playableSkill.name,
+                        effect_type: '行動速度Aspd増幅',
+                        buff_value: bValue || 30,
+                        buff_value_type: bValueType,
+                        duration_turns: turns,
+                        casterId: member.id,
+                        isNew: true
+                      };
+                      const marchFleeBuff = {
+                        id: `${playableSkill.id}_flee`,
+                        name: playableSkill.name,
+                        effect_type: '回避Flee増幅',
+                        buff_value: Math.floor((bValue || 30)), // Fleeの増幅%
+                        buff_value_type: 'percent',
+                        duration_turns: turns,
+                        casterId: member.id,
+                        isNew: true
+                      };
+
+                      localParty = localParty.map(ally => {
+                        if (ally.hp <= 0) return ally;
+                        
+                        if (isRangeCut && ally.id === member.id) return ally;
+
+                        const currentBuffs = ally.activeBuffs || [];
+                        
+                        let nextBuffs = [];
+                        if (isWindMarch) {
+                          // 古いウインドマーチバフを排除して入れ替え
+                          const filtered = currentBuffs.filter(b => !b.id.startsWith(playableSkill.id));
+                          nextBuffs = [...filtered, marchAspdBuff, marchFleeBuff];
+                        } else {
+                          const filtered = currentBuffs.filter(b => b.id !== playableSkill.id);
+                          nextBuffs = [...filtered, newBuff];
+                        }
+
+                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌪️ 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
+                        return { ...ally, activeBuffs: nextBuffs };
+                      });
+                      logText = "";
+                    } else {
                   // 単体バフ・ディボーション（献身）の確実なバインド（activeBuffsに統一）
                   const targetFindIdx = localParty.findIndex(p => p.id === targetAlly.id);
                   if (targetFindIdx !== -1) {
@@ -2159,11 +2250,24 @@ if (isBackRow && isShortRange) {
                         }
                       });
                     }
-                    // バフが上乗せされた最強の魔力幅から、今回のダイス威力を決定！
+                    // バフが乗った最強の魔力から、今回のダイス威力を決定！
                     finalCalculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
                   } else {
-                    // 物理特技スキルの場合は、通常攻撃ダイスを参照
-                    finalCalculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+                    // ⚔️ 🟢 【全体物理特技】バトルアンセム等の「物理ATK増幅」バフを威力を乗算！
+                    let bonusAtk = 0;
+                    if (member.activeBuffs && member.activeBuffs.length > 0) {
+                      member.activeBuffs.forEach(b => {
+                        if (b.effect_type === '物理ATK増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            bonusAtk += b.buff_value;
+                          } else {
+                            bonusAtk += Math.floor(randomizedAtk * (b.buff_value / 100));
+                          }
+                        }
+                      });
+                    }
+                    const buffedTotalAtk = randomizedAtk + bonusAtk;
+                    finalCalculatedPower = Math.floor((buffedTotalAtk * baseValue) / 100);
                   }
                 }
 
@@ -2233,12 +2337,45 @@ if (isBackRow && isShortRange) {
                     // バフが乗った最強の魔力から、今回の威力をダイス決定！
                     calculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
                   } else {
-                    // 物理スキルの場合は通常通り攻撃力ダイスを参照
-                    calculatedPower = Math.floor((randomizedAtk * baseValue) / 100);
+                    // ⚔️ 🟢 【単体物理特技】バトルアンセム等の「物理ATK増幅」バフを威力へ合算！
+                    let bonusAtk = 0;
+                    if (member.activeBuffs && member.activeBuffs.length > 0) {
+                      member.activeBuffs.forEach(b => {
+                        if (b.effect_type === '物理ATK増幅') {
+                          if (b.buff_value_type === 'fixed') {
+                            bonusAtk += b.buff_value;
+                          } else {
+                            // 例: バトルアンセム(200%) ➔ 基礎ダイスATKの+200%（合計3倍火力）を乗算！
+                            bonusAtk += Math.floor(randomizedAtk * (b.buff_value / 100));
+                          }
+                        }
+                      });
+                    }
+                    const buffedTotalAtk = randomizedAtk + bonusAtk;
+                    // バフで強化された総ATKをもとにスキル倍率（シャドウステップ220%等）を乗算！
+                    calculatedPower = Math.floor((buffedTotalAtk * baseValue) / 100);
                   }
                 }
 
-                const skillSpecs = { ...attackSpecs, element: playableSkill.element || '無', is_physical: playableSkill.skill_type === 'art' };
+                // 🏹 🟢 【単体スキル用】プレダトリーセンス（動物＆植物種族特効+20%）合流配線
+                let skillCardRace = { ...cardRace };
+                const hasPredatorySense = (member.skillsList || []).find(sk => 
+                  sk.name === 'プレダトリーセンス' || sk.effect_type === 'プレダトリーセンス'
+                );
+                if (hasPredatorySense && primaryTarget) {
+                  if (primaryTarget.race === '動物' || primaryTarget.race === '植物') {
+                    skillCardRace['動物'] = (skillCardRace['動物'] || 0) + 20;
+                    skillCardRace['植物'] = (skillCardRace['植物'] || 0) + 20;
+                    console.log(`🏹 【プレダトリーセンス発動】 ${member.name} ➔ ターゲット: ${primaryTarget.name} (${primaryTarget.race}種族) に特効+20%を適用！`);
+                  }
+                }
+
+                const skillSpecs = { 
+                  ...attackSpecs, 
+                  element: playableSkill.element || '無', 
+                  is_physical: playableSkill.skill_type === 'art',
+                  card_race_eff: skillCardRace // 👈 特効バッファを反映！
+                };
                 const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
                 
                 // 物理スキルの場合は敵のVIT防御を引き算する
@@ -2258,7 +2395,25 @@ if (isBackRow && isShortRange) {
 
                 logText = `${magicPassNotice}${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
                 // 🔮 👑 ここもパッシブなら敵にデバフを流さない！
-                if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && playableSkill.skill_type !== 'passive' && localEnemies[targetIdx].hp > 0) {
+                if (playableSkill.effect_type === 'シャドウステップ') {
+                  const turns = Number(playableSkill.duration_turns || 2);
+                  const fleeVal = Number(playableSkill.buff_value || 30);
+                  const selfFleeBuff = {
+                    id: `${playableSkill.id}_flee_self`,
+                    name: playableSkill.name,
+                    effect_type: '回避Flee増幅',
+                    buff_value: fleeVal,
+                    buff_value_type: 'percent',
+                    duration_turns: turns,
+                    casterId: member.id,
+                    isNew: true
+                  };
+                  const currentBuffs = member.activeBuffs || [];
+                  const filteredBuffs = currentBuffs.filter(b => b.id !== selfFleeBuff.id);
+                  member.activeBuffs = [...filteredBuffs, selfFleeBuff];
+                  logText += ` ➔ 💨 自身の回避率(Flee)が${fleeVal}%上昇！(${turns}T)`;
+                }
+                else if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && playableSkill.skill_type !== 'passive' && localEnemies[targetIdx].hp > 0) {
                   const baseChance = Number(playableSkill.effect_chance || 0);
                   const enemyResistPct = playableSkill.effect_type === 'スタン' ? primaryTarget.resist_stun || 0 : playableSkill.effect_type === '凍結' ? primaryTarget.resist_freeze || 0 : playableSkill.effect_type === '毒' ? primaryTarget.resist_poison || 0 : playableSkill.effect_type === '暗闇' ? primaryTarget.resist_blind || 0 : 0;
                   if (Math.random() * 100 < Math.max(0, baseChance - enemyResistPct)) {
@@ -2377,17 +2532,17 @@ if (isBackRow && isShortRange) {
                 }
               } 
               // 🛡️ 2. 👑 【三土手創世神特注】戦術支援バフ・支援特技の超最優先ゲート！攻撃魔法ルートへのすり抜けを完全遮断！
-              else if (['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(skillToUse.effect_type)) {
+              else if (['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(skillToUse.effect_type)) {
                 
                 // 🎯 確率発動ルートでも「優先職業」を確実にスキャンして、かつ【まだバフがかかっていない仲間】を厳選！
                 const rPriorityJobs = skillToUse.target_priority_jobs || [];
-                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === skillToUse.id));
+                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === skillToUse.id || b.id === `${skillToUse.id}_aspd` || b.id === `${skillToUse.id}_flee`));
                 let validTargetFound = false;
 
                 // 🎯 ターゲットが「自分自身」の場合の強制ロック判定
 if (skillToUse.target_type === '自分自身') {
   // 自分に既にそのバフがかかっているかチェック
-  const isAlreadyBuffed = (member.activeBuffs || []).some(b => b.id === skillToUse.id);
+  const isAlreadyBuffed = (member.activeBuffs || []).some(b => b.id === skillToUse.id || b.id === `${skillToUse.id}_aspd` || b.id === `${skillToUse.id}_flee`);
   if (!isAlreadyBuffed) {
     targetAlly = member;
     validTargetFound = true;
@@ -2448,17 +2603,19 @@ if (skillToUse.target_type === '自分自身') {
                       isNew: true
                     };
 
+                    const valText = bValue ? `${bValue}%` : '';
                     let buffMsg = "ステータスが上昇した！";
-if (skillToUse.effect_type === '物理DEF増幅') buffMsg = "物理防御が上昇した！";
-else if (skillToUse.effect_type === '全防御増幅') buffMsg = "物理・魔法防御が共に大幅上昇した！"; // 👈 🆕 ここを追加！
-else if (skillToUse.effect_type === '物理ATK増幅') buffMsg = "物理攻撃力が上昇した！";
-else if (skillToUse.effect_type === '行動速度Aspd増幅') buffMsg = "行動速度が上昇した！";
-else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大幅に上昇した！";
+                    
+                    if (skillToUse.effect_type === '物理ATK増幅') buffMsg = `物理ATKが${valText}大幅上昇した！`;
+                    else if (skillToUse.effect_type === '物理DEF増幅') buffMsg = `物理防御(DEF)が${valText}上昇した！`;
+                    else if (skillToUse.effect_type === '全防御増幅') buffMsg = `物理・魔法防御が${valText}大幅上昇した！`;
+                    else if (skillToUse.effect_type === '行動速度Aspd増幅') buffMsg = `行動速度(Aspd)が${valText}上昇した！`;
+                    else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = `魔力(Matk)が${valText}大幅上昇した！`;
 
                     const isAreaBuff = skillToUse.target_type === '味方全体';
 
                     if (isAreaBuff) {
-                      logText = `🙌✨ [全体支援] ${member.name} が 【${skillToUse.name}】 を発動！`;
+                      logText = `🎵✨ [戦術曲演奏] ${member.name} が 【${skillToUse.name}】 を演奏した！`;
                       newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
 
                       localParty = localParty.map(ally => {
@@ -2467,7 +2624,7 @@ else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大�
 
                         const currentBuffs = ally.activeBuffs || [];
                         const filteredBuffs = currentBuffs.filter(b => b.id !== skillToUse.id);
-                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌟 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
+                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 💥 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
                         return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
                       });
                       logText = "";
@@ -2596,12 +2753,12 @@ else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = "魔力が大�
                                            (Math.random() * 100 < member.twin_strike_chance);
 
                 if (isTwinStrikeActive) {
-                  // トータル想定ダメージ（finalDmg）を綺麗な2連撃に分割出力！
-                  const firstDmg = Math.floor(finalDmg / 2) + 1;
-                  const secondDmg = Math.max(1, finalDmg - firstDmg);
+                  // 本家RO仕様：通常攻撃（finalDmg）と同等の打撃を2回叩き込む（合計200%）！
+                  const firstDmg = finalDmg;
+                  const secondDmg = Math.max(1, Math.floor(finalDmg * (0.9 + Math.random() * 0.2))); // 2打目に若干のダイス揺らぎ
                   const totalTwinDmg = firstDmg + secondDmg;
 
-                  // 敵のHPから2連続でダメージを減算！
+                  // 敵のHPから2連撃分の合計ダメージを減算！
                   localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - totalTwinDmg);
 
                   // 2行連続ヒットを視覚的に豪華にビジュアライズ！
