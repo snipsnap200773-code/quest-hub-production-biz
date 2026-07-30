@@ -2174,9 +2174,26 @@ if (isBackRow && isShortRange) {
                           nextBuffs = [...filtered, newBuff];
                         }
 
-                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌪️ 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
+                        // 🛡️ 👑 🆕 かばう(範囲)発動中は、仲間自身のDEFではなく「肩代わり加護」の文言をログに出す！
+                        const allyLogMsg = isRangeCut
+                          ? `被ダメージの${rangeCutPct}%を${member.name}が肩代わりする加護`
+                          : buffMsg;
+                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 🌪️ 【${ally.name}】 に${allyLogMsg}が発動！ (${turns}T)`, type: "success" });
                         return { ...ally, activeBuffs: nextBuffs };
                       });
+
+                      // 🛡️ 👑 🆕 【三土手神特注：範囲かばう発動時、術者自身にも物理DEF増幅バフを同時付与！】
+                      // 単体版のディボーションと同様、術者（ファイター自身）のDEFを底上げしてこそ「盾役」として成立する
+                      if (isRangeCut) {
+                        const casterFindIdx = localParty.findIndex(p => p.id === member.id);
+                        if (casterFindIdx !== -1) {
+                          const casterCurrentBuffs = localParty[casterFindIdx].activeBuffs || [];
+                          const casterFilteredBuffs = casterCurrentBuffs.filter(b => b.id !== selfBuff.id);
+                          localParty[casterFindIdx].activeBuffs = [...casterFilteredBuffs, selfBuff];
+                          newLogs.push({ id: `p-buff-aoe-self-${member.id}-${Date.now()}`, text: `    ➔ 🛡️ 【${member.name}】 自身の${buffMsg} (${turns}T)`, type: "success" });
+                        }
+                      }
+
                       logText = "";
                     } else {
                   // 単体バフ・ディボーション（献身）の確実なバインド（activeBuffsに統一）
@@ -2593,11 +2610,25 @@ if (skillToUse.target_type === '自分自身') {
                     const newBuff = {
                       id: skillToUse.id,
                       name: skillToUse.name,
-                      effect_type: skillToUse.effect_type,
-                      buff_value: bValue,
+                      effect_type: isRangeCut ? 'かばう発動中' : skillToUse.effect_type,
+                      buff_value: isRangeCut ? 0 : bValue,
                       buff_value_type: bValueType,
                       is_range_damage_cut: isRangeCut,
                       range_damage_cut_pct: rangeCutPct,
+                      duration_turns: turns,
+                      casterId: member.id,
+                      isNew: true
+                    };
+
+                    // 🛡️ 👑 🆕 【三土手神特注：術者自身への物理DEF増幅バフ】
+                    // 「かばう」発動時は、術者（ファイター自身）にも同時に物理DEF増幅バフを別枠で付与する！
+                    const selfBuff = {
+                      id: `${skillToUse.id}_self`,
+                      name: skillToUse.name,
+                      effect_type: skillToUse.effect_type,
+                      buff_value: bValue,
+                      buff_value_type: bValueType,
+                      is_range_damage_cut: false,
                       duration_turns: turns,
                       casterId: member.id,
                       isNew: true
@@ -2624,9 +2655,25 @@ if (skillToUse.target_type === '自分自身') {
 
                         const currentBuffs = ally.activeBuffs || [];
                         const filteredBuffs = currentBuffs.filter(b => b.id !== skillToUse.id);
-                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 💥 【${ally.name}】 の${buffMsg} (${turns}T)`, type: "success" });
+                        // 🛡️ 👑 🆕 かばう(範囲)発動中は、仲間自身のDEFではなく「肩代わり加護」の文言をログに出す！
+                        const allyLogMsg = isRangeCut
+                          ? `被ダメージの${rangeCutPct}%を${member.name}が肩代わりする加護`
+                          : buffMsg;
+                        newLogs.push({ id: `p-buff-aoe-hit-${ally.id}-${Date.now()}`, text: `    ➔ 💥 【${ally.name}】 に${allyLogMsg}が発動！ (${turns}T)`, type: "success" });
                         return { ...ally, activeBuffs: [...filteredBuffs, newBuff] };
                       });
+
+                      // 🛡️ 👑 🆕 【三土手神特注：範囲かばう発動時、術者自身にも物理DEF増幅バフを同時付与！】
+                      if (isRangeCut) {
+                        const casterFindIdx = localParty.findIndex(p => p.id === member.id);
+                        if (casterFindIdx !== -1) {
+                          const casterCurrentBuffs = localParty[casterFindIdx].activeBuffs || [];
+                          const casterFilteredBuffs = casterCurrentBuffs.filter(b => b.id !== selfBuff.id);
+                          localParty[casterFindIdx].activeBuffs = [...casterFilteredBuffs, selfBuff];
+                          newLogs.push({ id: `p-buff-aoe-self-${member.id}-${Date.now()}`, text: `    ➔ 🛡️ 【${member.name}】 自身の${buffMsg} (${turns}T)`, type: "success" });
+                        }
+                      }
+
                       logText = "";
                     } else {
                       // 単体支援バフの確実なバインド処理
@@ -2635,9 +2682,19 @@ if (skillToUse.target_type === '自分自身') {
                         const currentBuffs = localParty[targetFindIdx].activeBuffs || [];
                         const filteredBuffs = currentBuffs.filter(b => b.id !== skillToUse.id);
                         localParty[targetFindIdx].activeBuffs = [...filteredBuffs, newBuff];
+
+                        // 🛡️ 👑 🆕 かばう発動時は、術者（ファイター）自身にも物理DEF増幅バフを同時付与！
+                        if (isRangeCut) {
+                          const casterFindIdx = localParty.findIndex(p => p.id === member.id);
+                          if (casterFindIdx !== -1) {
+                            const casterCurrentBuffs = localParty[casterFindIdx].activeBuffs || [];
+                            const casterFilteredBuffs = casterCurrentBuffs.filter(b => b.id !== selfBuff.id);
+                            localParty[casterFindIdx].activeBuffs = [...casterFilteredBuffs, selfBuff];
+                          }
+                        }
                         
                         if (isRangeCut) {
-                          logText = `🛡️✨ [支援発動] ${member.name} の 【${skillToUse.name}】！ ➔ 【${targetAlly.name}】 と命の絆を結んだ！ (${turns}T / 残SP: ${member.sp})`;
+                          logText = `🛡️✨ [支援発動] ${member.name} の 【${skillToUse.name}】！ ➔ 【${targetAlly.name}】 と命の絆を結び(${rangeCutPct}%肩代わり)、自身のDEFも上昇した！ (${turns}T / 残SP: ${member.sp})`;
                         } else {
                           logText = `✨ [支援発動] ${member.name} の 【${skillToUse.name}】！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
                         }
