@@ -354,17 +354,23 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   let passiveMatkBonus = 0;
   let passiveDefBonus = 0;   
   let passiveMdefBonus = 0;
-  let passiveDexBonus = 0; // 👈 🟢 ここで安全に宣言！[cite: 7]
+  let passiveDexBonus = 0; // 👈 🟢 ここで安全に宣言！
+  let passiveAllStatBonus = 0; // 🌐 🆕 オールラウンダー用バッファを新設！
   let passiveHpMultiplier = 1.0;
   let passiveSpMultiplier = 1.0;
 
-  // 2. 🟢 パッシブスキルの一覧をスキャンして加算値を計算を完了させる！[cite: 7]
+  // 2. 🟢 パッシブスキルの一覧をスキャンして加算値を計算を完了させる！
   const characterSkills = character?.skillsList || [];
 
   characterSkills.forEach(sk => {
-    const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ' || sk.name?.includes('プレダトリーセンス') || sk.effect_type === 'プレダトリーセンス';
+    const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ' || sk.name?.includes('プレダトリーセンス') || sk.effect_type === 'プレダトリーセンス' || sk.name?.includes('オールラウンダー') || sk.effect_type?.includes('全ステータス');
 
     if (isPassive) {
+      // 🌐 🆕 【オールラウンダー検知】全ステータス上昇値をセット！
+      if (sk.effect_type === '全ステータス増幅' || sk.name?.includes('オールラウンダー') || sk.effect_type?.includes('全ステータス')) {
+        passiveAllStatBonus += Number(sk.effect_value || sk.buff_value || 5);
+      }
+
       if (sk.effect_type === '回避Flee増幅' || sk.effect_type === 'シャドウセンス' || sk.name?.includes('シャドウセンス')) {
         passiveFleeBonus += Number(sk.effect_value || sk.buff_value || 20);
       }

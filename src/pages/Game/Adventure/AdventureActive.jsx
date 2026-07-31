@@ -1404,34 +1404,37 @@ if (usedSkill) {
                     const casterMember = devotionBuff ? localParty.find(m => m.id === devotionBuff.casterId && m.hp > 0) : null;
 
                     if (devotionBuff && casterMember) {
-                      // 🛡️ 👑 【三土手神特注：通常攻撃被弾時のバフ値連動型ディボーションセンサー】
-                      // 通常攻撃被弾側も同様に range_damage_cut_pct から「50%」を取り出す設計に変更！
+                      // 🛡️ 👑 【修正】DEF二重減算バグを解消！
+                      // 敵の「生ダメージ(baseAtk)」の状態でまず肩代わり分・被弾者分へ分配し、
+                      // それぞれが「自分自身の素Def＋バフ」を1回だけ引く方式に変更した。
                       const cutPct = Number(devotionBuff.range_damage_cut_pct !== undefined ? devotionBuff.range_damage_cut_pct : 100);
-                      
-                      // 通常攻撃ダメージを割合で分配計算（まずスライム側のDefのみで計算した生dmgを分配）
-                      let transferredDmg = Math.floor(dmg * (cutPct / 100)); // ファイター側（まだ軽減前）
-                      const originalRemainingDmg = Math.max(0, dmg - transferredDmg); // クレリック側
 
-                      // 🛡️ 👑 🆕 【肩代わり分にも術者自身のDEFバフを反映！】
-                      // ファイターが実際に「自分の身体で受け止める」ダメージとして、
-                      // 自身のactiveBuffs（selfBuff）にある物理DEF増幅を、肩代わり分に対して追加軽減する！
-                      let casterBonusDef = 0;
-                      const casterActiveBuffs = casterMember.activeBuffs || [];
-                      casterActiveBuffs.forEach(b => {
-                        if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
-                          if (b.buff_value_type === 'fixed') {
-                            casterBonusDef += b.buff_value;
-                          } else {
-                            const casterBaseDef = Number(casterMember.def !== undefined ? casterMember.def : (casterMember.roStatus?.def ?? 19));
-                            casterBonusDef += Math.round((casterBaseDef * b.buff_value) / 100);
-                          }
-                        }
-                      });
-                      // 軽減後の肩代わりダメージ（最低1）
-                      transferredDmg = Math.max(1, transferredDmg - casterBonusDef);
-                      
-                      // 各キャラクターのHPを引き算
-                      localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
+                      // 敵の生ダメージ（誰のDefもまだ引いていない状態）を割合で分配
+                      const rawTransferred = Math.floor(baseAtk * (cutPct / 100));   // ファイター側の生ダメージ取り分
+                      const rawRemaining = Math.max(0, baseAtk - rawTransferred);     // フリーランス側の生ダメージ取り分
+
+// 1. 🛡️ 【肩代わりする側（ファイター）の素Def＋バフを1回だけ適用】※以前は素Defが抜け落ちていたので追加
+let casterBonusDef = 0;
+const casterActiveBuffs = casterMember.activeBuffs || [];
+casterActiveBuffs.forEach(b => {
+  if (b.effect_type === '物理DEF増幅' || b.effect_type === '全防御増幅') {
+    if (b.buff_value_type === 'fixed') {
+      casterBonusDef += b.buff_value;
+    } else {
+      const casterBaseDef = Number(casterMember.def !== undefined ? casterMember.def : (casterMember.roStatus?.def ?? 19));
+      casterBonusDef += Math.round((casterBaseDef * b.buff_value) / 100);
+    }
+  }
+});
+const casterBaseDefForCalc = Number(casterMember.def !== undefined ? casterMember.def : (casterMember.roStatus?.def ?? 19));
+const transferredDmg = Math.max(1, rawTransferred - (casterBaseDefForCalc + casterBonusDef));
+
+// 2. 🛡️ 👑 【被弾者本人（フリーランス）自身のDEF＆バフ（アストラルバリア等）を1回だけ適用】
+// ※ totalDefWithBuff は関数冒頭で算出済みの値（素Def+バフ）をそのまま使い、二重計算しない！
+const originalRemainingDmg = Math.max(1, rawRemaining - totalDefWithBuff);
+
+// 各キャラクターのHPを引き算
+localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
                       
                       const casterIdx = localParty.findIndex(m => m.id === casterMember.id);
                       localParty[casterIdx].hp = Math.max(0, localParty[casterIdx].hp - transferredDmg);
@@ -1485,6 +1488,22 @@ if (usedSkill) {
         return enemyItem;
       });
 
+      // 🛡️ 👑 【三土手神特注：バフ「同一枠」重複判定ヘルパー】
+      // スキルIDが違っても、効果種別（例：全防御増幅）が同じなら「すでにその枠のバフがかかっている」扱いにする！
+      // これが無いと「アイアンアイギス」「アストラルバリア」のように別名で同じ効果のスキルを
+      // 取っ替え引っ替え掛け直し続けてしまう。
+      const BUFF_CATEGORY_TYPES = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+      const hasSameCategoryBuff = (ally, skill) => {
+        const buffs = ally.activeBuffs || [];
+        return buffs.some(b => {
+          // ① 従来通り「同一スキル（同じID）」または「術者専用(_self)」ならすでにかかっている扱い
+          if (b.id === skill.id || b.id === `${skill.id}_aspd` || b.id === `${skill.id}_flee` || b.id === `${skill.id}_self`) return true;
+          // ② 🆕 スキル名・IDが違っても「効果種別」が同じならすでにかかっている扱いにする
+          if (BUFF_CATEGORY_TYPES.includes(skill.effect_type) && b.effect_type === skill.effect_type) return true;
+          return false;
+        });
+      };
+
       // 👤 プレイヤー（パーティ）側の行動判定ループへ完全に着地
       localParty.forEach((member) => {
   console.log(`🛡️ ${member.name} の射程: ${member.weaponRange}, 位置: ${member.position}`);
@@ -1532,6 +1551,13 @@ if (isBackRow && isShortRange) {
                 // 🧼 最低保証の424を完全粉砕！本来のキャラクターの最大HP（mhp または max_hp）と比較させます
                 return localParty.some(p => p.hp > 0 && p.hp < (p.mhp || p.max_hp || 0));
               }
+              // 🛡️ 🆕 バフ系の除外（全員に掛かっているなら実行不可とする）
+              const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+              if (buffEffectTypes.includes(sk.effect_type)) {
+                let unbuffedAllies = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, sk));
+                if (sk.is_range_damage_cut === true) unbuffedAllies = unbuffedAllies.filter(p => p.id !== member.id);
+                return unbuffedAllies.length > 0;
+              }
               return true;
             });
 
@@ -1553,13 +1579,11 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 👑 【三土手神特注：術者行動ベースのバフ消費エンジン】
           // 自分が行動したタイミングで、パーティ全員にかかっている「自分がかけたバフ」のターンを1減らす！
-          localParty.forEach(ally => {
-  if (ally.activeBuffs && ally.activeBuffs.length > 0) {
+          if (member.activeBuffs && member.activeBuffs.length > 0) {
     // 💡 期限切れログの重複出力を防ぐための判定用Set（1人の味方につきスキル名1回だけ）
     const clearedSkillNames = new Set();
 
-    ally.activeBuffs = ally.activeBuffs.map(buff => {
-      if (buff.casterId === member.id) {
+    member.activeBuffs = member.activeBuffs.map(buff => {
         // かけたばかりのターンは引き算をスキップして保護する
         if (buff.isNew) {
           return { ...buff, isNew: false };
@@ -1570,18 +1594,15 @@ if (isBackRow && isShortRange) {
           if (!clearedSkillNames.has(buff.name)) {
             clearedSkillNames.add(buff.name);
             newLogs.push({ 
-              id: `buff-clear-${ally.id}-${buff.name}-${Date.now()}-${Math.random()}`, 
-              text: `✨ ${ally.name} の【${buff.name}】の効果が静かに切れた。`, 
+              id: `buff-clear-${member.id}-${buff.name}-${Date.now()}-${Math.random()}`, 
+              text: `✨ ${member.name} の【${buff.name}】の効果が静かに切れた。`, 
               type: "system" 
             });
           }
         }
         return { ...buff, duration_turns: nextTurns };
-      }
-      return buff;
     }).filter(buff => buff.duration_turns > 0);
   }
-});
 
           // 🧪 1. 状態異常スリップ＆解除判定
           if (member.state?.currentStatus && member.state.currentStatus !== 'none' && member.state.currentStatus !== 'なし') {
@@ -1617,7 +1638,18 @@ if (isBackRow && isShortRange) {
           // --- ✂️ ここから追加・修正ブロック ---
           if (member.position === 'back' && member.weaponRange === 'S') {
             // 現在使えるスキルを再計算（攻撃対象や回復対象がいなくても使えるか判定）
-            const canUseSkill = member.skillsList.some(sk => member.sp >= Number(sk.sp_cost || 0));
+            const canUseSkill = member.skillsList.some(sk => {
+              if (member.sp < Number(sk.sp_cost || 0)) return false;
+              if (sk.effect_type === '状態異常回復') return localParty.some(p => p.hp > 0 && p.state?.currentStatus && VALID_STATUS_AILMENTS.includes(p.state.currentStatus));
+              if (sk.effect_type === '回復' || sk.name?.includes('ヒール')) return localParty.some(p => p.hp > 0 && p.hp < (p.mhp || p.max_hp || 0));
+              const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+              if (buffEffectTypes.includes(sk.effect_type)) {
+                let unbuffedAllies = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, sk));
+                if (sk.is_range_damage_cut === true) unbuffedAllies = unbuffedAllies.filter(p => p.id !== member.id);
+                return unbuffedAllies.length > 0;
+              }
+              return true;
+            });
             
             // 魔法・スキルが全くない、またはSP不足なら、どんな状況でも通常攻撃は「絶対に」させない
             if (!playableSkill && !canUseSkill) {
@@ -1671,6 +1703,14 @@ if (isBackRow && isShortRange) {
             if (sk.effect_type === '状態異常回復' && !hasStatusAilment) return false;
             // 瀕死の味方が誰もいないなら、ヒール系も選考対象外
             if ((sk.effect_type === '回復' || sk.name?.includes('ヒール')) && !isEmergencyHP) return false;
+            
+            // 🛡️ 🆕 バフ系の重複完全除外（掛かっているなら最初から候補に入れない）
+            const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
+            if (buffEffectTypes.includes(sk.effect_type)) {
+              let unbuffedAllies = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, sk));
+              if (sk.is_range_damage_cut === true) unbuffedAllies = unbuffedAllies.filter(p => p.id !== member.id);
+              if (unbuffedAllies.length === 0) return false;
+            }
             return true;
           });
 
@@ -1699,87 +1739,90 @@ if (isBackRow && isShortRange) {
           // 🛡️ 3. 【さらに次点】バフ・支援特技（速度増加など）AI：誰も死にかけていない時だけかける
           if (!targetAlly) {
             const buffEffectTypes = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'];
-            const availableBuffSkills = allowedSkills.filter(sk => buffEffectTypes.includes(sk.effect_type) && member.sp >= Number(sk.sp_cost || 0));
+            
+            // 🎯 【三土手神特注】すでにそのバフがかかっている仲間をフィルターで除外！
+            const availableBuffSkills = allowedSkills.filter(sk => {
+              if (!buffEffectTypes.includes(sk.effect_type)) return false;
+              if (member.sp < Number(sk.sp_cost || 0)) return false;
+              
+              // パーティ全員がすでにこのバフ（アストラルバリア等）を持っている場合はスキル候補から除外
+              const unbuffedAllies = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, sk));
+              return unbuffedAllies.length > 0;
+            });
             
             if (availableBuffSkills.length > 0) {
               let selectedBuffSkill = null;
               let selectedTarget = null;
 
-              // 🎯 ステップA：優先ターゲット（例：ムキムキ➔ファイター、魔力あがれ➔メイジ）を厳格に探す
+              // 🎯 【三土手神特注：優先職判定＆汎用バフの厳格化統合エンジン】
               for (let bSkill of availableBuffSkills) {
                 let priorityJobs = bSkill.target_priority_jobs;
+                
+                // 🧹 Supabaseの text[] 配列・文字列・JSONの表記ゆれを100%直撃クレンジング！
                 if (typeof priorityJobs === 'string') {
-                  if (priorityJobs.trim() === '') priorityJobs = [];
-                  else {
-                    try { priorityJobs = JSON.parse(priorityJobs); }
-                    catch (e) { priorityJobs = priorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
-                  }
+                  try { priorityJobs = JSON.parse(priorityJobs); }
+                  catch (e) { priorityJobs = priorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
                 }
-                priorityJobs = priorityJobs || [];
+                if (Array.isArray(priorityJobs)) {
+                  priorityJobs = priorityJobs.map(j => String(j).replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+                } else {
+                  priorityJobs = [];
+                }
 
+                let pFiltered = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, bSkill));
+                if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
+
+                if (pFiltered.length === 0) continue; // かけられる対象が誰もいないなら次のバフ候補へ
+
+                // 🛡️ 優先職が設定されているスキルの厳格判定
                 if (priorityJobs.length > 0) {
-                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id || b.id === `${bSkill.id}_aspd` || b.id === `${bSkill.id}_flee`));
-                  if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
-
-                  for (let jobReq of priorityJobs) {
-                    const cleanReq = jobReq.replace(/[\[\]"']/g, '').trim();
-                    const foundMatch = pFiltered.find(p => p.name.includes(cleanReq) || p.job === cleanReq);
-                    if (foundMatch) {
-                      selectedBuffSkill = bSkill;
-                      selectedTarget = foundMatch;
-                      break;
-                    }
+                  let foundMatch = null;
+                  for (let cleanReq of priorityJobs) {
+                    foundMatch = pFiltered.find(p => p.name.includes(cleanReq) || p.job === cleanReq);
+                    if (foundMatch) break;
                   }
-                }
-                if (selectedBuffSkill) break; 
-              }
-
-              // 🎯 ステップB：優先指定の無い「汎用バフ」だけを処理する
-              if (!selectedBuffSkill) {
-                for (let bSkill of availableBuffSkills) {
-                  // 🚨 【大本命の修正箇所】優先職（メイジ等）が設定されているバフは、専用魔法なので誰彼構わずかけない（スキップ）！
-                  let priorityJobs = bSkill.target_priority_jobs;
-                  if (typeof priorityJobs === 'string') {
-                    if (priorityJobs.trim() === '') priorityJobs = [];
-                    else {
-                      try { priorityJobs = JSON.parse(priorityJobs); }
-                      catch (e) { priorityJobs = priorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
-                    }
+                  
+                  if (foundMatch) {
+                    selectedBuffSkill = bSkill;
+                    selectedTarget = foundMatch;
+                    break; // 🎯 有効な対象が見つかったのでバフ確定！
+                  } else {
+                    // 🚨 【大本命の修正】優先職対象者がいない場合、このバフは不発とする！
+                    console.log(`🛑 【バフAI】${member.name} の「${bSkill.name}」：優先職に対象者がいないため発動をキャンセル。`);
+                    continue; // 次のバフスキル候補があればそっちを判定する
                   }
-                  priorityJobs = priorityJobs || [];
-
-                  // 優先指定が存在するなら、それは汎用バフではないのでステップBでは無視する
-                  if (priorityJobs.length > 0) {
-                    continue; 
-                  }
-
+                } else {
+                  // 🎯 優先職指定の全く無い「100%汎用バフ」の厳格処理
                   const isAreaBuff = bSkill.target_type === '味方全体';
-                  let pFiltered = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === bSkill.id || b.id === `${bSkill.id}_aspd` || b.id === `${bSkill.id}_flee`));
-                  if (bSkill.is_range_damage_cut === true) pFiltered = pFiltered.filter(p => p.id !== member.id);
-
                   const totalTargetsCount = bSkill.is_range_damage_cut === true 
                     ? localParty.filter(p => p.hp > 0 && p.id !== member.id).length
                     : localParty.filter(p => p.hp > 0).length;
-
                   const alreadyBuffedCount = totalTargetsCount - pFiltered.length;
 
                   if (alreadyBuffedCount >= totalTargetsCount || (isAreaBuff && alreadyBuffedCount > 0)) {
                     continue;
                   }
 
-                  if (pFiltered.length > 0) {
-  selectedBuffSkill = bSkill;
-  // 🎯 ターゲットが「自分自身」なら発動者本人(member)をロックオン！
-  if (bSkill.target_type === '自分自身') {
-    selectedTarget = member;
-  } else {
-    selectedTarget = pFiltered[0]; // それ以外は先頭の味方に付与
-  }
-  break;
-}
+                  if (bSkill.target_type === '自分自身') {
+                    selectedBuffSkill = bSkill;
+                    selectedTarget = member;
+                    break;
+                  }
+
+                  // 🚨 【大本命の修正】汎用バフの無駄撃ち防止
+                  // 術者が後衛の場合、自分自身に物理バフなどを連打しないよう「前衛」を優先してロック！
+                  let frontLine = pFiltered.filter(p => p.position === 'front');
+                  if (frontLine.length > 0) {
+                    selectedBuffSkill = bSkill;
+                    selectedTarget = frontLine[Math.floor(Math.random() * frontLine.length)];
+                    break;
+                  } else if (pFiltered.length > 0) {
+                    selectedBuffSkill = bSkill;
+                    selectedTarget = pFiltered[0];
+                    break;
+                  }
                 }
               }
-
               if (selectedBuffSkill && selectedTarget) {
                 playableSkill = selectedBuffSkill;
                 shouldLaunchMagic = true;
@@ -1793,49 +1836,64 @@ if (isBackRow && isShortRange) {
           }
           
           if (!targetAlly && primaryTarget) {
-            // 🔮 弱点属性攻撃スキャン
+            const currentSpRatio = (member.sp / (member.msp || 1)) * 100;
+            const isTargetBoss = primaryTarget ? primaryTarget.is_boss === true : false;
+            const enemyCount = aliveEnemies.length; // 👿 生存している敵の数
+
+            // 🔮 10大属性完全網羅版・弱点属性マッピング（毒・念を完全追加！）
             const weaknessMap = {
-              '水': ['風', '風属性'], '火': ['水', '水属性'], '地': ['火', '火属性'],
-              '風': ['地', '地属性'], '闇': ['聖', '聖属性'], '不死': ['聖', '聖属性', '火', '火属性'], '聖': ['闇', '闇属性']
+              '水': ['風', '風属性'], 
+              '火': ['水', '水属性'], 
+              '地': ['火', '火属性'],
+              '風': ['地', '地属性'], 
+              '闇': ['聖', '聖属性'], 
+              '聖': ['闇', '闇属性'],
+              '不死': ['聖', '聖属性', '火', '火属性'], 
+              '毒': ['聖', '聖属性', '風', '風属性', '火', '火属性'], // 🧪 毒の弱点
+              '念': ['念', '念属性', '闇', '闇属性'],                 // 👻 念の弱点
+              '無': []
             };
             const weaknesses = weaknessMap[primaryTarget.element] || [];
-            
-            // ① まずは今まで通り、2倍ダメージを狙える完全な弱点魔法があるかスキャン
-            let exploitSkill = allowedSkills.find(sk => weaknesses.includes(sk.element) && member.sp >= Number(sk.sp_cost || 0));
-            
-            // ② 🚨 【三土手神特注】弱点魔法がない、または無属性魔法や聖属性パッシブ特効を活かしたい場合の救済ゲート
-            if (!exploitSkill) {
-              exploitSkill = allowedSkills.find(sk => 
-                (sk.element === '無' || sk.element === '聖' || sk.name === 'ホーリーライト') && 
-                member.sp >= Number(sk.sp_cost || 0) &&
-                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(sk.effect_type)
-              );
-            }
 
-            if (exploitSkill) {
-              // 弱点、無属性、聖属性に該当するスキルがあれば従来通り100%確定発動！
-              playableSkill = exploitSkill;
-              shouldLaunchMagic = true;
-            } else {
-              // 🎲【三土手神特注：弱点外スキルのごちゃ混ぜ抽選インフラ】
-              // 弱点ではない属性スキル（火属性ブレスなど）しか残っていない場合、
-              // 45%の確率でスキルを撃ち、55%の確率で通常攻撃とするための天秤ジャッジ！
-              const currentSpRatio = (member.sp / (member.msp || 1)) * 100;
-              const isTargetBoss = primaryTarget ? primaryTarget.is_boss === true : false;
+            // 🛡️ 👑 純粋な攻撃用アクティブスキルのみを抽出（支援バフ・回復・全防御増幅・パッシブ等を厳格除外）
+            const attackSkillsPool = allowedSkills.filter(sk => 
+              sk.skill_type !== 'passive' && 
+              !['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅', '回復', '状態異常回復'].includes(sk.effect_type) &&
+              member.sp >= Number(sk.sp_cost || 0)
+            );
 
-              // 純粋な攻撃用アクティブスキル（支援バフや回復、パッシブを除外）をスキャン
-              const attackSkillsPool = allowedSkills.filter(sk => 
-                sk.skill_type !== 'passive' && 
-                !['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅', '回復', '状態異常回復'].includes(sk.effect_type)
-              );
+            if (attackSkillsPool.length > 0) {
+              // 🎯 1. 弱点を突けるスキル（全体・単体）を分類
+              const weakAOESkills = attackSkillsPool.filter(sk => weaknesses.includes(sk.element) && (sk.target_type === '範囲エネミー' || sk.target_type === '敵全体' || sk.name?.includes('全体')));
+              const weakSingleSkills = attackSkillsPool.filter(sk => weaknesses.includes(sk.element) && !(sk.target_type === '範囲エネミー' || sk.target_type === '敵全体' || sk.name?.includes('全体')));
 
-              // 45%の確率ダイスに当選し、かつSP制限をクリアしていれば、プールからスキル（ブレス等）をランダム決定して強制起動！
-              if (attackSkillsPool.length > 0 && Math.random() < 0.45 && (isTargetBoss || currentSpRatio > 50)) {
-                const rolledSkill = attackSkillsPool[Math.floor(Math.random() * attackSkillsPool.length)];
-                if (member.sp >= Number(rolledSkill.sp_cost || 0)) {
-                  playableSkill = rolledSkill;
-                  shouldLaunchMagic = true;
-                }
+              // ⚔️ 2. 等倍（弱点以外・無属性等）のスキルを分類
+              const neutralAOESkills = attackSkillsPool.filter(sk => !weaknesses.includes(sk.element) && (sk.target_type === '範囲エネミー' || sk.target_type === '敵全体' || sk.name?.includes('全体')));
+              const neutralSingleSkills = attackSkillsPool.filter(sk => !weaknesses.includes(sk.element) && !(sk.target_type === '範囲エネミー' || sk.target_type === '敵全体' || sk.name?.includes('全体')));
+
+              let chosenSkill = null;
+
+              // 🧠 三土手式・黄金思考アルゴリズムの適用
+              if (enemyCount > 1) {
+                // ─── 【敵が複数の場合】 ───
+                // 順位: 弱点全体 ➔ 弱点単体 ➔ 等倍全体 (トリックスター/テンペストストーム等) ➔ 等倍単体
+                if (weakAOESkills.length > 0) chosenSkill = weakAOESkills[0];
+                else if (weakSingleSkills.length > 0) chosenSkill = weakSingleSkills[0];
+                else if (neutralAOESkills.length > 0) chosenSkill = neutralAOESkills[0];
+                else if (neutralSingleSkills.length > 0) chosenSkill = neutralSingleSkills[0];
+              } else {
+                // ─── 【敵が1体の場合】 ───
+                // 順位: 弱点単体 ➔ 弱点全体 ➔ 等倍単体 (ファイアバースト等) ➔ 等倍全体
+                if (weakSingleSkills.length > 0) chosenSkill = weakSingleSkills[0];
+                else if (weakAOESkills.length > 0) chosenSkill = weakAOESkills[0];
+                else if (neutralSingleSkills.length > 0) chosenSkill = neutralSingleSkills[0];
+                else if (neutralAOESkills.length > 0) chosenSkill = neutralAOESkills[0];
+              }
+
+              // 🎯 選ばれたスキルを発動決定（SPが一定以上あるか、ボス戦時）
+              if (chosenSkill && (isTargetBoss || currentSpRatio > 30)) {
+                playableSkill = chosenSkill;
+                shouldLaunchMagic = true;
               }
             }
           }
@@ -1857,11 +1915,22 @@ if (isBackRow && isShortRange) {
             // ランダムに選ばれた支援スキル等を撃つかどうかの最終チェック
             if (playableSkill && member.sp >= Number(playableSkill.sp_cost || 0)) {
               // 🔮 👑 【三土手神特注：ランダム暴発ルート完全封印センサー】
-              const isBuffType = ['物理ATK増幅', '物理DEF増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅'].includes(playableSkill.effect_type);
+              const isBuffType = ['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(playableSkill.effect_type);
 
               if (isBuffType) {
-                const rPriorityJobs = playableSkill.target_priority_jobs || [];
-                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === playableSkill.id || b.id === `${playableSkill.id}_aspd` || b.id === `${playableSkill.id}_flee`));
+                let rPriorityJobs = playableSkill.target_priority_jobs;
+                if (typeof rPriorityJobs === 'string') {
+                    try { rPriorityJobs = JSON.parse(rPriorityJobs); }
+                    catch (e) { rPriorityJobs = rPriorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
+                }
+                if (Array.isArray(rPriorityJobs)) {
+                    rPriorityJobs = rPriorityJobs.map(j => String(j).replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+                } else {
+                    rPriorityJobs = [];
+                }
+
+                // 🎯 👑 同一カテゴリーのバフ重複を防ぐ神ヘルパーを完全適用
+                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, playableSkill));
                 
                 // 🛡️ 👑 【三土手神特注パッチ】かばう（献身）系スキルの場合は、術者本人をターゲット候補から完全除外！
                 if (playableSkill.is_range_damage_cut === true) {
@@ -1881,14 +1950,24 @@ if (isBackRow && isShortRange) {
                     }
                   }
                 } else {
-                  // 優先職指定がないバフなら生存している先頭の味方へ
-                  if (rFilteredAllies.length > 0) {
+                  // 🚨 【汎用バフ厳格化】優先職指定がないバフの場合
+                  if (playableSkill.target_type === '自分自身') {
                     foundValidTarget = true;
-                    targetAlly = rFilteredAllies[0];
+                    targetAlly = member;
+                  } else {
+                    // 自分自身以外（単体・全体）なら、後衛の魔法職などが自分に物理バフをかけないよう前衛を優先ロック！
+                    let frontLine = rFilteredAllies.filter(p => p.position === 'front');
+                    if (frontLine.length > 0) {
+                      foundValidTarget = true;
+                      targetAlly = frontLine[Math.floor(Math.random() * frontLine.length)];
+                    } else if (rFilteredAllies.length > 0) {
+                      foundValidTarget = true;
+                      targetAlly = rFilteredAllies[0];
+                    }
                   }
                 }
 
-                // 🎯 三土手神指摘の超重要修正：対象の職がいない場合は、スキル発動をキャンセルして通常行動へスルー！
+                // 🎯 優先職がいない、またはバフ対象が不在の場合は、スキル発動をキャンセルして通常行動へスルー！
                 if (!foundValidTarget) {
                   playableSkill = null;
                   shouldLaunchMagic = false;
@@ -1905,15 +1984,16 @@ if (isBackRow && isShortRange) {
 
           // 🛡️ 【三土手神特注：バフ・かばう（ディボーション）重複発動封印パッチ】
           // 決定されたスキルがバフ・支援系（物理DEF増幅など）の場合の重複チェック
-          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅'].includes(playableSkill.effect_type)) {
+          if (shouldLaunchMagic && playableSkill && targetAlly && ['物理DEF増幅', '物理ATK増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(playableSkill.effect_type)) {
   
-  // 🎯 今回魔法をかける予定の「targetAlly」だけを狙い撃ちして、同じバフIDを持っているかチェック！
-  const isAlreadyBuffed = (targetAlly.activeBuffs || []).some(b => b.id === playableSkill.id || b.id === `${playableSkill.id}_aspd` || b.id === `${playableSkill.id}_flee`);
+  // 🎯 今回魔法をかける予定の「targetAlly」が、同じ効果枠のバフを（別名スキルでも）すでに持っていないかチェック！
+  const isAlreadyBuffed = hasSameCategoryBuff(targetAlly, playableSkill);
   
   if (isAlreadyBuffed) {
     // この仲間はすでにそのバフがかかっているので、今ターンのスキル発動を安全にキャンセル
     shouldLaunchMagic = false;
     playableSkill = null;
+    targetAlly = null; // 🚨 これを空にしないと通常・弱点攻撃のターゲット選定が走らずカカシ化します！
   }
 }
 
@@ -2129,9 +2209,19 @@ if (isBackRow && isShortRange) {
                     }
 
                     const isAreaBuff = playableSkill.target_type === '味方全体';
+                    const isMusic = playableSkill.name?.includes('マーチ') || playableSkill.name?.includes('アンセム') || playableSkill.name?.includes('演奏');
+
+                    let castLogText = "";
+                    if (isMusic || playableSkill.effect_type === 'ウインドマーチ') {
+                      castLogText = `🎵✨ [戦術曲演奏] ${member.name} が 【${playableSkill.name}】 を奏でた！`;
+                    } else if (playableSkill.skill_type === 'magic') {
+                      castLogText = `🔮✨ [魔法詠唱] ${member.name} は 【${playableSkill.name}】 を唱えた！`;
+                    } else {
+                      castLogText = `🛡️✨ [鉄壁展開] ${member.name} は 【${playableSkill.name}】 を構えた！`;
+                    }
 
                     if (isAreaBuff) {
-                      logText = `🎵✨ [戦術曲演奏] ${member.name} が 【${playableSkill.name}】 を奏でた！`;
+                      logText = castLogText;
                       newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
 
                       // ウインドマーチ専用：Aspd増幅 と Flee増幅 の2つの効果オブジェクトを作成
@@ -2213,11 +2303,19 @@ if (isBackRow && isShortRange) {
                       }
                     }
                     
+                    let actionPrefix = `✨ [スキル発動]`;
+                    if (isMusic || playableSkill.effect_type === 'ウインドマーチ') {
+                      actionPrefix = `🎵✨ [戦術曲演奏]`;
+                    } else if (playableSkill.skill_type === 'magic') {
+                      actionPrefix = `🔮✨ [魔法詠唱]`;
+                    } else if (playableSkill.skill_type === 'art') {
+                      actionPrefix = `🛡️✨ [鉄壁展開]`;
+                    }
+
                     if (isRangeCut) {
-                      logText = `🛡️✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 と命の絆を結び(${rangeCutPct}%肩代わり)、自身のDEFも上昇した！ (${turns}T / 残SP: ${member.sp})`;
+                      logText = `${actionPrefix} ${member.name} は 【${playableSkill.name}】 を${playableSkill.skill_type === 'magic' ? '唱えた' : '構えた'}！ ➔ 【${targetAlly.name}】 と命の絆を結び(${rangeCutPct}%肩代わり)、自身のDEFも上昇した！ (${turns}T / 残SP: ${member.sp})`;
                     } else {
-                      // 🌟 ここ！ "物理防御が上昇した！" 固定ではなく、作った buffMsg を使う
-                      logText = `✨ [スキル発動] ${member.name} は 【${playableSkill.name}】 を発動した！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
+                      logText = `${actionPrefix} ${member.name} は 【${playableSkill.name}】 を${playableSkill.skill_type === 'magic' ? '唱えた' : (isMusic ? '奏でた' : '構えた')}！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
                     }
                   }
                 }
@@ -2313,10 +2411,20 @@ if (isBackRow && isShortRange) {
                   
                   if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && nextHp > 0) {
                     const baseChance = Number(playableSkill.effect_chance || 0);
-                    const enemyResistPct = enemyItem[`resist_${playableSkill.effect_type === 'スタン' ? 'stun' : playableSkill.effect_type === '凍結' ? 'freeze' : playableSkill.effect_type === '毒' ? 'poison' : 'blind'}`] || 0;
+                    
+                    // 🃏 🆕 【トリックスター専用：ランダム状態異常（毒・暗闇・スタン）選定エンジン】
+                    let targetEffectType = playableSkill.effect_type;
+                    if (playableSkill.name === 'トリックスター' || playableSkill.effect_type === 'ランダム状態異常') {
+                      const trickPool = ['毒', '暗闇', 'スタン'];
+                      targetEffectType = trickPool[Math.floor(Math.random() * trickPool.length)];
+                    }
+
+                    const resistKey = targetEffectType === 'スタン' ? 'stun' : targetEffectType === '凍結' ? 'freeze' : targetEffectType === '毒' ? 'poison' : 'blind';
+                    const enemyResistPct = enemyItem[`resist_${resistKey}`] || 0;
+
                     if (Math.random() * 100 < Math.max(0, baseChance - enemyResistPct)) {
-                      nextState = { currentStatus: playableSkill.effect_type, durationTurns: Number(playableSkill.duration_turns || 3) };
-                      aoeLog += ` ✨ [${playableSkill.effect_type}]状態にした！`;
+                      nextState = { currentStatus: targetEffectType, durationTurns: Number(playableSkill.duration_turns || 2) };
+                      aoeLog += ` ✨ [${targetEffectType}]状態にした！`;
                     }
                   }
                   
@@ -2552,41 +2660,55 @@ if (isBackRow && isShortRange) {
               else if (['物理ATK増幅', '物理DEF増幅', '全防御増幅', '行動速度Aspd増幅', 'ウインドマーチ', '魔力Matk増幅', '魔法防御Mdef増幅', '魔法防御MDEF増幅'].includes(skillToUse.effect_type)) {
                 
                 // 🎯 確率発動ルートでも「優先職業」を確実にスキャンして、かつ【まだバフがかかっていない仲間】を厳選！
-                const rPriorityJobs = skillToUse.target_priority_jobs || [];
-                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !(p.activeBuffs || []).some(b => b.id === skillToUse.id || b.id === `${skillToUse.id}_aspd` || b.id === `${skillToUse.id}_flee`));
+                let rPriorityJobs = skillToUse.target_priority_jobs;
+                if (typeof rPriorityJobs === 'string') {
+                    try { rPriorityJobs = JSON.parse(rPriorityJobs); }
+                    catch (e) { rPriorityJobs = rPriorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
+                }
+                if (Array.isArray(rPriorityJobs)) {
+                    rPriorityJobs = rPriorityJobs.map(j => String(j).replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+                } else {
+                    rPriorityJobs = [];
+                }
+
+                let rFilteredAllies = localParty.filter(p => p.hp > 0 && !hasSameCategoryBuff(p, skillToUse));
                 let validTargetFound = false;
 
                 // 🎯 ターゲットが「自分自身」の場合の強制ロック判定
-if (skillToUse.target_type === '自分自身') {
-  // 自分に既にそのバフがかかっているかチェック
-  const isAlreadyBuffed = (member.activeBuffs || []).some(b => b.id === skillToUse.id || b.id === `${skillToUse.id}_aspd` || b.id === `${skillToUse.id}_flee`);
-  if (!isAlreadyBuffed) {
-    targetAlly = member;
-    validTargetFound = true;
-  }
-} else {
-  // 🚨 かばう（献身）スキルの場合は自分以外、通常のバフなら自分も含めて選考
-  const isRangeCut = skillToUse.is_range_damage_cut === true;
-  if (isRangeCut) {
-    rFilteredAllies = rFilteredAllies.filter(p => p.id !== member.id);
-  }
+                if (skillToUse.target_type === '自分自身') {
+                  const isAlreadyBuffed = hasSameCategoryBuff(member, skillToUse);
+                  if (!isAlreadyBuffed) {
+                    targetAlly = member;
+                    validTargetFound = true;
+                  }
+                } else {
+                  // 🚨 かばう（献身）スキルの場合は自分以外、通常のバフなら自分も含めて選考
+                  const isRangeCut = skillToUse.is_range_damage_cut === true;
+                  if (isRangeCut) {
+                    rFilteredAllies = rFilteredAllies.filter(p => p.id !== member.id);
+                  }
 
-  if (rPriorityJobs.length > 0) {
-    for (let jobReq of rPriorityJobs) {
-      const matchedAlly = rFilteredAllies.find(p => p.name.includes(jobReq) || p.job === jobReq);
-      if (matchedAlly) {
-        targetAlly = matchedAlly;
-        validTargetFound = true;
-        break;
-      }
-    }
-  } else {
-    if (rFilteredAllies.length > 0) {
-      targetAlly = rFilteredAllies[0];
-      validTargetFound = true;
-    }
-  }
-}
+                  if (rPriorityJobs.length > 0) {
+                    for (let jobReq of rPriorityJobs) {
+                      const matchedAlly = rFilteredAllies.find(p => p.name.includes(jobReq) || p.job === jobReq);
+                      if (matchedAlly) {
+                        targetAlly = matchedAlly;
+                        validTargetFound = true;
+                        break;
+                      }
+                    }
+                  } else {
+                    // 🚨 【汎用バフ厳格化】優先職指定がない場合、無駄撃ちを防ぐため前衛を優先ロック！
+                    let frontLine = rFilteredAllies.filter(p => p.position === 'front');
+                    if (frontLine.length > 0) {
+                      targetAlly = frontLine[Math.floor(Math.random() * frontLine.length)];
+                      validTargetFound = true;
+                    } else if (rFilteredAllies.length > 0) {
+                      targetAlly = rFilteredAllies[0];
+                      validTargetFound = true;
+                    }
+                  }
+                }
 
                 // 🎯 もし対象の職が全員すでにバフ状態、または誰もいないなら発動を安全にキャンセル（通常攻撃ルートへスルー！）
                 if (!validTargetFound) {
@@ -2644,9 +2766,19 @@ if (skillToUse.target_type === '自分自身') {
                     else if (skillToUse.effect_type === '魔力Matk増幅') buffMsg = `魔力(Matk)が${valText}大幅上昇した！`;
 
                     const isAreaBuff = skillToUse.target_type === '味方全体';
+                    const isMusic = skillToUse.name?.includes('マーチ') || skillToUse.name?.includes('アンセム') || skillToUse.name?.includes('演奏');
+
+                    let castLogText = "";
+                    if (isMusic || skillToUse.effect_type === 'ウインドマーチ') {
+                      castLogText = `🎵✨ [戦術曲演奏] ${member.name} が 【${skillToUse.name}】 を奏でた！`;
+                    } else if (skillToUse.skill_type === 'magic') {
+                      castLogText = `🔮✨ [魔法詠唱] ${member.name} は 【${skillToUse.name}】 を唱えた！`;
+                    } else {
+                      castLogText = `🛡️✨ [鉄壁展開] ${member.name} は 【${skillToUse.name}】 を構えた！`;
+                    }
 
                     if (isAreaBuff) {
-                      logText = `🎵✨ [戦術曲演奏] ${member.name} が 【${skillToUse.name}】 を演奏した！`;
+                      logText = castLogText;
                       newLogs.push({ id: `p-buff-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
 
                       localParty = localParty.map(ally => {
@@ -2693,10 +2825,19 @@ if (skillToUse.target_type === '自分自身') {
                           }
                         }
                         
+                        let actionPrefix = `✨ [支援発動]`;
+                        if (isMusic || skillToUse.effect_type === 'ウインドマーチ') {
+                          actionPrefix = `🎵✨ [戦術曲演奏]`;
+                        } else if (skillToUse.skill_type === 'magic') {
+                          actionPrefix = `🔮✨ [魔法詠唱]`;
+                        } else if (skillToUse.skill_type === 'art') {
+                          actionPrefix = `🛡️✨ [鉄壁展開]`;
+                        }
+
                         if (isRangeCut) {
-                          logText = `🛡️✨ [支援発動] ${member.name} の 【${skillToUse.name}】！ ➔ 【${targetAlly.name}】 と命の絆を結び(${rangeCutPct}%肩代わり)、自身のDEFも上昇した！ (${turns}T / 残SP: ${member.sp})`;
+                          logText = `${actionPrefix} ${member.name} は 【${skillToUse.name}】 を${skillToUse.skill_type === 'magic' ? '唱えた' : '構えた'}！ ➔ 【${targetAlly.name}】 と命の絆を結び(${rangeCutPct}%肩代わり)、自身のDEFも上昇した！ (${turns}T / 残SP: ${member.sp})`;
                         } else {
-                          logText = `✨ [支援発動] ${member.name} の 【${skillToUse.name}】！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
+                          logText = `${actionPrefix} ${member.name} は 【${skillToUse.name}】 を${skillToUse.skill_type === 'magic' ? '唱えた' : (isMusic ? '奏でた' : '構えた')}！ ➔ 【${targetAlly.name}】 の${buffMsg} (${turns}T / 残SP: ${member.sp})`;
                         }
                       }
                     }
