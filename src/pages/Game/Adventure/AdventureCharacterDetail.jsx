@@ -358,6 +358,7 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   let passiveAllStatBonus = 0; // 🌐 🆕 オールラウンダー用バッファを新設！
   let passiveHpMultiplier = 1.0;
   let passiveSpMultiplier = 1.0;
+  let passiveDamageBonusPct = 0;
 
   // 2. 🟢 パッシブスキルの一覧をスキャンして加算値を計算を完了させる！
   const characterSkills = character?.skillsList || [];
@@ -396,13 +397,26 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       }
 
       if (sk.effect_type === 'パッシブMATK増幅') passiveMatkBonus += Number(sk.effect_value || 0);
-      if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
-      if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
-      if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
-      if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
-      if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
-    }
-  });
+        if (sk.effect_type === 'パッシブDEF増幅')  passiveDefBonus += Number(sk.effect_value || 0);
+        if (sk.effect_type === 'セイントブレス' || sk.name === 'セイントブレス') passiveDefBonus += Number(sk.effect_value || sk.buff_value || 0);
+        if (sk.effect_type === 'パッシブMDEF増幅') passiveMdefBonus += Number(sk.effect_value || 0);
+
+        // 🌟 🆕 【エーテルリフレッシュ検知線】
+        if (sk.effect_type === 'エーテルリフレッシュ' || sk.name?.includes('エーテルリフレッシュ')) {
+          passiveSpMultiplier += 0.15; // 最大SP15%増幅をUIにも反映！
+        }
+
+        // 🌟 🆕 【可能性の覚醒検知線】
+        if (sk.effect_type === '可能性の覚醒' || sk.name?.includes('可能性の覚醒')) {
+          passiveCritBonus += 10;
+          passiveFleeBonus += 15;
+          passiveDamageBonusPct += 10; // 💥 🆕 10%をUI用に記憶させる
+        }
+
+        if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
+        if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
+      }
+    });
 
   // 3. 🟢 パッシブ計算が完了したあとで、安全に currentTempCharForCalc を組み立てる！[cite: 7]
   const currentTempCharForCalc = { 
@@ -415,9 +429,23 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   dex: (character.meta?.stat_dex || 1) + localBonuses.dex, // 🟢 シンプルに手振り分のみ結合
   luk: (character.meta?.stat_luk || 1) + localBonuses.luk
 };
-  const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {}); //[cite: 7]
+  const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {}); //
 
-  // 4. 🔨 精錬値ボーナスの画面表示用内訳計算[cite: 7]
+  // 🐾 🆕 【三土手神特注：野生の絆（従魔生存時DEF/MDEF増幅）判定センサー】
+  characterSkills.forEach(sk => {
+    if (sk.effect_type === '野生の絆' || sk.name?.includes('野生の絆')) {
+      // 酒場または編成中の仲間リストから「魔物クラス」がパーティーに編成されているかスキャン
+      const hasMonster = allCharactersList.some(c => c.id !== character.id && c.party_index !== null && ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族'].includes(c.meta?.job || c.job));
+      if (hasMonster) {
+        // ダッシュボードで設定した効果値（10）を%として、算出された素のDEF/MDEFに乗算！
+        const pct = Number(sk.effect_value || sk.buff_value || 10) / 100;
+        passiveDefBonus += Math.max(1, Math.floor(Number(ro.def || 0) * pct));
+        passiveMdefBonus += Math.max(1, Math.floor(Number(ro.mdef || 0) * pct));
+      }
+    }
+  });
+
+  // 4. 🔨 精錬値ボーナスの画面表示用内訳計算
   let refineAtkBonus = 0;
   let refineDefBonus = 0;
 
@@ -640,11 +668,14 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
             {/* 🔮 👑 三土手神特注：カードが乗っている戦闘スペックに、鮮やかな赤色のカッコ内訳 (+X) を同時点灯！ */}
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#887355' }}>攻撃力 (Atk)</span>
-              <span style={{ color: (passiveAtkBonus > 0 || refineAtkBonus > 0) ? '#ffd700' : '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
+              {/* 💥 passiveDamageBonusPct も条件に含める */}
+              <span style={{ color: (passiveAtkBonus > 0 || refineAtkBonus > 0 || passiveDamageBonusPct > 0) ? '#ffd700' : '#eee', fontFamily: 'monospace', fontWeight: 'bold' }}>
                 {ro.atk} 
                 {refineAtkBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem', marginLeft: '3px' }}>(精錬+{refineAtkBonus})</span>}
                 {passiveAtkBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem', marginLeft: '3px' }}>(パッシブ+{passiveAtkBonus})</span>} 
                 {cardAtkBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem', marginLeft: '3px' }}>(+{cardAtkBonus})</span>}
+                {/* 💥 バッジを表示 */}
+                {passiveDamageBonusPct > 0 && <span style={{ color: '#f59e0b', fontSize: '0.65rem', marginLeft: '3px' }}>(最終ダメ+{passiveDamageBonusPct}%)</span>}
               </span>
             </div>
 
@@ -652,15 +683,17 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
             {(() => {
               const liveInt = (character.meta?.stat_int || 1) + localBonuses.int + (ro?.cardStats?.int || 0);
               const liveDex = (character.meta?.stat_dex || 1) + localBonuses.dex + (ro?.cardStats?.dex || 0);
-              // 🎯 👑 パッシブの上昇数値を、ダイス幅の最小・最大の両方へ直撃プラス！
               const minMatk = Math.floor(liveInt + (liveDex * 0.2)) + passiveMatkBonus;
               const maxMatk = Math.floor(liveInt * 2.0 + liveDex) + passiveMatkBonus;
               return (
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
                   <span style={{ color: '#38bdf8' }}>魔力 (Matk)</span>
-                  {/* 💡 ⚙️ パッシブが効いている時は、文字をゴールド（#ffd700）へライトアップ！ */}
-                  <span style={{ color: passiveMatkBonus > 0 ? '#ffd700' : '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>
-                    {minMatk} 〜 {maxMatk} {passiveMatkBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveMatkBonus})</span>}
+                  {/* 💥 passiveDamageBonusPct も条件に含める */}
+                  <span style={{ color: (passiveMatkBonus > 0 || passiveDamageBonusPct > 0) ? '#ffd700' : '#38bdf8', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                    {minMatk} 〜 {maxMatk} 
+                    {passiveMatkBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem', marginLeft: '3px' }}>(パッシブ+{passiveMatkBonus})</span>}
+                    {/* 💥 バッジを表示 */}
+                    {passiveDamageBonusPct > 0 && <span style={{ color: '#f59e0b', fontSize: '0.65rem', marginLeft: '3px' }}>(最終ダメ+{passiveDamageBonusPct}%)</span>}
                   </span>
                 </div>
               );

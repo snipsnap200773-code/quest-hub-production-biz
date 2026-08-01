@@ -326,7 +326,9 @@ const AdventureActive = ({
           let passiveDexBonus = 0;       // 🏹 🆕 【三土手神特注】常時DEX上昇値を溜める器
           let passiveRangedHitBonus = 0; // 🏹 🆕 【三土手神特注】遠隔Hit底上げ値を溜める器
           let passiveHpMultiplier = 1.0; 
-          let passiveSpMultiplier = 1.0; 
+          let passiveSpMultiplier = 1.0;
+          let passiveSpCostReduction = 0; 
+          let passiveDamageBonusPct = 0;
 
           if (availableSkills && availableSkills.length > 0) {
             availableSkills.forEach(sk => {
@@ -377,6 +379,25 @@ const AdventureActive = ({
                 if (sk.effect_type === 'パッシブSP自動回復' || sk.name?.includes('マインドリフレッシュ') || sk.name?.includes('精神統一')) {
                   passiveSpRegen += Number(sk.effect_value || 0);
                 }
+                // 🌟 🆕 【プレシャスリソース検知線】
+                if (sk.effect_type === '消費SP軽減' || sk.name?.includes('プレシャスリソース')) {
+                  passiveSpCostReduction += 20; // 20%軽減を記憶
+                  passiveSpRegen += Number(sk.effect_value || 5); // 基礎効果数値を5秒毎のSP回復量として合算！
+                }
+
+                // 🌟 🆕 【エーテルリフレッシュ検知線】
+                if (sk.effect_type === 'エーテルリフレッシュ' || sk.name?.includes('エーテルリフレッシュ')) {
+                  passiveSpRegen += Number(sk.effect_value || 0); // 固定SP回復量（GM画面の基礎数値を適用）
+                  passiveSpMultiplier += 0.15; // 最大SP15%増幅
+                }
+
+                // 🌟 🆕 【可能性の覚醒検知線】
+                if (sk.effect_type === '可能性の覚醒' || sk.name?.includes('可能性の覚醒')) {
+                  passiveCritBonus += 10;
+                  passiveFleeBonus += 15;
+                  passiveDamageBonusPct += 10; // 全与ダメージ+10%
+                }
+
                 if (sk.effect_type === '最大HP増幅')   passiveHpMultiplier += Number(sk.effect_value || 0) / 100;
                 if (sk.effect_type === '最大SP増幅')   passiveSpMultiplier += Number(sk.effect_value || 0) / 100;
               }
@@ -397,6 +418,30 @@ const AdventureActive = ({
             luk: (ch.meta?.stat_luk || 1) + (charBonus.luk || 0),
           };
           const ro = calculateRoStatus(tempCharForRoCalc, ch.equips || {});
+
+          // 🐾 🆕 【三土手神特注：野生の絆（従魔生存時DEF/MDEF増幅）戦闘センサー】
+          availableSkills.forEach(sk => {
+            if (sk.effect_type === '野生の絆' || sk.name?.includes('野生の絆')) {
+              // パーティー内に「生存している(hp > 0)」魔物がいるかスキャン
+              const hasMonster = filteredMembers.some(m => m.id !== ch.id && m.hp > 0 && ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族', '悪魔', '不死'].includes(m.meta?.job || m.job));
+              if (hasMonster) {
+                const pct = Number(sk.effect_value || sk.buff_value || 10) / 100;
+                passiveDefBonus += Math.max(1, Math.floor(Number(ro.def || 0) * pct));
+                passiveMdefBonus += Math.max(1, Math.floor(Number(ro.mdef || 0) * pct));
+              }
+            }
+          });
+
+          // 🔮 🆕 【三土手神特注：プレシャスリソース（消費SP軽減）の全スキル適用マウント】
+          // 戦闘ループに入る前に、そのキャラが持つ全アクティブスキルの消費SPをあらかじめ割引価格にして記憶させる！
+          const activeSkillsWithDiscount = availableSkills.map(sk => {
+            if (sk.skill_type === 'passive') return sk;
+            const discountRatio = 1 - (passiveSpCostReduction / 100);
+            return {
+              ...sk,
+              sp_cost: Math.max(0, Math.floor(Number(sk.sp_cost || 0) * discountRatio))
+            };
+          });
 
           return {
             id: ch.id,
@@ -429,7 +474,7 @@ const AdventureActive = ({
             cardSizeEff,
             cardRaceEff,
             cardElemEff,
-            skillsList: availableSkills,
+            skillsList: activeSkillsWithDiscount, // 👈 🌟 availableSkills から置き換えます！
             state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 },
             
             activeBuffs: [],
@@ -456,7 +501,8 @@ const AdventureActive = ({
 
             twin_strike_chance: passiveTwinChance,
             passive_hp_regen: passiveHpRegen,
-            passive_sp_regen: passiveSpRegen
+            passive_sp_regen: passiveSpRegen,
+            passive_damage_bonus_pct: passiveDamageBonusPct // 💥 🆕 ダメージ倍率記憶
           };
         });
         partyStateRef.current = loadedParty;
@@ -2058,7 +2104,7 @@ if (isBackRow && isShortRange) {
             card_elem_eff: primaryTarget ? cardElem : {} // ✨ここを修正：固定オブジェクトではなく、ホーリープラクティスが蓄積された「cardElem」を丸ごと投下！
           };
           const defenderSpecs = primaryTarget ? { element: primaryTarget.element, race: primaryTarget.race, size: primaryTarget.size } : { element: '無', race: '無形', size: '中型' };
-          const totalMultiplier = calculateDamageModifier(attackSpecs, defenderSpecs);
+          const totalMultiplier = calculateDamageModifier(attackSpecs, defenderSpecs) * (1.0 + ((member.passive_damage_bonus_pct || 0) / 100));
 
           // ⚡ 実行ルート
           if (shouldLaunchMagic && playableSkill) {
@@ -2342,53 +2388,59 @@ if (isBackRow && isShortRange) {
                 newLogs.push({ id: `p-aoe-${member.id}-${Date.now()}`, text: logText, type: "success" });
 
                 // 🔮 👑 【三土手神特注：全体魔法・特技用 バフ完全同期ベースパワー算出ゲート】
-                let finalCalculatedPower = baseValue;
+                // 🎲 まずは魔法のダイス幅（minMatk, maxMatk）を外側で準備しておく
+                const myInt = member.int || 0; 
+                let minMatk = Math.floor(myInt + (myDex * 0.2)); 
+                let maxMatk = Math.floor(myInt * 2.0 + myDex);
 
-                if (playableSkill.value_type === 'percent') {
-                  if (isMagic) {
-                    // 🧼 仮置き「10」を完全撤去！知力がなければ魔法攻撃力は0へ！
-                    const myInt = member.int || 0; 
-                    let minMatk = Math.floor(myInt + (myDex * 0.2)); 
-                    let maxMatk = Math.floor(myInt * 2.0 + myDex);
-
-                    // リアルタイムに魔力バフ（1000%など）をこのダイス幅に完全乗算！
-                    if (member.activeBuffs && member.activeBuffs.length > 0) {
-                      member.activeBuffs.forEach(b => {
-                        if (b.effect_type === '魔力Matk増幅') {
-                          if (b.buff_value_type === 'fixed') {
-                            minMatk += b.buff_value;
-                            maxMatk += b.buff_value;
-                          } else if (b.buff_value_type === 'percent') {
-                            minMatk += Math.floor(minMatk * b.buff_value / 100);
-                            maxMatk += Math.floor(maxMatk * b.buff_value / 100);
-                          }
-                        }
-                      });
+                if (member.activeBuffs && member.activeBuffs.length > 0) {
+                  member.activeBuffs.forEach(b => {
+                    if (b.effect_type === '魔力Matk増幅') {
+                      if (b.buff_value_type === 'fixed') {
+                        minMatk += b.buff_value;
+                        maxMatk += b.buff_value;
+                      } else if (b.buff_value_type === 'percent') {
+                        minMatk += Math.floor(minMatk * b.buff_value / 100);
+                        maxMatk += Math.floor(maxMatk * b.buff_value / 100);
+                      }
                     }
-                    // バフが乗った最強の魔力から、今回のダイス威力を決定！
-                    finalCalculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
-                  } else {
-                    // ⚔️ 🟢 【全体物理特技】バトルアンセム等の「物理ATK増幅」バフを威力を乗算！
-                    let bonusAtk = 0;
-                    if (member.activeBuffs && member.activeBuffs.length > 0) {
-                      member.activeBuffs.forEach(b => {
-                        if (b.effect_type === '物理ATK増幅') {
-                          if (b.buff_value_type === 'fixed') {
-                            bonusAtk += b.buff_value;
-                          } else {
-                            bonusAtk += Math.floor(randomizedAtk * (b.buff_value / 100));
-                          }
-                        }
-                      });
-                    }
-                    const buffedTotalAtk = randomizedAtk + bonusAtk;
-                    finalCalculatedPower = Math.floor((buffedTotalAtk * baseValue) / 100);
-                  }
+                  });
                 }
 
-                // 確定した最強の威力を引っ提げて、敵全員のHPを消し飛ばすループへ突入！
+                // ⚔️ 物理用のATKバフ上昇分も外側で準備しておく
+                let bonusAtkFixed = 0;
+                let bonusAtkPercent = 0;
+                if (member.activeBuffs && member.activeBuffs.length > 0) {
+                  member.activeBuffs.forEach(b => {
+                    if (b.effect_type === '物理ATK増幅') {
+                      if (b.buff_value_type === 'fixed') bonusAtkFixed += b.buff_value;
+                      else if (b.buff_value_type === 'percent') bonusAtkPercent += b.buff_value;
+                    }
+                  });
+                }
+
+                // 確定したバッファを引っ提げて、敵全員のHPを消し飛ばすループへ突入！
                 localEnemies = localEnemies.map(enemyItem => {
                   if (enemyItem.hp <= 0) return enemyItem;
+
+                  // 🎲 ターゲットの敵「1体ずつ」に対して毎回乱数（ダイス）を振る！
+                  let finalCalculatedPower = baseValue;
+                  let rolledDiceValue = baseValue; // 🎲 ログ出力用バッファ
+                  
+                  if (playableSkill.value_type === 'percent') {
+                    if (isMagic) {
+                      // 魔法ダイスを振る
+                      const rolledMatk = Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk;
+                      rolledDiceValue = rolledMatk;
+                      finalCalculatedPower = Math.floor(rolledMatk * baseValue / 100);
+                    } else {
+                      // 物理ダイスを振る（minAtk, maxAtk はループ外で計算済みの基本ステータス）
+                      const rolledAtk = Math.floor(Math.random() * (maxAtk - minAtk + 1)) + minAtk;
+                      rolledDiceValue = rolledAtk;
+                      const buffedTotalAtk = rolledAtk + bonusAtkFixed + Math.floor(rolledAtk * bonusAtkPercent / 100);
+                      finalCalculatedPower = Math.floor(buffedTotalAtk * baseValue / 100);
+                    }
+                  }
                   
                   const skillSpecs = { 
                     ...attackSpecs, 
@@ -2399,14 +2451,19 @@ if (isBackRow && isShortRange) {
                     card_elem_eff: { [enemyItem.element]: elemValue } 
                   };
                   
-                  const skillMultiplier = calculateDamageModifier(skillSpecs, { element: enemyItem.element, race: enemyItem.race, size: enemyItem.size });
-                  const enemyMdef = enemyItem.int || 0;
+                  let skillMultiplier = calculateDamageModifier(skillSpecs, { element: enemyItem.element, race: enemyItem.race, size: enemyItem.size });
+                  skillMultiplier *= (1.0 + ((member.passive_damage_bonus_pct || 0) / 100));
                   
-                  // 上で計算した finalCalculatedPower をそのまま使用してダメージ算出！
-                  const aoeDmg = Math.max(1, Math.floor(finalCalculatedPower * skillMultiplier) - enemyMdef);
+                  // 🚨 魔法なら敵のMDEF(INT)を、物理ならDEF(VIT)を減算する！
+                  const enemyDefValue = isMagic ? (enemyItem.int || 0) : (enemyItem.vit || 0);
+                  
+                  const aoeDmg = Math.max(1, Math.floor(finalCalculatedPower * skillMultiplier) - enemyDefValue);
                   const nextHp = Math.max(0, enemyItem.hp - aoeDmg);
                   
-                  let aoeLog = `   ➔ 💥 ${enemyItem.name} に ${aoeDmg} の全体ダメージ！`;
+                  // 🎲 ログにダイス値と敵防を追加！
+                  const defTypeStr = isMagic ? '魔防' : '防';
+                  let aoeLog = `   ➔ (ダイス${rolledDiceValue}-敵${defTypeStr}${enemyDefValue}) 💥 ${enemyItem.name} に ${aoeDmg} の全体ダメージ！`;
+                  
                   let nextState = { ...enemyItem.state };
                   
                   if (playableSkill.effect_type && playableSkill.effect_type !== 'なし' && nextHp > 0) {
@@ -2436,6 +2493,7 @@ if (isBackRow && isShortRange) {
                 logText = ""; 
               } else {
                 let calculatedPower = baseValue;
+                let rolledDiceValue = baseValue; // 🎲 ログ出力用バッファ
                 const isMagic = playableSkill.skill_type === 'magic';
 
                 if (playableSkill.value_type === 'percent') {
@@ -2460,7 +2518,9 @@ if (isBackRow && isShortRange) {
                       });
                     }
                     // バフが乗った最強の魔力から、今回の威力をダイス決定！
-                    calculatedPower = Math.floor((Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk) * baseValue / 100);
+                    const rolledMatk = Math.floor(Math.random() * (maxMatk - minMatk + 1)) + minMatk;
+                    rolledDiceValue = rolledMatk;
+                    calculatedPower = Math.floor(rolledMatk * baseValue / 100);
                   } else {
                     // ⚔️ 🟢 【単体物理特技】バトルアンセム等の「物理ATK増幅」バフを威力へ合算！
                     let bonusAtk = 0;
@@ -2476,9 +2536,11 @@ if (isBackRow && isShortRange) {
                         }
                       });
                     }
+                    // 物理攻撃はターン開始時の基礎ダイス(randomizedAtk)をそのまま流用
+                    rolledDiceValue = randomizedAtk;
                     const buffedTotalAtk = randomizedAtk + bonusAtk;
                     // バフで強化された総ATKをもとにスキル倍率（シャドウステップ220%等）を乗算！
-                    calculatedPower = Math.floor((buffedTotalAtk * baseValue) / 100);
+                    calculatedPower = Math.floor(buffedTotalAtk * baseValue / 100);
                   }
                 }
 
@@ -2491,7 +2553,6 @@ if (isBackRow && isShortRange) {
                   if (primaryTarget.race === '動物' || primaryTarget.race === '植物') {
                     skillCardRace['動物'] = (skillCardRace['動物'] || 0) + 20;
                     skillCardRace['植物'] = (skillCardRace['植物'] || 0) + 20;
-                    console.log(`🏹 【プレダトリーセンス発動】 ${member.name} ➔ ターゲット: ${primaryTarget.name} (${primaryTarget.race}種族) に特効+20%を適用！`);
                   }
                 }
 
@@ -2501,15 +2562,15 @@ if (isBackRow && isShortRange) {
                   is_physical: playableSkill.skill_type === 'art',
                   card_race_eff: skillCardRace // 👈 特効バッファを反映！
                 };
-                const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
+                let skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
+                skillMultiplier *= (1.0 + ((member.passive_damage_bonus_pct || 0) / 100));
                 
-                // 物理スキルの場合は敵のVIT防御を引き算する
-                if (playableSkill.skill_type === 'art') {
-                  finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier) - (primaryTarget.vit || 0));
-                } else {
-                  finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier));
-                }
-
+                // 🚨 敵の防御力減算処理（物理ならVIT、魔法ならINT）
+                const enemyDefValue = isMagic ? (primaryTarget.int || 0) : (primaryTarget.vit || 0);
+                const defTypeStr = isMagic ? '魔防' : '防';
+                
+                // 物理・魔法ともに敵の防御力を引き算する
+                finalDmg = Math.max(1, Math.floor(calculatedPower * skillMultiplier) - enemyDefValue);
                 localEnemies[targetIdx].hp = Math.max(0, localEnemies[targetIdx].hp - finalDmg);
                 
                 // 🔮 🆕 単体魔法・単体特技用のホーリープラクティス文字センサーをインジェクション！
@@ -2518,7 +2579,13 @@ if (isBackRow && isShortRange) {
                   magicPassNotice = `✨[聖者調伏+${hasHolyPractice.effect_value || 20}%!] `;
                 }
 
-                logText = `${magicPassNotice}${isTargetBoss ? '🔥' : '🔮'} ${member.name} 【${playableSkill.name}】！ ${primaryTarget.name} に ${finalDmg} のダメージ！(残SP: ${member.sp})`;
+                // 🎲 ログにダイス値と敵防を追加して出力！
+                if (playableSkill.skill_type === 'art') {
+                  logText = `${magicPassNotice}⚔️ ${member.name} 【${playableSkill.name}】！ (ダイス${rolledDiceValue}-敵${defTypeStr}${enemyDefValue}) ➔ ${primaryTarget.name} に ${finalDmg} の物理ダメージ！(残SP: ${member.sp})`;
+                } else {
+                  logText = `${magicPassNotice}🔮 ${member.name} 【${playableSkill.name}】！ (ダイス${rolledDiceValue}-敵${defTypeStr}${enemyDefValue}) ➔ ${primaryTarget.name} に ${finalDmg} の魔法ダメージ！(残SP: ${member.sp})`;
+                }
+
                 // 🔮 👑 ここもパッシブなら敵にデバフを流さない！
                 if (playableSkill.effect_type === 'シャドウステップ') {
                   const turns = Number(playableSkill.duration_turns || 2);
@@ -2847,7 +2914,10 @@ if (isBackRow && isShortRange) {
               // 🔮 3. 上のどれでもない（回復でもバフ支援でもない）場合のみ、初めてここの「攻撃魔法ルート」が着地します！
               else {
                 const skillSpecs = { ...attackSpecs, element: skillToUse.element || '無', is_physical: skillToUse.skill_type === 'art' };
-                const skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
+                
+                // 💥 ここを const から let に変えて、可能性の覚醒のダメージバフを乗算します！
+                let skillMultiplier = calculateDamageModifier(skillSpecs, defenderSpecs);
+                skillMultiplier *= (1.0 + ((member.passive_damage_bonus_pct || 0) / 100));
                 
                 // 🔮 🆕 45%確率枠の魔法・特技用ホーリープラクティス文字センサーをインジェクション！
                 let magicPassNotice = "";
