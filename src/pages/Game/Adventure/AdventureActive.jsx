@@ -313,19 +313,46 @@ const AdventureActive = ({
           // 編成画面のトグルスイッチでパチパチ切り替えられた最新の position ('front' または 'back') を全自動上書きマウント！
           const position = slotData && typeof slotData === 'object' ? slotData.position : 'front';
 
+          // 🐾 🆕 【三土手神特注：ビーストシンパシー＆獣王の咆哮（魔物への波及パッシブ）センサー】
+          let sympathyHpMultiplier = 0;
+          let sympathyDefBonus = 0;
+          let roarAtkPct = 0;
+          let roarMatkPct = 0;
+
+          if (isMonsterClass) {
+            // パーティー内に該当パッシブを習得している仲間がいるかスキャン
+            const activeTamers = filteredMembers.filter(m => m.id !== ch.id && m.hp > 0);
+            
+            activeTamers.forEach(m => {
+              const mJob = m.meta?.job || m.job || 'ノービス';
+              const mLv = m.level || 1;
+              const mSkills = allMasterSkills.filter(sk => 
+                (sk.job_requirement === '全職業' || sk.job_requirement === mJob) && mLv >= Number(sk.level_requirement || 1)
+              );
+              if (mSkills.some(sk => sk.name?.includes('ビーストシンパシー') || sk.effect_type === 'ビーストシンパシー')) {
+                sympathyHpMultiplier = 0.20; 
+                sympathyDefBonus = 30;       
+              }
+              if (mSkills.some(sk => sk.name?.includes('獣王の咆哮') || sk.effect_type === '獣王の咆哮')) {
+                roarAtkPct = 0.15;
+                roarMatkPct = 0.15;
+              }
+            });
+          }
+
 // 🔮 👑 【三土手創世神特注：バトル突入時・パッシブスキル全自動検知マウントエンジン】
           let passiveFleeBonus = 0;
           let passiveCritBonus = 0;
           let passiveAtkBonus = 0; 
           let passiveMatkBonus = 0; 
-          let passiveDefBonus = 0;   
+          let passiveDefBonus = sympathyDefBonus;   // 👈 🐾 合流
           let passiveMdefBonus = 0;  
           let passiveTwinChance = 0; 
           let passiveHpRegen = 0;
           let passiveSpRegen = 0;
           let passiveDexBonus = 0;       // 🏹 🆕 【三土手神特注】常時DEX上昇値を溜める器
           let passiveRangedHitBonus = 0; // 🏹 🆕 【三土手神特注】遠隔Hit底上げ値を溜める器
-          let passiveHpMultiplier = 1.0; 
+          let passiveHpMultiplier = 1.0 + sympathyHpMultiplier; // 👈 🐾 合流
           let passiveSpMultiplier = 1.0;
           let passiveSpCostReduction = 0; 
           let passiveDamageBonusPct = 0;
@@ -337,6 +364,15 @@ const AdventureActive = ({
                   passiveFleeBonus += Number(sk.effect_value || sk.buff_value || 20);
                 }
                 if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
+
+                // 🐾 🆕 【追加】自身へのパッシブ効果（獣王の咆哮・ヴァルキリースタンス）
+                if (sk.effect_type === '獣王の咆哮' || sk.name?.includes('獣王の咆哮')) {
+                  passiveFleeBonus += 20;
+                }
+                if (sk.effect_type === 'ヴァルキリースタンス' || sk.name?.includes('ヴァルキリースタンス')) {
+                  passiveCritBonus += 15;
+                  passiveAtkBonus += Number(sk.effect_value || sk.buff_value || 30);
+                }
                 
                 // ⬇️ 🆕 ここにデバッグ用ログを追加！
                 if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
@@ -418,6 +454,12 @@ const AdventureActive = ({
             luk: (ch.meta?.stat_luk || 1) + (charBonus.luk || 0),
           };
           const ro = calculateRoStatus(tempCharForRoCalc, ch.equips || {});
+
+          // 🐾 🆕 【三土手神特注：獣王の咆哮 ATK/MATK波及加算】戦闘時合流
+          if (isMonsterClass && (roarAtkPct > 0 || roarMatkPct > 0)) {
+            passiveAtkBonus += Math.floor(Number(ro.atk || 0) * roarAtkPct);
+            passiveMatkBonus += Math.floor((Number(ro.int || 0) * 2) * roarMatkPct);
+          }
 
           // 🐾 🆕 【三土手神特注：野生の絆（従魔生存時DEF/MDEF増幅）戦闘センサー】
           availableSkills.forEach(sk => {
@@ -1740,7 +1782,7 @@ if (isBackRow && isShortRange) {
           );
           
           // 🧼 最低保証の424を完全粉砕！本来のキャラクターの最大HP（mhp または max_hp）の90%未満を正確にスキャン
-          const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || p.max_hp || 0) * 0.9);
+          const isEmergencyHP = localParty.some(p => p.hp > 0 && p.hp < (p.mhp || p.max_hp || 0) * 0.7);
 
           // 🧠 三土手神特注：スキルプールから「今撃てる有効なスキル」を事前選別
           // 💡 射程フィルターを通過した「rangeFilteredSkills」を対象にして、2回目の重複宣言を粉砕！
@@ -1777,8 +1819,34 @@ if (isBackRow && isShortRange) {
             if (healSkill && member.sp >= Number(healSkill.sp_cost || 0)) { 
                 playableSkill = healSkill; 
                 shouldLaunchMagic = true; 
-                // 最もHPの低い味方を優先してターゲット
-                targetAlly = localParty.filter(p => p.hp > 0 && p.hp < (p.mhp || p.max_hp || 0)).sort((a,b) => a.hp - b.hp)[0] || member;
+                
+                // 🐾 🆕 【三土手神特注】回復スキルに「優先職業」が設定されている場合は、まず優先職の傷病者をロックオン！
+                let rPriorityJobs = healSkill.target_priority_jobs;
+                if (typeof rPriorityJobs === 'string') {
+                    try { rPriorityJobs = JSON.parse(rPriorityJobs); }
+                    catch (e) { rPriorityJobs = rPriorityJobs.replace(/[\[\]"']/g, '').split(',').map(s => s.trim()).filter(Boolean); }
+                }
+                if (Array.isArray(rPriorityJobs)) {
+                    rPriorityJobs = rPriorityJobs.map(j => String(j).replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+                } else {
+                    rPriorityJobs = [];
+                }
+                
+                let injuredAllies = localParty.filter(p => p.hp > 0 && p.hp < (p.mhp || p.max_hp || 0)).sort((a,b) => a.hp - b.hp);
+                let healTarget = null;
+                
+                if (rPriorityJobs.length > 0) {
+                  for (let jobReq of rPriorityJobs) {
+                    const matchedAlly = injuredAllies.find(p => p.name.includes(jobReq) || p.job === jobReq || p.meta?.job === jobReq);
+                    if (matchedAlly) {
+                      healTarget = matchedAlly;
+                      break;
+                    }
+                  }
+                }
+                
+                // 最もHPの低い味方、または優先職をターゲット
+                targetAlly = healTarget || injuredAllies[0] || member;
             }
           } 
 
@@ -2169,10 +2237,32 @@ if (isBackRow && isShortRange) {
                   logText += ` ➔ 🌟 状態異常が完全に浄化された！`;
                 }
 
+                // 🐾 🆕 【三土手神特注：カロリーチャージ専用・回復時ATKバフ同時付与エンジン】
+                if (playableSkill.name?.includes('カロリーチャージ')) {
+                  const turns = Number(playableSkill.duration_turns || 3);
+                  const buffPct = Number(playableSkill.buff_value || 30);
+                  const newBuff = {
+                    id: playableSkill.id,
+                    name: playableSkill.name,
+                    effect_type: '物理ATK増幅',
+                    buff_value: buffPct,
+                    buff_value_type: 'percent',
+                    duration_turns: turns,
+                    casterId: member.id,
+                    isNew: true
+                  };
+                  const currentBuffs = targetAlly.activeBuffs || [];
+                  const filteredBuffs = currentBuffs.filter(b => b.id !== playableSkill.id);
+                  targetAlly.activeBuffs = [...filteredBuffs, newBuff];
+                  logText += ` ➔ 🍖 栄養満点！物理ATKが${buffPct}%上昇した！ (${turns}T)`;
+                }
+
                 const partyFindIdx = localParty.findIndex(p => p.id === targetAlly.id);
                 if (partyFindIdx !== -1) {
                   localParty[partyFindIdx].hp = targetAlly.hp;
                   localParty[partyFindIdx].state = targetAlly.state;
+                  // 🐾 🆕 追加されたバフ配列も確実に画面へ同期させる！
+                  localParty[partyFindIdx].activeBuffs = targetAlly.activeBuffs;
                 }
               }
             } else if (isBuffSkill) {

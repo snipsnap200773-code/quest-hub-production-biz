@@ -347,16 +347,47 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   if (loading) return <div style={{ color: '#ffd700', textAlign: 'center', padding: '50px', fontFamily: 'serif' }}>古代スクロール同期中...</div>;
   if (!character) return <div style={{ color: '#ef4444', padding: '20px' }}>冒険者が不在です。</div>;
 
-  // 1. 🟢 まずパッシブスキル用の加算バッファ変数を一番最初（上）で宣言する！[cite: 7]
+  // 🐾 🆕 【三土手神特注：ビーストシンパシー（魔物への波及パッシブ）判定センサー】
+  let sympathyHpMultiplier = 0;
+  let sympathyDefBonus = 0;
+  let roarAtkPct = 0;
+  let roarMatkPct = 0;
+
+  const isMonsterClass = ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族'].includes(character?.meta?.job || character?.job);
+  
+  if (isMonsterClass && character?.party_index !== null) {
+    // 同じパーティに編成されている仲間の中で、対象パッシブを持つ者がいるかスキャン
+    const activeTamers = allCharactersList.filter(c => c.id !== character.id && c.party_index !== null);
+    
+    activeTamers.forEach(c => {
+      const mJob = c.meta?.job || c.job || 'ノービス';
+      const mLv = c.level || 1;
+      const mSkills = character.allMasterItemsList?.filter(sk => 
+        sk.sp_cost !== undefined && 
+        (sk.job_requirement === '全職業' || sk.job_requirement === mJob) && mLv >= Number(sk.level_requirement || 1)
+      ) || [];
+
+      if (mSkills.some(sk => sk.name?.includes('ビーストシンパシー') || sk.effect_type === 'ビーストシンパシー')) {
+        sympathyHpMultiplier = 0.20;
+        sympathyDefBonus = 30;
+      }
+      if (mSkills.some(sk => sk.name?.includes('獣王の咆哮') || sk.effect_type === '獣王の咆哮')) {
+        roarAtkPct = 0.15;
+        roarMatkPct = 0.15;
+      }
+    });
+  }
+
+  // 1. 🟢 まずパッシブスキル用の加算バッファ変数を一番最初（上）で宣言する！
   let passiveFleeBonus = 0;
   let passiveCritBonus = 0;
   let passiveAtkBonus = 0;
   let passiveMatkBonus = 0;
-  let passiveDefBonus = 0;   
+  let passiveDefBonus = sympathyDefBonus;   // 👈 🐾 合流
   let passiveMdefBonus = 0;
   let passiveDexBonus = 0; // 👈 🟢 ここで安全に宣言！
   let passiveAllStatBonus = 0; // 🌐 🆕 オールラウンダー用バッファを新設！
-  let passiveHpMultiplier = 1.0;
+  let passiveHpMultiplier = 1.0 + sympathyHpMultiplier; // 👈 🐾 合流
   let passiveSpMultiplier = 1.0;
   let passiveDamageBonusPct = 0;
 
@@ -364,9 +395,19 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   const characterSkills = character?.skillsList || [];
 
   characterSkills.forEach(sk => {
-    const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ' || sk.name?.includes('プレダトリーセンス') || sk.effect_type === 'プレダトリーセンス' || sk.name?.includes('オールラウンダー') || sk.effect_type?.includes('全ステータス');
+    // 🐾 🆕 【修正】isPassive の判定条件に「獣王の咆哮」「ヴァルキリースタンス」を追加！
+    const isPassive = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('ホークアイ') || sk.effect_type === 'ホークアイ' || sk.name?.includes('プレダトリーセンス') || sk.effect_type === 'プレダトリーセンス' || sk.name?.includes('オールラウンダー') || sk.effect_type?.includes('全ステータス') || sk.name?.includes('獣王の咆哮') || sk.name?.includes('ヴァルキリースタンス');
 
     if (isPassive) {
+      // 🐾 🆕 【追加】自身へのパッシブ効果（獣王の咆哮・ヴァルキリースタンス）
+      if (sk.effect_type === '獣王の咆哮' || sk.name?.includes('獣王の咆哮')) {
+        passiveFleeBonus += 20; // 💡 自身のFlee+20
+      }
+      if (sk.effect_type === 'ヴァルキリースタンス' || sk.name?.includes('ヴァルキリースタンス')) {
+        passiveCritBonus += 15; // 💡 Cri+15%
+        passiveAtkBonus += Number(sk.effect_value || sk.buff_value || 30); // 💡 固定ATK上昇
+      }
+
       // 🌐 🆕 【オールラウンダー検知】全ステータス上昇値をセット！
       if (sk.effect_type === '全ステータス増幅' || sk.name?.includes('オールラウンダー') || sk.effect_type?.includes('全ステータス')) {
         passiveAllStatBonus += Number(sk.effect_value || sk.buff_value || 5);
@@ -377,21 +418,21 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       }
       if (sk.effect_type === '致命打率増幅') passiveCritBonus += Number(sk.effect_value || 0);
       
-      // 🏹 ホークアイ判定（Lレンジ武器装備時限定）[cite: 7]
+      // 🏹 ホークアイ判定（Lレンジ武器装備時限定）
       if (sk.effect_type === 'ホークアイ' || sk.effect_type === '遠隔命中増幅' || sk.name?.includes('ホークアイ')) {
         const rightEq = character.equips?.right_hand;
         const isLRange = rightEq?.weapon_range === 'L' || rightEq?.range === 'L';
         if (isLRange) {
-          passiveCritBonus += 10; // 弓装備時にCri+10%[cite: 7]
+          passiveCritBonus += 10; // 弓装備時にCri+10%
         }
       }
       
-      // 🎯 【プレダトリーセンス / ディバインアイ / パッシブDEX増幅】のDEX加算を蓄積[cite: 7]
+      // 🎯 【プレダトリーセンス / ディバインアイ / パッシブDEX増幅】のDEX加算を蓄積
       if (sk.effect_type === 'パッシブDEX増幅' || sk.effect_type === 'プレダトリーセンス' || sk.name?.includes('プレダトリーセンス') || sk.name?.includes('ディバインアイ')) {
         passiveDexBonus += Number(sk.effect_value || sk.buff_value || 10);
       }
 
-      // ⚔️ 【剣術の極意 / パッシブATK増幅】[cite: 7]
+      // ⚔️ 【剣術の極意 / パッシブATK増幅】
       if (sk.effect_type === 'パッシブATK増幅' || sk.name?.includes('剣術の極意')) {
         passiveAtkBonus += Number(sk.effect_value || sk.buff_value || 0);
       }
@@ -430,6 +471,19 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   luk: (character.meta?.stat_luk || 1) + localBonuses.luk
 };
   const ro = calculateRoStatus(currentTempCharForCalc, character.equips || {}); //
+
+  // 🐾 🆕 【三土手神特注：獣王の咆哮 ATK/MATK波及加算】
+  // roステータス（素のATK等）が確定した直後に、魔物に対して+15%の恩恵を直接バインド！
+  if (isMonsterClass && (roarAtkPct > 0 || roarMatkPct > 0)) {
+    // 💡 切り捨てで0になる場合も、最低「+1」の恩恵を保証する！
+    passiveAtkBonus += Math.max(1, Math.floor(Number(ro.atk || 0) * roarAtkPct));
+    
+    // 💡 Matkの基礎値(Int + Dex*0.2)を元に15%を算出し、こちらも最低「+1」を保証！
+    const liveInt = (character.meta?.stat_int || 1) + localBonuses.int + (ro?.cardStats?.int || 0);
+    const liveDex = (character.meta?.stat_dex || 1) + localBonuses.dex + (ro?.cardStats?.dex || 0);
+    const baseMatk = Math.floor(liveInt + (liveDex * 0.2));
+    passiveMatkBonus += Math.max(1, Math.floor(baseMatk * roarMatkPct));
+  }
 
   // 🐾 🆕 【三土手神特注：野生の絆（従魔生存時DEF/MDEF増幅）判定センサー】
   characterSkills.forEach(sk => {
