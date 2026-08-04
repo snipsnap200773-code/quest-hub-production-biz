@@ -3448,17 +3448,54 @@ if (isBackRow && isShortRange) {
           // 【生涯総獲得ポイント ＋ 初期支給の6ポイント】 － 【使用済みポイント】 ＝ 画面に出すべき完璧な残りフリーポイント！
           const finalFreePoints = Math.max(0, totalEarnedPoints - spentPoints);
 
+          // 🎓 👑 【三土手創世神特注：Lv.50 2次職クラスチェンジ・覚醒エンジン】
+          // クエスト名に「転職」と「2次職の名前」が含まれており、対象キャラクターがLv.50以上かつ対応する1次職であれば、
+          // 魂の次元上昇（クラスチェンジ）を発生させます！
+          let newJob = null;
+          const questName = currentQuestState?.name || '';
+          
+          if (isVictory && lv >= 50 && questName.includes('転職')) {
+            const currentJob = originChar.job || originChar.meta?.job || 'フリーランス';
+            
+            const jobChangeMap = [
+              { target: 'エクスパート', base: 'フリーランス' }, { target: 'サバイバー', base: 'フリーランス' },
+              { target: 'クラッシャー', base: 'ファイター' }, { target: 'テンプラー', base: 'ファイター' },
+              { target: 'ハイウィザード', base: 'メイジ' }, { target: 'エレミット', base: 'メイジ' },
+              { target: 'ビショップ', base: 'クレリック' }, { target: 'グラップラー', base: 'クレリック' },
+              { target: 'アサシンクロス', base: 'スカウト' }, { target: 'チェイサー', base: 'スカウト' },
+              { target: 'レンジャー', base: 'ハンター' }, { target: 'パフォーマー', base: 'ハンター' },
+              { target: 'ブラックスミス', base: 'トレーダー' }, { target: 'ケミスト', base: 'トレーダー' },
+              { target: 'ビーストマスター', base: 'テイマー' }, { target: 'フロントコマンダー', base: 'テイマー' }
+            ];
+
+            for (const j of jobChangeMap) {
+              // クエスト名に「クラッシャー」等が含まれており、対象が「ファイター」なら合格！
+              if (questName.includes(j.target) && currentJob === j.base) {
+                newJob = j.target;
+                console.log(`🌟 【覚醒】 ${member.name} は試練を乗り越え、『${newJob}』へとクラスチェンジした！`);
+                break;
+              }
+            }
+          }
+
+          const updatePayload = { 
+            current_hp: member.hp,          // 残りHP
+            level: lv,                      // 最新確定レベル
+            exp: totalExp,                  // 繰り越し経験値
+            status_points: finalFreePoints  // 1ミリの狂いもない最新の残りポイント！
+          };
+
+          // 転職が成立した場合は、Supabaseの職業カラムを上位職へ書き換える！
+          if (newJob) {
+            updatePayload.job = newJob;
+          }
+
           // ⚡ 👑 解決：部分更新（update）を安全に実行！
           // jobやrace、guild_nameなどのカラムを上書き項目から完全に除外することで、
           // 既存の大切なデータが巻き込まれてNULLに破壊されるのを永久にシャットアウトします！
           await supabase
             .from('game_characters')
-            .update({ 
-              current_hp: member.hp,          // 残りHP
-              level: lv,                      // 最新確定レベル
-              exp: totalExp,                  // 繰り越し経験値
-              status_points: finalFreePoints  // 1ミリの狂いもない最新の残りポイント！
-            })
+            .update(updatePayload)
             .eq('id', member.id);
         })
       );
