@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 // 🔨 鍛冶屋用に Hammer アイコンと AdventureBlacksmith コンポーネントを追加！
-import { Users, Backpack, ChevronRight, Dog, Hammer } from 'lucide-react';
+import { Users, Backpack, ChevronRight, Dog, Hammer, BookOpen } from 'lucide-react'; // 👈 BookOpen を追加！
 import AdventureCharacterList from './AdventureCharacterList'; 
 import AdventureCharacterDetail from './AdventureCharacterDetail'; 
 import AdventureInventory from './AdventureInventory'; 
-import AdventureBlacksmith from './AdventureBlacksmith'; // 👈 🆕 追加
+import AdventureBlacksmith from './AdventureBlacksmith'; 
+import AdventureRecall from './AdventureRecall'; // 👈 これも追加！
 import { supabase } from '../../../supabaseClient';
 
 // 🆕 固定の TEST_USER_ID の定義を物理的に完全消去！
@@ -237,7 +238,17 @@ const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）か�
     );
   }
 
-  // 5. 👑 酒場トップ（スッキリした3枚のカードUI）
+  // 📖 👑 【新規追加】6. 記憶の図書館（思い出し屋）画面を呼び出す！
+  if (subView === 'recall') {
+    return (
+      <AdventureRecall 
+        userId={userId} 
+        onBack={() => setSubView('top')} 
+      />
+    );
+  }
+
+  // 7. 👑 酒場トップ（スッキリしたメニューカードUI）
   return (
     <div style={{ padding: '24px 20px 0 20px', color: '#fff' }}>
       
@@ -406,6 +417,46 @@ const AdventureInn = ({ userId }) => { // 🆕 親画面（AdventurePage）か�
               </h3>
               <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>
                 武具の精錬・強化・Zenyと強化石で装備強化
+              </p>
+            </div>
+          </div>
+          <ChevronRight size={20} color="#475569" />
+        </div>
+
+        {/* 💳 📖 【ここから追加】カード⑤：記憶の図書館（思い出し屋） */}
+        <div 
+          onClick={() => setSubView('recall')}
+          style={{
+            background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+            border: '1px solid #334155',
+            borderRadius: '16px',
+            padding: '20px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+            transition: 'transform 0.2s, border-color 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#38bdf8';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = '#334155';
+            e.currentTarget.style.transform = 'none';
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ background: 'rgba(56, 189, 248, 0.1)', padding: '12px', borderRadius: '12px', color: '#38bdf8' }}>
+              <BookOpen size={24} />
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem', color: '#fff', fontWeight: 'bold' }}>
+                記憶の図書館
+              </h3>
+              <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>
+                Zenyを支払い、忘却した特技・魔法を復元する
               </p>
             </div>
           </div>

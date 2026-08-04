@@ -258,10 +258,46 @@ const AdventurePage = () => { // 🆕 親（App.jsx）から Props を貰う必�
         <div style={{ position: 'fixed', bottom: '70px', left: 0, right: 0, margin: '0 auto', width: '100%', maxWidth: '440px', padding: '0 20px', zIndex: 90 }}>
           <button 
             onClick={() => {
-              if (currentPartyIds.filter(id => id && id !== 'null' && id !== 'undefined' && String(id).trim() !== '').length === 0) {
+              const validPartyIds = currentPartyIds.filter(id => id && id !== 'null' && id !== 'undefined' && String(id).trim() !== '');
+              
+              if (validPartyIds.length === 0) {
                 alert("🚨 パーティに誰も配置されていません！「編成」タブから冒険者を配置してください。");
                 return;
               }
+
+              // 🧠 👑 【三土手神特注：キャパシティオーバー出撃ロック判定】
+              // パーティに編成されている人間キャラクターのスキル数をスキャン
+              let overCapacityMember = null;
+              
+              for (const slotId of validPartyIds) {
+                // オブジェクト（{id, position}）なら .id を、文字列ならそのまま抽出
+                const memberId = typeof slotId === 'object' ? slotId.id : slotId;
+                const member = allCharacters.find(c => c.id === memberId);
+                
+                if (member) {
+                  const job = member.meta?.job || member.job || 'ノービス';
+                  const isMonster = ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族'].includes(job);
+                  
+                  // 魔物は免除。人間の場合は現在習得しているスキル数をカウント
+                  if (!isMonster) {
+                    // gameServices.js 側で「忘却リスト」を除外済みの skillsList をそのままカウント！
+                    const learnedCount = (member.skillsList || []).length;
+                    
+                    if (learnedCount > 3) {
+                      overCapacityMember = member.custom_name || '仲間';
+                      break; // 1人でもオーバーしていたら即座にループを抜けてロック
+                    }
+                  }
+                }
+              }
+
+              // オーバーしている仲間がいれば赤アラートを出して強制停止！
+              if (overCapacityMember) {
+                alert(`🚨 【出撃不可：魂のキャパシティオーバー】\n\nパーティー内の「${overCapacityMember}」が記憶の限界（3枠）を超えています。\n酒場に戻り、能力値タブから『忘却する特技・魔法』を選んでください。`);
+                return;
+              }
+
+              // 全員が無事にキャパシティ内であれば、いざクエスト選択画面へ！
               setIsQuestListOpen(!isQuestListOpen);
             }}
             style={{

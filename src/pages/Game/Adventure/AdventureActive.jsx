@@ -154,21 +154,29 @@ const AdventureActive = ({
 
           if (isMonsterClass) {
             // 😈 ① 魔物キャラクターの場合
-            // レベルアップ自動解放を完全カット！敵時代（マスター）から引き継いで所持している
-            // 「最大3枠の固有スキルID」だけをピンポイントで全自動ロード！
+            // 敵時代（マスター）から引き継いで所持している「最大3枠の固有スキルID」だけをピンポイントロード！
             const tamerSkillIds = [ch.skill_01, ch.skill_02, ch.skill_03].filter(Boolean);
             availableSkills = allMasterSkills.filter(sk => tamerSkillIds.includes(sk.id));
           } else {
-            // 👤 ② 人間の仲間の場合は、今まで通り職業とレベル連動で自動習得
+            // 👤 ② 人間の仲間の場合は、職業とレベル連動で自動取得（※忘却リスト除外付き）
+
+            // 🧠 🆕 【忘却スキル完全除外インフラ】
+            const myForgottenSkills = ch.forgotten_skills || [];
+            // 忘れたスキルの「名前」をリスト化（Lv.2を忘れたのにLv.1がゾンビ復活するのを永久に遮断！）
+            const forgottenSkillNames = allMasterSkills
+              .filter(sk => myForgottenSkills.includes(sk.id))
+              .map(sk => sk.name);
+
             const eligibleSkills = allMasterSkills.filter(sk => {
+              // 🧠 忘れたスキルIDそのもの、または「同名のスキル（過去ランク含む）」なら戦闘に持ち込まない！
+              if (myForgottenSkills.includes(sk.id) || forgottenSkillNames.includes(sk.name)) return false;
+
               const jobReq = sk.job_requirement;
               const lvReq = Number(sk.level_requirement || 1);
               return (jobReq === '全職業' || jobReq === myJob) && myLevel >= lvReq;
             });
 
-            // 👑 🆕 【三土手神特注】仲間詳細画面（AdventureCharacterDetail.jsx）と完全同一のロジックで、
-            // 同名スキルの中で最も必要レベルが高い（最高ランク）のものだけを選抜！
-            // これでLv1とLv2の「剣術の極意」が二重に加算される事故を防止！
+            // 👑 🆕 同名スキルの中で最も必要レベルが高い（最高ランク）のものだけを選抜！
             const skillMap = {};
             eligibleSkills.forEach(sk => {
               const sName = sk.name;

@@ -49,6 +49,50 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
   const [equippedCards, setEquippedCards] = useState([]);
   const [selectedSlotIndex, setSelectedSlotIndex] = useState(null); // カードを挿しようとしているスロットの番号
 
+  // 🧠 🆕 永久忘却用の通信ロックState
+  const [isForgetting, setIsForgetting] = useState(false);
+
+  // 🧠 🆕 スキルを永久に忘れる（ブラックリストへ送る）関数
+  const handleForgetSkill = async (skillIdToForget, skillName) => {
+    if (isForgetting) return;
+
+    // ⚠️ 究極の選択に対する最終確認アラート
+    const confirmMsg = `⚠️ 【魂の記憶消去】\n\n『${skillName}』の知識を記憶から永久に消去します。\nよろしいですか？\n（※思い出し屋を利用するまで二度と使えなくなります）`;
+    if (!window.confirm(confirmMsg)) return;
+    
+    setIsForgetting(true);
+    try {
+      const currentForgotten = character.forgotten_skills || [];
+      // 先ほどgameServicesに追加した神関数を直撃コール！
+      const res = await gameServices.forgetSkill(userId, character.id, skillIdToForget, currentForgotten);
+      if (res && res.success) {
+        await loadCharAndInventoryData(); // 画面を再同期（消去されたスキルが一覧から完全に消滅します）
+      } else {
+        alert(res.error);
+      }
+    } catch (err) { console.error(err); }
+    finally { setIsForgetting(false); }
+  };
+
+  // 🔮 🆕 スキルを忘却（外す）関数
+  const handleUnequipSkill = async (skillIdToRemove) => {
+    if (isSkillEquipping) return;
+    const currentEquipped = [character.skill_01, character.skill_02, character.skill_03].filter(Boolean);
+    
+    setIsSkillEquipping(true);
+    try {
+      // 外す対象のIDだけを取り除いた新しい配列を作る
+      const nextSkills = currentEquipped.filter(id => id !== skillIdToRemove);
+      const res = await gameServices.saveEquippedSkills(userId, character.id, nextSkills);
+      if (res && res.success) {
+        await loadCharAndInventoryData();
+      } else {
+        alert(res.error);
+      }
+    } catch (err) { console.error(err); }
+    finally { setIsSkillEquipping(false); }
+  };
+
   // 🆕 全キャラクター一覧を保持するStateを先頭に追加
   const [allCharactersList, setAllCharactersList] = useState([]);
 
@@ -78,8 +122,8 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       // 🐾 🆕 【重要】ここでマスターからスキル技能一覧（allSkills）を確実に取得させて電線を繋ぐ！
       const { data: allSkills } = await supabase.from('game_master_skills').select('*');
       
-      // 🚨 🆕 【超重要パッチ】gameServicesの取得漏れを完全粉砕するため、DBから直接キャラのスキルIDを引っこ抜く！
-      const { data: directCharData } = await supabase.from('game_characters').select('skill_01, skill_02, skill_03').eq('id', characterId).single();
+      // 🚨 🆕 【超重要パッチ】gameServicesの取得漏れを完全粉砕するため、DBから直接キャラのスキルIDと忘却リストを引っこ抜く！
+      const { data: directCharData } = await supabase.from('game_characters').select('skill_01, skill_02, skill_03, forgotten_skills').eq('id', characterId).single();
 
       // ロードした2つの異なる世界のデータを、1つの配列に美しく結合してキャラクターに持たせます
       const combinedMasterList = [
@@ -104,7 +148,18 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
         data.skillsList = (allSkills || []).filter(sk => tamerSkillIds.includes(sk.id));
       } else {
         // 👤 人間の場合は職業とレベル連動
+        
+        // 🧠 🆕 【忘却スキル完全除外インフラ】
+        const myForgottenSkills = directCharData?.forgotten_skills || data.forgotten_skills || [];
+        // 忘れたスキルの「名前」をリスト化（これにより、Lv.2を忘れたのにLv.1がゾンビ復活するのを一網打尽に防ぎます！）
+        const forgottenSkillNames = (allSkills || [])
+          .filter(sk => myForgottenSkills.includes(sk.id))
+          .map(sk => sk.name);
+
         const eligibleSkills = (allSkills || []).filter(sk => {
+          // 🧠 忘れたスキルIDそのもの、または「同名のスキル（過去ランク含む）」なら絶対に表示させない！
+          if (myForgottenSkills.includes(sk.id) || forgottenSkillNames.includes(sk.name)) return false;
+
           const jobReq = sk.job_requirement;
           const lvReq = Number(sk.level_requirement || 1);
           return (jobReq === '全職業' || jobReq === myJob) && myLevel >= lvReq;
@@ -928,34 +983,47 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
             );
           })()}
 
-          {/* 🔮 🆕 クエストハブ完全オリジナル：職業制限 ＆ ベースLv連動型・全自動スキル習得ブック */}
-          <SectionHeader title="習得済みの特技・魔法（職業 ＆ レベル連動解放）" />
-          <div style={{ background: '#070503', border: '1px dashed #4a341b', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-            {(() => {
-              const currentJob = character.meta?.job || 'ノービス';
+          {/* 🧠 👑 三土手神特注：スキル忘却・キャパシティ管理UI */}
+          <SectionHeader title="魂に刻まれた特技・魔法（限界：3枠）" />
+          
+          {(() => {
+            const currentJob = character.meta?.job || 'ノービス';
+            const finalLearnedList = characterSkills || [];
+            
+            // 🐾 魔物クラスは固定枠のため、忘却アクションを封印
+            const isMonster = ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族'].includes(currentJob);
 
-              // 💡 ⚙️ 【三土手神連動リフォーム】上の154行目でパッシブ補正等もスキャンした本物のスキルリスト（characterSkills）をそのまま直撃マウント！
-              const finalLearnedList = characterSkills;
+            // 🚨 キャパシティオーバー判定
+            const isOverCapacity = !isMonster && finalLearnedList.length > 3;
 
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  {finalLearnedList.map((sk) => {
-                    // 🔮 🆕 【三土手神特注】同名スキル内ランク（スキルLv）全自動算出エンジン
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {/* 🚨 限界突破時のレッドアラート */}
+                {isOverCapacity && (
+                  <div style={{ background: '#451a1a', border: '2px dashed #ef4444', padding: '12px', borderRadius: '8px', animation: 'pulseRed 1.5s infinite', textAlign: 'center' }}>
+                    <span style={{ color: '#f87171', fontWeight: 'bold', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>
+                      ⚠️ 魂のキャパシティオーバー！ ⚠️
+                    </span>
+                    <span style={{ color: '#fca5a5', fontSize: '0.65rem', lineHeight: '1.4', display: 'block' }}>
+                      現在の記憶数（{finalLearnedList.length} / 3枠）<br/>
+                      記憶の限界を超えています！<br/>
+                      <strong style={{ color: '#fff' }}>3枠に収まるまで「忘れる」スキルを選んでください。</strong><br/>
+                      ※この状態のキャラクターがいると討伐に出撃できません。
+                    </span>
+                    <style>{`@keyframes pulseRed { 0% { box-shadow: 0 0 0px #ef4444; } 50% { box-shadow: 0 0 15px #ef4444; } 100% { box-shadow: 0 0 0px #ef4444; } }`}</style>
+                  </div>
+                )}
+
+                <div style={{ background: '#070503', border: isOverCapacity ? '1px solid #ef4444' : '1px dashed #f59e0b', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {finalLearnedList.length > 0 ? finalLearnedList.map((sk) => {
                     const masterList = character.allMasterItemsList || [];
-                    
-                    // 同じ職業制限（または共通）かつ、全く同じ名前のスキルをすべて抽出して必要Lv順にソート
                     const siblingSkills = masterList
                       .filter(s => s.sp_cost !== undefined && s.name === sk.name && (s.job_requirement === '全職業' || s.job_requirement === '魔物共通' || s.job_requirement === character.meta?.job))
                       .sort((a, b) => Number(a.level_requirement) - Number(b.level_requirement));
                     
-                    // ソートした配列の中で、自分が何番目にいるか（インデックス + 1 = 現在のスキルLv）
                     const mySkillRank = siblingSkills.findIndex(s => s.id === sk.id) + 1;
                     const isMaxRank = mySkillRank === siblingSkills.length && siblingSkills.length > 1;
-
-                    // 🔮 パッシブスキル判別フラグ（二重包囲網）
                     const isPassiveSkill = sk.skill_type === 'passive' || sk.effect_type?.includes('パッシブ') || sk.name?.includes('極意') || sk.name?.includes('マスタリー') || sk.name?.includes('センス') || sk.name?.includes('スタンス') || sk.name?.includes('ブレス') || sk.name?.includes('ファング');
-
-                    // 💎 🆕 effect_valueが0の場合は buff_value をフォールバック取得する安全な数値抽出！
                     const displayVal = Number(sk.effect_value || sk.buff_value || 0);
 
                     return (
@@ -963,30 +1031,19 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, paddingRight: '8px' }}>
                           {/* ─── 1行目：スキル名 ＆ 分類バッジ ─── */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <span style={{ 
-                              fontSize: '0.52rem', 
-                              background: isPassiveSkill ? '#3b0764' : (sk.skill_type === 'magic' ? '#1e3a8a' : '#311005'), 
-                              color: isPassiveSkill ? '#c084fc' : (sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e'), 
-                              padding: '1px 5px', 
-                              borderRadius: '3px', 
-                              fontWeight: 'bold' 
-                            }}>
+                            <span style={{ fontSize: '0.52rem', background: isPassiveSkill ? '#3b0764' : (sk.skill_type === 'magic' ? '#1e3a8a' : '#311005'), color: isPassiveSkill ? '#c084fc' : (sk.skill_type === 'magic' ? '#60a5fa' : '#f43f5e'), padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
                               {isPassiveSkill ? 'パッシブ' : (sk.skill_type === 'magic' ? '魔法' : '特技')}
                             </span>
-
                             {!isPassiveSkill && (
                               <span style={{ fontSize: '0.52rem', background: sk.skill_range === 'L' ? '#064e3b' : '#3f3f46', color: sk.skill_range === 'L' ? '#34d399' : '#e4e4e7', padding: '1px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
                                 {sk.skill_range === 'L' ? 'Lレンジ' : 'Sレンジ'}
                               </span>
                             )}
-
                             <strong style={{ fontSize: '0.8rem', color: '#ffd700' }}>
                               {sk.name} <span style={{ color: isMaxRank ? '#34d399' : '#38bdf8', fontSize: '0.75rem', fontFamily: 'monospace' }}>[Lv.{mySkillRank}]</span>
                             </strong>
                             {isMaxRank && (
-                              <span style={{ fontSize: '0.52rem', background: '#223311', border: '1px solid #446622', color: '#a3e635', padding: '0px 4px', borderRadius: '3px', fontWeight: 'bold' }}>
-                                MASTER
-                              </span>
+                              <span style={{ fontSize: '0.52rem', background: '#223311', border: '1px solid #446622', color: '#a3e635', padding: '0px 4px', borderRadius: '3px', fontWeight: 'bold' }}>MASTER</span>
                             )}
                             <span style={{ fontSize: '0.55rem', color: '#887055' }}>(必要Lv.{sk.level_requirement})</span>
                           </div>
@@ -994,72 +1051,75 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
                           {/* ─── 2行目：スペックバッジ ─── */}
                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '1px' }}>
                             {isPassiveSkill ? (
-                              <span style={{ fontSize: '0.55rem', background: '#2e1065', border: '1px solid #581c87', color: '#e9d5ff', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>
-                                ♾️ 常時発動
-                              </span>
+                              <span style={{ fontSize: '0.55rem', background: '#2e1065', border: '1px solid #581c87', color: '#e9d5ff', padding: '1px 5px', borderRadius: '3px', fontWeight: 'bold' }}>♾️ 常時発動</span>
                             ) : (
-                              <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>
-                                🎯 {sk.target_type || '単体エネミー'}
+                              <span style={{ fontSize: '0.55rem', background: '#13110c', border: '1px solid #3a2d1a', color: '#ba9a6f', padding: '1px 5px', borderRadius: '3px', fontFamily: 'monospace' }}>🎯 {sk.target_type || '単体エネミー'}</span>
+                            )}
+                            <span style={{ fontSize: '0.55rem', background: '#1a130b', border: '1px solid #5a3d1b', color: '#ffb834', padding: '1px 5px', borderRadius: '3px' }}>🔥 {sk.element || '無'}属性</span>
+                            {sk.effect_type && sk.effect_type !== 'なし' && (
+                              <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
+                                {(() => {
+                                  const bVal = sk.buff_value || 0;
+                                  const bUnit = sk.buff_value_type === 'fixed' ? '' : '%';
+                                  const bText = bVal > 0 ? ` +${bVal}${bUnit}` : '';
+                                  if (isPassiveSkill) return `✨ ${sk.effect_type} (+${displayVal})`;
+                                  return `✨ ${sk.effect_type}${bText} (${sk.effect_chance}% / ${sk.duration_turns}T)`;
+                                })()}
                               </span>
                             )}
-
-                            <span style={{ fontSize: '0.55rem', background: '#1a130b', border: '1px solid #5a3d1b', color: '#ffb834', padding: '1px 5px', borderRadius: '3px' }}>
-                              🔥 {sk.element || '無'}属性
-                            </span>
-                            {sk.effect_type && sk.effect_type !== 'なし' && (
-  <span style={{ fontSize: '0.55rem', background: '#100b1e', border: '1px solid #311a5a', color: '#ba9aff', padding: '1px 5px', borderRadius: '3px' }}>
-    {(() => {
-      // 💡 バフ効果量（10）と単位（% または 固定）を取得
-      const bVal = sk.buff_value || 0;
-      const bUnit = sk.buff_value_type === 'fixed' ? '' : '%';
-      const bText = bVal > 0 ? ` +${bVal}${bUnit}` : '';
-
-      if (isPassiveSkill) {
-        return `✨ ${sk.effect_type} (+${displayVal})`;
-      } else {
-        // アクティブスキルの場合：バフ効果量もバッジに添えて表示！
-        return `✨ ${sk.effect_type}${bText} (${sk.effect_chance}% / ${sk.duration_turns}T)`;
-      }
-    })()}
-  </span>
-)}
                           </div>
 
                           {/* ─── 3行目：説明文 ─── */}
                           <p style={{ margin: '2px 0 0 0', fontSize: '0.65rem', color: '#887355', lineHeight: '1.2' }}>{sk.description}</p>
                         </div>
 
-                        {/* ─── 右側：SP消費 ＆ 威力・効果量表示 ─── */}
-                        <div style={{ textAlign: 'right', fontSize: '0.65rem', fontFamily: 'monospace', minWidth: '75px' }}>
+                        {/* ─── 右側：SP消費 ＆ 忘却アクションボタン ─── */}
+                        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', justifyContent: 'center', fontSize: '0.65rem', fontFamily: 'monospace', minWidth: '75px' }}>
                           {isPassiveSkill ? (
                             <>
                               <div style={{ color: '#c084fc', fontWeight: 'bold' }}>消費SP: -</div>
-                              <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
-                                効果: <span style={{ color: '#fff', marginLeft: '2px' }}>+{displayVal}</span>
-                              </div>
+                              <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>効果: <span style={{ color: '#fff', marginLeft: '2px' }}>+{displayVal}</span></div>
                             </>
                           ) : (
                             <>
                               <div style={{ color: '#38bdf8', fontWeight: 'bold' }}>消費SP: {sk.sp_cost}</div>
-                              <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>
-                                {sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} 
-                                <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span>
-                              </div>
+                              <div style={{ color: '#34d399', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' }}>{sk.value_type === 'fixed' ? '回復/固定:' : '基礎倍率:'} <span style={{ color: '#fff', marginLeft: '2px' }}>{sk.effect_value}{sk.value_type === 'fixed' ? '' : '%'}</span></div>
                             </>
+                          )}
+
+                          {/* 🧠 👑 【三土手神特注】キャパシティオーバー（4つ以上）の時だけ忘却ボタンを出現させる！ */}
+                          {!isMonster && isOverCapacity && (
+                            <div style={{ marginTop: '8px' }}>
+                              <button 
+                                onClick={() => handleForgetSkill(sk.id, sk.name)} 
+                                disabled={isForgetting} 
+                                style={{ 
+                                  padding: '5px 10px', 
+                                  background: '#7f1d1d', 
+                                  color: '#fecaca', 
+                                  border: '1px solid #ef4444', 
+                                  borderRadius: '4px', fontSize: '0.6rem', fontWeight: 'bold', cursor: 'pointer', width: '100%',
+                                  animation: 'pulseRedBtn 1.5s infinite'
+                                }}
+                              >
+                                ⚠️ これを忘れる
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
                     );
-                  })}
-                  {finalLearnedList.length === 0 && (
+                  }) : (
                     <div style={{ fontSize: '0.65rem', color: '#5a4531', textAlign: 'center', padding: '10px', fontStyle: 'italic' }}>
-                      現在のレベル、または【{currentJob}】の職業で習得できるスキル知識がまだありません。
+                      魂に刻まれた特技・魔法はありません。
                     </div>
                   )}
+                  {/* 🚨 キャパシティオーバー用アニメーション */}
+                  <style>{`@keyframes pulseRedBtn { 0% { opacity: 0.8; } 50% { opacity: 1; } 100% { opacity: 0.8; } }`}</style>
                 </div>
-              );
-            })()}
-          </div>
+              </div>
+            );
+          })()}
 
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
             <button onClick={handleReset} style={{ flex: 1, padding: '10px', borderRadius: '6px', background: '#161109', color: '#ba9a6f', border: '1px solid #3a2d1a', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}><RotateCcw size={12} /> 振り直し</button>
