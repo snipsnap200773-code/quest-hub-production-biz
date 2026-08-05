@@ -525,7 +525,11 @@ const AdventureActive = ({
             cardRaceEff,
             cardElemEff,
             skillsList: activeSkillsWithDiscount, // 👈 🌟 availableSkills から置き換えます！
-            state: { isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0 },
+            state: { 
+              isFrozen: false, isStunned: false, stunTurns: 0, freezeTurns: 0, currentStatus: 'none', durationTurns: 0,
+              // 🌀 👑 【三土手神特注：詠唱システム用メモリバッファ】
+              castingSkill: null, castTimeTotal: 0, castTimeElapsed: 0, castTargetInfo: null 
+            },
             
             activeBuffs: [],
 
@@ -1236,11 +1240,17 @@ if (usedSkill) {
                       }
 
                       const targetMdef = member.mdef || member.roStatus?.mdef || 0;
-                      const aoeDmg = Math.max(1, calculatedPower - targetMdef);
+                      const aoeDmg = Math.max(1, calculatedPower - targetMdef); // ※全体物理の場合は (memberDef + bonusDef) になっています
                       const nextHp = Math.max(0, member.hp - aoeDmg);
 
-                      let aoeLog = ` ➔ 💥 ${member.name} に ${aoeDmg} の全体魔法ダメージ！`;
+                      let aoeLog = ` ➔ 💥 ${member.name} に ${aoeDmg} の全体魔法ダメージ！`; // ※物理の場合は物理ダメージ
                       let nextState = { ...member.state };
+
+                      // 🌀 👑 詠唱中断判定を追加！
+                      if (aoeDmg > 0 && nextHp > 0 && member.state?.castingSkill) {
+                        nextState.castingSkill = null;
+                        aoeLog += ` 💥 [詠唱中断] 詠唱が妨害された！`;
+                      }
 
                       // 全体魔法の追加異常判定
                       if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && nextHp > 0) {
@@ -1267,6 +1277,12 @@ if (usedSkill) {
                     dmg = Math.max(1, calculatedPower - targetMdef);
                     localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
                     logText = `🔮 ${enemyItem.name} は 【${usedSkill.name}】 を詠唱！ ➔ ${target.name} に ${dmg} の魔法ダメージ！`;
+
+                    // 🌀 👑 詠唱中断判定を追加！
+                    if (dmg > 0 && localParty[targetIdx].hp > 0 && localParty[targetIdx].state?.castingSkill) {
+                      localParty[targetIdx].state.castingSkill = null;
+                      logText += ` 💥 [詠唱中断] ${target.name} の詠唱が妨害された！`;
+                    }
 
                     if (usedSkill.effect_type && usedSkill.effect_type !== 'なし' && localParty[targetIdx].hp > 0) {
                       const baseChance = Number(usedSkill.effect_chance || 0);
@@ -1396,9 +1412,19 @@ if (usedSkill) {
                       transferredDmg = Math.max(1, transferredDmg - casterBonusDef);
                       
                       localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemainingDmg);
+                      // 🌀 👑 庇われた側 (originalRemainingDmg が 1 以上なら中断)
+                      if (originalRemainingDmg > 0 && localParty[targetIdx].state?.castingSkill) {
+                        localParty[targetIdx].state.castingSkill = null;
+                        logText += ` 💥 [詠唱中断] ${target.name} の詠唱が妨害された！`;
+                      }
                       
                       const casterIdx = localParty.findIndex(m => m.id === casterMember.id);
                       localParty[casterIdx].hp = Math.max(0, localParty[casterIdx].hp - transferredDmg);
+                      // 🌀 👑 庇った側も、もし詠唱中ならダメージで中断！
+                      if (transferredDmg > 0 && localParty[casterIdx].state?.castingSkill) {
+                        localParty[casterIdx].state.castingSkill = null;
+                        logText += ` 💥 [詠唱中断] ${casterMember.name} の詠唱が妨害された！`;
+                      }
                       
                       if (cutPct >= 100) {
                         logText = `💥 ${enemyItem.name} の 【${usedSkill.name}】！ ➔ 🛡️[ディボーション発動!] ${casterMember.name} が ${target.name} を完全に庇って代わりに ${transferredDmg} のダメージを請け負った！(残HP:${localParty[casterIdx].hp})`;
@@ -1541,11 +1567,17 @@ localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemain
                         logText = `💥 ${enemyItem.name} の攻撃！ ➔ 🛡️[絆の分散発動!] ${casterMember.name} がダメージの ${cutPct}% (${transferredDmg}) を身代わり！ ${target.name} は残りの ${originalRemainingDmg} の物理ダメージを受けた！`;
                       }
                     } else {
-                      // 通常の通常攻撃着弾処理
+                      // 通常の通常攻撃着弾処理 ※単体物理の場合はこのコメントはありません
                       localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - dmg);
                       
+                      // 🌀 👑 詠唱中断判定を追加！
+                      if (dmg > 0 && localParty[targetIdx].hp > 0 && localParty[targetIdx].state?.castingSkill) {
+                        localParty[targetIdx].state.castingSkill = null;
+                        logText += ` 💥 [詠唱中断] ${target.name} の詠唱が妨害された！`;
+                      }
+
                       // 🎲 🛡️ 正しい数値とバフ増幅の内訳をログに印字！
-                      const defDetailText = bonusDef > 0 
+                      const defDetailText = bonusDef > 0
                         ? `(素Def:${baseDefValue}+バフ:${bonusDef})` 
                         : `(Def:${baseDefValue})`;
 
@@ -1622,15 +1654,37 @@ localParty[targetIdx].hp = Math.max(0, localParty[targetIdx].hp - originalRemain
         // 素のASPDにバフを加算（本家の最大ASPD193でキャップをかける安全設計！）
         const currentTotalAspd = Math.min(193.0, Number(member.aspd || 0) + bonusAspd);
         const playerInterval = ((200 - currentTotalAspd) / 50) * 1000;
-        
-        partyAtkTimers.current[member.id] += 20;
 
-  if (partyAtkTimers.current[member.id] >= playerInterval) {
-    partyAtkTimers.current[member.id] = 0;
+        // 🌀 👑 【新設：詠唱システムのフェーズ管理フラグ】
+        let isCastingComplete = false;
+
+        // ─── 🌀 詠唱進行フェーズ ───
+        if (member.state?.castingSkill) {
+          // 詠唱中は、ASPD(行動間隔)を無視して毎フレーム(20ms)確実にゲージを進める！
+          member.state.castTimeElapsed += 20; 
+          
+          if (member.state.castTimeElapsed >= member.state.castTimeTotal) {
+            // ✨ 詠唱完了！即座に行動フェーズへ移行！
+            isCastingComplete = true;
+          } else {
+            // 🌀 まだ詠唱中なら、ここでターンを終了して待機（次の20msを待つ）
+            return; 
+          }
+        } else {
+          // ─── ⚔️ 通常の待機・行動タイマー進行フェーズ ───
+          // 詠唱していない時は、ASPDに基づく行動タイマーを進める
+          partyAtkTimers.current[member.id] += 20;
+          
+          if (partyAtkTimers.current[member.id] < playerInterval) {
+            return; // まだ自分の行動ターンではないので待機
+          }
+          // ⚡ 行動ターンが来たのでタイマーをリセットして行動開始！
+          partyAtkTimers.current[member.id] = 0;
+        }
 
     // 🆕 【三土手神特注：後衛行動制御ゲート】
     const isBackRow = member.position === 'back';
-const isShortRange = member.weaponRange === 'S';
+    const isShortRange = member.weaponRange === 'S';
 
 if (isBackRow && isShortRange) {
   // 1. そもそもスキルを持っていないなら待機
@@ -2182,9 +2236,66 @@ if (isBackRow && isShortRange) {
           const defenderSpecs = primaryTarget ? { element: primaryTarget.element, race: primaryTarget.race, size: primaryTarget.size } : { element: '無', race: '無形', size: '中型' };
           const totalMultiplier = calculateDamageModifier(attackSpecs, defenderSpecs) * (1.0 + ((member.passive_damage_bonus_pct || 0) / 100));
 
-          // ⚡ 実行ルート
+          // ⚡ 実行ルート（詠唱開始 ＆ 発動ジャッジ）
           if (shouldLaunchMagic && playableSkill) {
-            member.sp = Math.max(0, member.sp - Number(playableSkill.sp_cost || 0));
+            
+            // 🌀 👑 【三土手神特注：詠唱開始フェーズ】
+            // まだ詠唱していない（isCastingCompleteがfalse）新規の発動指示の場合
+            if (!isCastingComplete) {
+              const rawCastTime = Number(playableSkill.cast_time || 0); // GMで設定した基礎詠唱時間（秒）
+              
+              if (rawCastTime > 0) {
+                // 📈 DEXによる詠唱短縮計算（DEX 150 で完全無詠唱になるロマン仕様！）
+                const dexFactor = Math.max(0, 1 - ((member.dex || 0) / 150));
+                // 秒数をミリ秒(ms)に変換し、DEXの短縮倍率を掛ける
+                const actualCastTimeMs = Math.floor(rawCastTime * 1000 * dexFactor);
+
+                if (actualCastTimeMs > 0) {
+                  // 🌀 詠唱開始！SPは本家RO仕様通り「詠唱開始時」に消費する
+                  member.sp = Math.max(0, member.sp - Number(playableSkill.sp_cost || 0));
+                  
+                  member.state.castingSkill = playableSkill;
+                  member.state.castTimeTotal = actualCastTimeMs;
+                  member.state.castTimeElapsed = 0;
+                  
+                  // 詠唱完了時に誰を狙っていたか忘れないようにターゲット情報を保存
+                  let tType = 'none'; let tId = null;
+                  if (targetAlly) { tType = 'ally'; tId = targetAlly.id; } 
+                  else if (primaryTarget) { tType = 'enemy'; tId = primaryTarget.instanceId; }
+                  member.state.castTargetInfo = { type: tType, id: tId };
+
+                  newLogs.push({ id: `cast-start-${member.id}-${Date.now()}`, text: `🌀 [詠唱開始] ${member.name} は【${playableSkill.name}】の詠唱を始めた！(詠唱時間: ${(actualCastTimeMs / 1000).toFixed(1)}秒)`, type: "system" });
+                  
+                  // 💥 発動せずにここでターン終了（次の20msループへ）
+                  return; 
+                }
+              }
+            } else {
+              // 🌀 ✨ 詠唱が完了してここに戻ってきた場合！
+              // 記憶していたターゲット情報を復元して、魔法を撃ち放つ！
+              const tInfo = member.state.castTargetInfo;
+              if (tInfo?.type === 'ally') {
+                targetAlly = localParty.find(p => p.id === tInfo.id);
+                if (!targetAlly || targetAlly.hp <= 0) targetAlly = member; // 死んでたら自分にかける
+              } else if (tInfo?.type === 'enemy') {
+                const eTgt = localEnemies.find(e => e.instanceId === tInfo.id);
+                if (eTgt && eTgt.hp > 0) primaryTarget = eTgt;
+              }
+              
+              // 次の行動のために詠唱状態を完全にリセット
+              member.state.castingSkill = null;
+              member.state.castTimeTotal = 0;
+              member.state.castTimeElapsed = 0;
+              member.state.castTargetInfo = null;
+              
+              newLogs.push({ id: `cast-end-${member.id}-${Date.now()}`, text: `✨ [詠唱完了] 収束した魔力が解き放たれる！`, type: "system" });
+            }
+
+            // ─── ここから下は既存の発動処理（無詠唱、または詠唱完了時のみ通る） ───
+            if (!isCastingComplete) {
+              // 無詠唱（DEX150や詠唱0秒スキル）の場合はここでSPを消費
+              member.sp = Math.max(0, member.sp - Number(playableSkill.sp_cost || 0));
+            }
             const baseValue = Number(playableSkill.effect_value || 0);
             
             // 🛡️ 👑 【三土手神特注】古いガバガバ判定をここで完全粉砕！バフと回復を100%厳密に仕分ける定義
@@ -3180,7 +3291,6 @@ if (isBackRow && isShortRange) {
           if (logText && localEnemies[targetIdx] && localEnemies[targetIdx].hp <= 0) {
             newLogs.push({ id: `win-single-${localEnemies[targetIdx].instanceId}-${Date.now()}`, text: `🏆 🎉 【${localEnemies[targetIdx].name}】撃破！`, type: "system" });
           }
-        }
       });
 
       partyStateRef.current = localParty;
@@ -3223,9 +3333,8 @@ if (isBackRow && isShortRange) {
       const possibleBattles = Array.from({ length: totalBattle }, (_, i) => i + 1);
       const shuffled = possibleBattles.sort(() => 0.5 - Math.random());
       setChestSchedule(shuffled.slice(0, targetChestCount));
-    }
-
-    if (forcedNextFloor) {
+      
+      // ⛲ 回復の泉判定をここ1箇所のみに完全集約！（重複アラートを粉砕）
       if (targetFloorCfg.has_fountain) {
         partyStateRef.current = partyStateRef.current.map(p => ({ ...p, hp: p.mhp, sp: p.msp }));
         setParty(partyStateRef.current);
@@ -3279,18 +3388,6 @@ if (isBackRow && isShortRange) {
     // 宝箱発見ログがあれば、画面のログ一覧へ即座に追加！
     if (chestLogs.length > 0) {
       setDisplayedLogs(prev => [...prev, ...chestLogs]);
-    }
-
-    if (forcedNextFloor) {
-      // 泉が設置されている階層へ進んだ場合、神の慈悲で味方全員のHP・SPを100%全回復！
-      if (targetFloorCfg.has_fountain) {
-        partyStateRef.current = partyStateRef.current.map(p => ({ ...p, hp: p.mhp, sp: p.msp }));
-        setParty(partyStateRef.current);
-        alert(`⛲ 【B${nextFloorNum}階】に設置された「回復の泉」を発見！部隊全員のHP・SPが全回復した！`);
-      }
-      setRemainingBattles(targetFloorCfg.battle_count);
-      // 🛠️ 🆕 上の階に進軍したタイミングで、Refカウンター側も新しい階層の戦闘回数で上書きマウント！
-      remainingBattlesRef.current = targetFloorCfg.battle_count;
     }
 
     // 👑 🆕 【ボス判定 ＆ シチュエーション判定】
@@ -3801,7 +3898,14 @@ if (isBackRow && isShortRange) {
 
         {/* ④ 通常戦闘中の場合は、いつでも緊急リタイアできるボタンとして待機 */}
         {adventureStatus === 'battling' && !isBattleOver && (
-          <button onClick={onReturn} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}>
+          <button 
+            onClick={() => {
+              if (window.confirm("⚠️ 冒険を諦めて帰還しますか？\n（※現在進行中のダンジョン報酬やドロップアイテムはすべて失われます）")) {
+                onReturn();
+              }
+            }} 
+            style={{ width: '100%', padding: '10px', borderRadius: '8px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}
+          >
             🛡️ 冒険を中断して酒場へ戻る (今までの報酬はロスト)
           </button>
         )}

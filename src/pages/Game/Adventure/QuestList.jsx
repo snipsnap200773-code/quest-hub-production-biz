@@ -11,11 +11,11 @@ const QuestList = ({ onSelectQuest }) => {
     const loadQuestsFromDB = async () => {
       setLoading(true);
       try {
-        // 📈 作成した game_master_quests から本物のデータを一撃で全件引き抜く！
+        // 📈 推奨レベルが高い順（Lv.50が一番上、Lv.1が一番下）に並び替えて取得！
         const { data: dbQuests, error } = await supabase
           .from('game_master_quests')
           .select('*')
-          .order('created_at', { ascending: true });
+          .order('level', { ascending: false });
 
         if (error) throw error;
 
