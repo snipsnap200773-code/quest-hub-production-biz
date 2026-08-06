@@ -341,6 +341,41 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
       const master = inv.game_master_items;
       if (!master) return false;
 
+      // 🛡️ 👑 【三土手神特注：職業制限 ＆ モンスター種族制限 ＆ レベル制限の完全判定ゲート】
+      // ① 職業判定
+      const myJob = character.meta?.job || character.job || 'フリーランス';
+      let allowedJobs = master.job_restriction;
+      
+      // GMツールで保存されたカンマ区切りの文字列を配列に展開して解析
+      if (typeof allowedJobs === 'string') {
+        allowedJobs = allowedJobs === '全職業' ? [] : allowedJobs.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (!Array.isArray(allowedJobs)) {
+        allowedJobs = [];
+      }
+
+      // もし制限リストが存在する場合の判定
+      if (allowedJobs.length > 0) {
+        // 「全職業」が含まれていればOK
+        const isAllJobs = allowedJobs.includes('全職業');
+        // キャラクターの職業（例: 水棲族）がそのまま含まれていればOK
+        const isExactJobMatch = allowedJobs.includes(myJob);
+        // モンスターの場合、「魔物共通」が入っていればOK
+        const isMonsterJob = ['魔獣族', '植物族', '悪魔族', '不死族', '水棲族'].includes(myJob);
+        const isMonsterCommonMatch = isMonsterJob && allowedJobs.includes('魔物共通');
+
+        // どれにも該当しない場合は除外！
+        if (!isAllJobs && !isExactJobMatch && !isMonsterCommonMatch) {
+          return false;
+        }
+      }
+
+      // ② 装備レベル判定 (ついでに追加：規定レベルに達していない場合は装備不可)
+      const reqLv = Number(master.equip_level_req || 1);
+      if (character.level < reqLv) {
+        return false; 
+      }
+      // ─── ゲートここまで ───
+
       if (slotKey === 'right_hand') return master.item_type === 'weapon';
       if (slotKey === 'left_hand') return master.item_subtype === '盾' || master.item_type === 'weapon';
       if (slotKey === 'head') return master.item_subtype === '兜';
@@ -843,11 +878,61 @@ const AdventureCharacterDetail = ({ userId, characterId, onBack }) => { // 🆕 
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
               <span style={{ color: '#887355' }}>致命打率 (Critical)</span>
-              {/* 💡 パッシブが乗っている時はテキストをゴールドにして内訳を表示 */}
               <span style={{ color: passiveCritBonus > 0 ? '#ffd700' : '#fbbf24', fontFamily: 'monospace', fontWeight: 'bold' }}>
                 {ro.critical}% {passiveCritBonus > 0 && <span style={{ color: '#ffd700', fontSize: '0.65rem' }}>(パッシブ+{passiveCritBonus}%)</span>} {cardCritBonus > 0 && <span style={{ color: '#f43f5e', fontSize: '0.65rem' }}>(+{cardCritBonus}%)</span>}
               </span>
             </div>
+
+            {/* 🌀 🆕 DEXによる詠唱短縮率の表示を直撃追加！ */}
+            {(() => {
+              const liveDex = ro.dex || 0;
+              const castCutPct = Math.min(100, Math.floor((liveDex / 150) * 100));
+              return (
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px' }}>
+                  <span style={{ color: '#a78bfa' }}>詠唱短縮 (Cast Cut)</span>
+                  <span style={{ color: castCutPct >= 100 ? '#34d399' : '#a78bfa', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                    {castCutPct >= 100 ? '無詠唱 (100%)' : `-${castCutPct}% (DEX:${liveDex}/150)`}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* ⚖️ 🆕 重量＆要求STRペナルティのリアルタイム判定インジケーター */}
+            {(() => {
+              let totalWeight = 0;
+              let totalReqStr = 0;
+              
+              Object.values(character.equips || {}).forEach(eq => {
+                if (eq) {
+                  totalWeight += Number(eq.weight || 0);
+                  totalReqStr += Number(eq.penalty_str || 0);
+                }
+              });
+
+              const currentStr = ro.str || 0;
+              const isPenaltyActive = currentStr < totalReqStr && totalReqStr > 0;
+              
+              let fleePen = 0;
+              let aspdPen = 0;
+              if (isPenaltyActive) {
+                const ratio = Math.min(1.0, (totalReqStr - currentStr) / totalReqStr);
+                fleePen = Math.floor((totalWeight / 5) * ratio);
+                aspdPen = Math.floor((totalWeight / 15) * ratio);
+              }
+
+              return (
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a130b', paddingBottom: '3px', gridColumn: 'span 2' }}>
+                  <span style={{ color: '#887355' }}>⚖️ 装備重量 / 着こなし</span>
+                  <span style={{ color: isPenaltyActive ? '#f43f5e' : '#34d399', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                    {isPenaltyActive ? (
+                      `⚠️ 重過調 (STR不足:${currentStr}/${totalReqStr} ➔ Flee-${fleePen} / Aspd-${aspdPen})`
+                    ) : (
+                      `適正 (総重量:${totalWeight} / STR着こなしOK)`
+                    )}
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* 🃏 👑 三土手創世神仕様：全8大状態異常・全サイズ・全種族・全属性の完全網羅固定マトリクスパネル */}
