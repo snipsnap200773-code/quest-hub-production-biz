@@ -705,26 +705,37 @@ const checkAvailability = (date, timeStr) => {
   const startMs = new Date(`${dateStr}T${time}:00+09:00`).getTime();
   const endMs = startMs + (myDuration * 60000);
 
-  // 2. 【前】との隙間チェック (busyTimes -> gapTasks)
+  // 1. 直前の予定（または開店時刻）と、直後の予定（または閉店時刻）を取得
   const prevTask = gapTasks
     .filter(b => b.e <= time)
     .sort((a, b) => b.e.localeCompare(a.e))[0];
 
-  const gapBefore = prevTask
-    ? (startMs - new Date(`${dateStr}T${prevTask.e}:00+09:00`).getTime()) / 60000
-    : (startMs - new Date(`${dateStr}T${openTime}:00+09:00`).getTime()) / 60000;
-
-  if (gapBefore > 0 && gapBefore < 60) return false;
-
-  // 3. 【後】との隙間チェック (busyTimes -> gapTasks)
   const nextTask = gapTasks
-    .filter(b => b.s >= new Date(endMs).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit', hour12:false, timeZone: 'Asia/Tokyo'}))
+    .filter(b => b.s >= time)
     .sort((a, b) => a.s.localeCompare(b.s))[0];
 
-  const gapAfter = nextTask
-    ? (new Date(`${dateStr}T${nextTask.s}:00+09:00`).getTime() - endMs) / 60000
-    : (new Date(`${dateStr}T${closeTime}:00+09:00`).getTime() - endMs) / 60000;
+  const prevEndTimeMs = prevTask 
+    ? new Date(`${dateStr}T${prevTask.e}:00+09:00`).getTime() 
+    : new Date(`${dateStr}T${openTime}:00+09:00`).getTime();
 
+  const nextStartTimeMs = nextTask 
+    ? new Date(`${dateStr}T${nextTask.s}:00+09:00`).getTime() 
+    : new Date(`${dateStr}T${closeTime}:00+09:00`).getTime();
+
+  // 💡 直前の終わり〜直後の始まりまでの「全体の空き時間（分）」を計算
+  const totalAvailablePocketMin = (nextStartTimeMs - prevEndTimeMs) / 60000;
+
+  // 🚨 救済判定：もし挟まれた全体の空き時間が「今回の施術(60分)〜60分×2(120分)未満」の場合、
+  // どう頑張っても死に時間が出る孤立枠なので、自動詰めの拒否ルールを免除して即OKにする！
+  if (totalAvailablePocketMin >= myDuration && totalAvailablePocketMin < (myDuration * 2)) {
+    return true; 
+  }
+
+  // --- 以下は広い空き時間がある場合のみチェック ---
+  const gapBefore = (startMs - prevEndTimeMs) / 60000;
+  if (gapBefore > 0 && gapBefore < 60) return false;
+
+  const gapAfter = (nextStartTimeMs - endMs) / 60000;
   if (gapAfter > 0 && gapAfter < 60) return false;
 
   return true;
