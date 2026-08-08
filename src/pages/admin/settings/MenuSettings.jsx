@@ -10,7 +10,8 @@ import {
 // 🆕 共通ヘルプパーツを読み込み
 import HelpTooltip from '../../../components/ui/HelpTooltip';
 
-const MenuSettings = () => {
+// 👇 修正：({ reloadPreview }) を追加して受け取れるようにします
+const MenuSettings = ({ reloadPreview }) => { 
   const { shopId } = useParams();
   const navigate = useNavigate();
   const menuFormRef = useRef(null);
@@ -160,7 +161,21 @@ const fetchMenuDetails = async () => {
     if (prodCatRes.data) setProductCategories(prodCatRes.data);
     if (prodRes.data) setProducts(prodRes.data);
 };
-const showMsg = (txt) => { setMessage(txt); setTimeout(() => setMessage(''), 3000); };
+
+// 👇 修正：メッセージ表示と同時にプレビューの更新スイッチを押すように拡張
+const showMsg = (txt) => { 
+  setMessage(txt); 
+  setTimeout(() => setMessage(''), 3000); 
+  
+  // 🚀 🆕 ここを追加：レイアウト側から関数が渡されていれば実行
+  if (typeof reloadPreview === 'function') {
+    // データベースの書き込みが完全に終わるラグを考慮し、0.3秒だけ遅らせてリロードします
+    setTimeout(() => {
+      reloadPreview();
+    }, 300);
+  }
+};
+
 // 🚀 🆕 URLをクリップボードにコピーする関数
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
