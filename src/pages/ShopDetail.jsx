@@ -1,12 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+// 👇 修正：ここに「useLocation」を追加します！
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { MapPin, Phone, MessageCircle, ExternalLink, Mail, ChevronLeft, Info, Home as HomeIcon, Sparkles, Heart } from 'lucide-react';
+
 function ShopDetail() {
   const { shopId } = useParams();
-  const navigate = useNavigate();
-  const [shop, setShop] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation(); // 👈 🆕 ここに追加
+
+  // 👇 🆕 ここに追加：プレビューモードの判定
+  const searchParams = new URLSearchParams(location.search);
+  const isPreviewMode = searchParams.get('mode') === 'preview';
+
+  const [shop, setShop] = useState(null);
+  const [loading, setLoading] = useState(true);
   
   // 🆕 特別カテゴリ（識別キー付き）を管理するState
   const [specialCategories, setSpecialCategories] = useState([]);
@@ -189,9 +197,12 @@ const toggleFavorite = async () => {
       
       {/* ヘッダー */}
       <div style={{ background: '#fff', padding: '15px 20px', display: 'flex', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-        <button onClick={() => navigate(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '5px' }}>
-          <ChevronLeft size={24} color="#333" />
-        </button>
+        {/* 👇 修正：プレビューモード時は戻るボタンを隠す */}
+        {!isPreviewMode && (
+          <button onClick={() => navigate(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '5px' }}>
+            <ChevronLeft size={24} color="#333" />
+          </button>
+        )}
         <h1 style={{ fontSize: '1.1rem', fontWeight: 'bold', margin: '0 auto 0 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {shop.business_name}
         </h1>
@@ -412,10 +423,13 @@ const toggleFavorite = async () => {
       </div>
 
       {/* 浮遊ボタン */}
-      <Link to="/" style={floatingButtonStyle}>
-        <HomeIcon size={18} />
-        ポータルサイトへ
-      </Link>
+      {/* 👇 修正：プレビューモード時は浮遊ボタンを隠す */}
+      {!isPreviewMode && (
+        <Link to="/" style={floatingButtonStyle}>
+          <HomeIcon size={18} />
+          ポータルサイトへ
+        </Link>
+      )}
 
     </div>
   );
