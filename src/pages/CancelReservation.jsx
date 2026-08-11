@@ -66,15 +66,28 @@ function CancelReservation() {
       // 🚀 🆕 【追加】キャンセル通知メールの送信処理
       // 削除後でも変数 reservation にデータが残っているのでそれを利用します
       try {
+        // ① メール送信機能（店舗 ＆ メール予約のお客様向け）
         await supabase.functions.invoke('resend', {
           body: {
             type: 'cancel',
-            reservation: reservation // 予約情報を丸ごと渡す
+            reservation: reservation
           }
         });
-      } catch (mailErr) {
-        // メールの失敗で画面が止まらないようエラーログのみ出力
-        console.error("キャンセルメール送信失敗:", mailErr);
+
+        // ② LINE連携済みのお客様なら、LINE送信機能も呼び出す
+        if (reservation.line_user_id) {
+          // ※ 'line-messaging' の部分は、三土手さんが実際に予約完了時などに
+          // 使っているLINE送信用Edge Functionの名前に合わせて変更してください
+          await supabase.functions.invoke('line-messaging', { 
+            body: {
+              type: 'cancel_notification', // バックエンド側の設定に合わせて変更してください
+              reservation: reservation
+            }
+          });
+        }
+      } catch (notifyErr) {
+        // 通知の失敗で画面が止まらないようエラーログのみ出力
+        console.error("キャンセル通知送信失敗:", notifyErr);
       }
 
       // 2. 名簿の自動クリーニングロジック (AdminReservations.jsxと同等)
