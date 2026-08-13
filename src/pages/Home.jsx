@@ -81,7 +81,7 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
   const getDaysUntil = (dateStr) => {
     const target = new Date(dateStr);
     const today = new Date();
-    // 時刻のズレで計算が狂わないよう、00:00:00にリセット [cite: 2025-12-01]
+    // 時刻のズレで計算が狂わないよう、00:00:00にリセット
     target.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
     
@@ -90,12 +90,6 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays;
   };
-
-  const sliderImages = [
-  { id: 1, url: 'https://images.unsplash.com/photo-1600880210836-8f8fe100a35c?auto=format&fit=crop&w=1200&q=80', title: 'スマートな予約体験を。', desc: 'QUEST HUB はあなたの日常をよりスムーズにします' },
-  { id: 2, url: 'https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=1200&q=80', title: '次世代の予約ポータル', desc: 'お気に入りのサービスを、いつでも、どこからでも' },
-  { id: 3, url: 'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80', title: 'プロと繋がる、安心を。', desc: '信頼できるプロフェッショナルがあなたを待っています' },
-];
 
   // 🆕 1. 【部品】ポータルデータを読み込む関数（最優先で実行される）
   const fetchPortalData = async () => {
@@ -266,11 +260,20 @@ try {
       }
     } catch (err) { console.error("Zip Search Error:", err); }
   };
-    
-  // 🆕 3. 【司令塔】useEffect：ページを開いた瞬間に一度だけ動く
+  
+  // 🆕 追加：店舗用の新しいスライダータイマー
+  useEffect(() => {
+    if (shops.length === 0) return;
+    const maxSlides = Math.min(shops.length, 5);
+    const sliderTimer = setInterval(() => {
+      setCurrentSlide((prev) => (prev >= maxSlides - 1 ? 0 : prev + 1));
+    }, 5000);
+    return () => clearInterval(sliderTimer);
+  }, [shops]);
+    
+  // 🆕 3. 【司令塔】useEffect：ページを開いた瞬間に一度だけ動く
   useEffect(() => {
     const scrollTimer = setTimeout(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, 100);
-    const sliderTimer = setInterval(() => { setCurrentSlide((prev) => (prev === sliderImages.length - 1 ? 0 : prev + 1)); }, 5000);
 
     // 🔥 トピック読み込みを真っ先に実行！
     fetchPortalData();
@@ -316,7 +319,6 @@ try {
 
     return () => {
       clearTimeout(scrollTimer);
-      clearInterval(sliderTimer);
       authListener.subscription.unsubscribe();
     };
   }, []);
@@ -646,43 +648,132 @@ if (error) {
         </div>
       </div>
 
-      {/* 2. 自動カルーセルスライダー */}
-      <div style={{ width: '100%', position: 'relative', height: '320px', overflow: 'hidden', background: '#000' }}>
-        {sliderImages.map((slide, index) => (
-          <div
-            key={slide.id}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              backgroundImage: `linear-gradient(rgba(0,0,0,0.2), rgba(0,0,0,0.5)), url(${slide.url})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              opacity: index === currentSlide ? 1 : 0,
-              transition: 'opacity 1.5s ease-in-out',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              color: '#fff',
-              textAlign: 'center'
-            }}
-          >
-            <h2 style={{ fontSize: '2rem', fontWeight: '900', margin: '0 0 10px 0', textShadow: '0 2px 15px rgba(0,0,0,0.6)', transform: index === currentSlide ? 'translateY(0)' : 'translateY(20px)', transition: '0.8s ease-out' }}>
-              {slide.title}
-            </h2>
-            <p style={{ fontSize: '1rem', margin: 0, textShadow: '0 1px 8px rgba(0,0,0,0.6)' }}>
-              {slide.desc}
-            </p>
+      {/* 2. 店舗カード・ヒーロースライダー（登録店舗をカルーセル表示） */}
+      <div style={{ width: '100%', position: 'relative', height: isPC ? '360px' : '300px', overflow: 'hidden', background: '#0f172a' }}>
+        {shops.length > 0 ? (
+          shops.slice(0, 5).map((shop, index) => {
+            const bgImage = shop.image_url || 'https://images.unsplash.com/photo-1600880210836-8f8fe100a35c?auto=format&fit=crop&w=1200&q=80';
+            
+            return (
+              <div
+                key={shop.id}
+                onClick={() => navigate(`/shop/${shop.id}/detail`)}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  backgroundImage: `linear-gradient(to top, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.4) 60%, rgba(15, 23, 42, 0.2) 100%), url(${bgImage})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  opacity: index === currentSlide ? 1 : 0,
+                  transition: 'opacity 1.2s ease-in-out',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'flex-end',
+                  padding: isPC ? '40px 50px' : '25px 20px',
+                  boxSizing: 'border-box',
+                  cursor: 'pointer',
+                  zIndex: index === currentSlide ? 1 : 0
+                }}
+              >
+                <div style={{
+                  maxWidth: '900px',
+                  margin: '0 auto',
+                  width: '100%',
+                  transform: index === currentSlide ? 'translateY(0)' : 'translateY(15px)',
+                  transition: 'transform 0.8s ease-out'
+                }}>
+                  {/* バッジ ＆ 業種 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <span style={{
+                      background: 'linear-gradient(135deg, #07aadb 0%, #0284c7 100%)',
+                      color: '#fff',
+                      fontSize: '0.65rem',
+                      fontWeight: '900',
+                      padding: '4px 10px',
+                      borderRadius: '50px',
+                      letterSpacing: '1px'
+                    }}>
+                      RECOMMENDED
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: 'bold' }}>
+                      {shop.business_type || 'サロン・サービス'}
+                    </span>
+                  </div>
+
+                  {/* 店舗名 */}
+                  <h2 style={{
+                    fontSize: isPC ? '2rem' : '1.4rem',
+                    fontWeight: '900',
+                    margin: '0 0 8px 0',
+                    color: '#fff',
+                    textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+                    lineHeight: 1.2
+                  }}>
+                    {shop.business_name}
+                  </h2>
+
+                  {/* 説明文 */}
+                  <p style={{
+                    fontSize: isPC ? '0.9rem' : '0.75rem',
+                    color: '#cbd5e1',
+                    margin: '0 0 15px 0',
+                    lineHeight: '1.5',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    maxWidth: '600px'
+                  }}>
+                    {shop.description || 'あなたにぴったりの体験とスマートな予約をお届けします。'}
+                  </p>
+
+                  {/* 予約へ進むアクションラベル */}
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#38bdf8', fontWeight: 'bold', fontSize: '0.8rem' }}>
+                    店舗の詳細・予約画面を見る <ChevronRight size={16} />
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            color: '#fff',
+            textAlign: 'center',
+            padding: '20px'
+          }}>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: '0 0 10px 0' }}>QUEST HUB へようこそ</h2>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8', margin: 0 }}>おすすめのショップを準備中です</p>
           </div>
-        ))}
-        <div style={{ position: 'absolute', bottom: '20px', width: '100%', display: 'flex', justifyContent: 'center', gap: '10px' }}>
-          {sliderImages.map((_, i) => (
-            <div key={i} onClick={() => setCurrentSlide(i)} style={{ width: '8px', height: '8px', borderRadius: '50%', background: i === currentSlide ? '#fff' : 'rgba(255,255,255,0.4)', cursor: 'pointer', transition: '0.3s' }}></div>
-          ))}
-        </div>
+        )}
+
+        {/* ドットインジケーター */}
+        {shops.length > 1 && (
+          <div style={{ position: 'absolute', bottom: '15px', width: '100%', display: 'flex', justifyContent: 'center', gap: '8px', zIndex: 10 }}>
+            {shops.slice(0, 5).map((_, i) => (
+              <div
+                key={i}
+                onClick={(e) => { e.stopPropagation(); setCurrentSlide(i); }}
+                style={{
+                  width: i === currentSlide ? '24px' : '8px',
+                  height: '8px',
+                  borderRadius: '4px',
+                  background: i === currentSlide ? '#07aadb' : 'rgba(255,255,255,0.4)',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease'
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
