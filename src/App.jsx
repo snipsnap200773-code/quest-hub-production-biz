@@ -10,6 +10,9 @@ import InitialSetup from './pages/InitialSetup';
 import TrialRegistration from './pages/TrialRegistration';
 import ResetPassword from './pages/ResetPassword';
 
+// 🆕 事業者向けオフィシャルサイト（LP）をインポート
+import LandingPage from './pages/LandingPage';
+
 // 🆕 ゲーム関連ページをインポート
 import GameDashboard from './pages/Game/GameDashboard';
 import AdventurePage from './pages/Game/Adventure/AdventurePage';
@@ -80,8 +83,14 @@ function App() {
           <Route path="/cancel" element={<CancelReservation />} />
           <Route path="/reserved-success" element={<ReservedSuccess />} />
 
-          {/* --- 🚀 新規登録・初期設定 --- */}
+          {/* --- 🚀 新規登録・オフィシャルサイト・初期設定 --- */}
+          {/* 🆕 事業者向けLPのルートを追加 */}
+          <Route path="/biz" element={<LandingPage />} />
+          
           <Route path="/trial-registration" element={<TrialRegistration />} />
+          {/* 🆕 LPのボタン(/trial)を押した時に、/trial-registration へ繋ぐリダイレクト */}
+          <Route path="/trial" element={<Navigate to="/trial-registration" replace />} />
+          
           <Route path="/setup" element={<InitialSetup />} />
           <Route path="/facility-search" element={<FacilitySearch />} />
           <Route path="/reset-password" element={<ResetPassword />} />
