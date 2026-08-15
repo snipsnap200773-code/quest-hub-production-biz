@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { WifiOff } from 'lucide-react';
 
 // --- 🛍️ 一般・利用者向けページ ---
@@ -10,10 +10,13 @@ import InitialSetup from './pages/InitialSetup';
 import TrialRegistration from './pages/TrialRegistration';
 import ResetPassword from './pages/ResetPassword';
 
-// 🆕 事業者向けオフィシャルサイト（LP）をインポート
+// 🆕 事業者向けオフィシャルサイト（LP）
 import LandingPage from './pages/LandingPage';
 
-// 🆕 ゲーム関連ページをインポート
+// 🆕 デモ用コンポーネントをインポート
+import DemoAdminReservations from './components/demos/DemoAdminReservations';
+
+// 🎮 ゲーム関連ページ
 import GameDashboard from './pages/Game/GameDashboard';
 import AdventurePage from './pages/Game/Adventure/AdventurePage';
 
@@ -29,6 +32,67 @@ import ShopSearch from './components/ShopSearch';
 import InquiryForm from './components/InquiryForm';
 import ScrollToTop from './components/ScrollToTop';
 import FacilitySearch from './components/FacilitySearch';
+
+// 🆕 ルーティングの中身を別コンポーネント化（URL判定のため）
+function AppContent({ isOnline }) {
+  const location = useLocation();
+  // 💡 /biz と /demo の時は横幅100%（PCフル画面）を許可する
+  const isFullScreenRoute = location.pathname === '/biz' || location.pathname.startsWith('/demo');
+
+  return (
+    <div 
+      className={isFullScreenRoute ? "lp-container" : "mobile-container"} 
+      style={{ 
+        margin: '0 auto', 
+        // 💡 ここがポイント：フルスクリーン許可ルートなら100%、それ以外はスマホ幅(480px)
+        maxWidth: isFullScreenRoute ? '100%' : '480px', 
+        minHeight: '100vh', 
+        position: 'relative',
+        backgroundColor: '#f4f7f9',
+        boxShadow: isFullScreenRoute ? 'none' : '0 0 20px rgba(0,0,0,0.05)',
+        overflowX: 'hidden'
+      }}
+    >
+      {!isOnline && (
+        <div style={{ position: 'sticky', top: 0, left: 0, right: 0, zIndex: 9999, background: '#ef4444', color: 'white', textAlign: 'center', padding: '8px', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          <WifiOff size={16} /> ネットワークが不安定です。
+        </div>
+      )}
+
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/category/:categoryId" element={<ShopList />} />
+        <Route path="/shop/:shopId/detail" element={<ShopDetail />} />
+        <Route path="/search" element={<ShopSearch />} />
+        <Route path="/inquiry" element={<InquiryForm />} />
+
+        <Route path="/game" element={<GameDashboard />} />
+        <Route path="/game/adventure" element={<AdventurePage />} />
+
+        <Route path="/shop/:shopId/reserve" element={<ReservationForm />} />
+        <Route path="/shop/:shopId/reserve/time" element={<TimeSelectionCalendar />} />
+        <Route path="/shop/:shopId/confirm" element={<ConfirmReservation />} />
+        <Route path="/cancel" element={<CancelReservation />} />
+        <Route path="/reserved-success" element={<ReservedSuccess />} />
+
+        {/* LPと登録 */}
+        <Route path="/biz" element={<LandingPage />} />
+        
+        {/* 🆕 デモ用の専用ルートを追加 */}
+        <Route path="/demo/calendar" element={<DemoAdminReservations />} />
+        
+        <Route path="/trial-registration" element={<TrialRegistration />} />
+        <Route path="/trial" element={<Navigate to="/trial-registration" replace />} />
+        
+        <Route path="/setup" element={<InitialSetup />} />
+        <Route path="/facility-search" element={<FacilitySearch />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </div>
+  );
+}
 
 function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -47,58 +111,7 @@ function App() {
   return (
     <Router>
       <ScrollToTop />
-
-      <div className="mobile-container" style={{ 
-        margin: '0 auto', 
-        maxWidth: '480px', 
-        minHeight: '100vh', 
-        position: 'relative',
-        backgroundColor: '#f4f7f9',
-        boxShadow: '0 0 20px rgba(0,0,0,0.05)',
-        overflowX: 'hidden'
-      }}>
-
-        {!isOnline && (
-          <div style={{ position: 'sticky', top: 0, left: 0, right: 0, zIndex: 9999, background: '#ef4444', color: 'white', textAlign: 'center', padding: '8px', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-            <WifiOff size={16} /> ネットワークが不安定です。
-          </div>
-        )}
-
-        <Routes>
-          {/* --- 🏠 メイン・ポータル --- */}
-          <Route path="/" element={<Home />} />
-          <Route path="/category/:categoryId" element={<ShopList />} />
-          <Route path="/shop/:shopId/detail" element={<ShopDetail />} />
-          <Route path="/search" element={<ShopSearch />} />
-          <Route path="/inquiry" element={<InquiryForm />} />
-
-          {/* --- 🎮 ゲーミフィケーションエリア --- */}
-          <Route path="/game" element={<GameDashboard />} />
-          <Route path="/game/adventure" element={<AdventurePage />} />
-
-          {/* --- 📅 予約フロー --- */}
-          <Route path="/shop/:shopId/reserve" element={<ReservationForm />} />
-          <Route path="/shop/:shopId/reserve/time" element={<TimeSelectionCalendar />} />
-          <Route path="/shop/:shopId/confirm" element={<ConfirmReservation />} />
-          <Route path="/cancel" element={<CancelReservation />} />
-          <Route path="/reserved-success" element={<ReservedSuccess />} />
-
-          {/* --- 🚀 新規登録・オフィシャルサイト・初期設定 --- */}
-          {/* 🆕 事業者向けLPのルートを追加 */}
-          <Route path="/biz" element={<LandingPage />} />
-          
-          <Route path="/trial-registration" element={<TrialRegistration />} />
-          {/* 🆕 LPのボタン(/trial)を押した時に、/trial-registration へ繋ぐリダイレクト */}
-          <Route path="/trial" element={<Navigate to="/trial-registration" replace />} />
-          
-          <Route path="/setup" element={<InitialSetup />} />
-          <Route path="/facility-search" element={<FacilitySearch />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
-
-          {/* 迷子防止（ホームへ強制送還） */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </div>
+      <AppContent isOnline={isOnline} />
     </Router>
   );
 }
