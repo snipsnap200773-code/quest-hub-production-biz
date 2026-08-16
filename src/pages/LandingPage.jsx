@@ -25,16 +25,23 @@ function LandingPage() {
         .mockup-sp { width: 220px; height: 450px; background: #f8fafc; border-radius: 30px; display: flex; align-items: center; justify-content: center; color: #64748b; font-weight: bold; border: 8px solid #334155; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); position: relative; }
         .mockup-sp-group { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
         
+        /* 🆕 レスポンシブ対応のヒーロー画像用（スマホ時の基本設定） */
+        .hero-image-container { display: flex; flex-direction: column; align-items: center; gap: 30px; width: 100%; position: relative; }
+        .hero-mobile-img { width: 230px; height: auto; border-radius: 30px; border: 8px solid #1e293b; box-shadow: 0 20px 30px rgba(0,0,0,0.3); object-fit: cover; background: #fff; z-index: 2; }
+        
+        /* 🆕 PCの時だけ真ん中の画像を下にズラすためのクラス */
+        .stagger-img { transform: translateY(0); transition: transform 0.3s ease; }
+        
         /* Desktop styling */
         @media (min-width: 768px) {
+          /* 🆕 PC時の設定（絶対配置で右下に重ねる） */
+          .hero-image-container { display: flex; justify-content: center; flex-direction: row; }
+          .hero-mobile-img { position: absolute; bottom: -25px; right: -10px; width: 190px; height: 380px; border-width: 5px; border-radius: 24px; }
+
           .flex-row { flex-direction: row; justify-content: space-between; }
-          .flex-row.reverse { flex-direction: row; }
-          .text-content { flex: 1; padding: 20px; }
-          .image-content { flex: 1; display: flex; justify-content: center; position: relative; }
-          .hero-title { font-size: 3rem !important; }
           
-          /* PC画面の上にスマホ画面を重ねる演出 */
-          .overlap-sp { position: absolute; bottom: -20px; right: 0; transform: scale(0.8); transform-origin: bottom right; }
+          /* 🆕 PCの時だけ真ん中の画像を下にズラす */
+          .stagger-img { transform: translateY(40px); }
         }
       `}</style>
 
@@ -51,10 +58,30 @@ function LandingPage() {
             </p>
             <Link to="/trial" style={ctaButtonStyle}>無料で14日間試してみる 🚀</Link>
           </div>
-          <div className="image-content">
-            {/* PC版イメージとスマホ版イメージを重ねて表示 */}
-            <div className="mockup-pc">AdminDashboard.jsx<br/>(店舗管理・売上分析)</div>
-            <div className="mockup-sp overlap-sp">AdminTimeline.jsx<br/>(スマホカレンダー)</div>
+          <div className="image-content hero-image-container">
+            
+            {/* 1. PC版スクリーンショット画像 */}
+            <img 
+              src="/admin-dashboard.png" 
+              alt="Hair Salon QUEST 管理ダッシュボード" 
+              style={{
+                width: '100%',
+                maxWidth: '600px',
+                borderRadius: '16px',
+                border: '4px solid #cbd5e1',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+                objectFit: 'cover',
+                zIndex: 1
+              }}
+            />
+
+            {/* 2. スマホ版スクリーンショット画像（PCなら重なり、スマホなら下に並ぶ） */}
+            <img 
+              src="/mobile-calendar.png" 
+              alt="スマホ版 予約カレンダー" 
+              className="hero-mobile-img"
+            />
+
           </div>
         </div>
       </section>
@@ -85,13 +112,41 @@ function LandingPage() {
           </div>
           <div className="text-content" style={{ flex: 1 }}>
             <h3 style={featureTitleStyle}>📱 紙の台帳のような「タイムライン」</h3>
-            <p style={featureDescStyle}>
-              急な電話予約や飛び込みのお客様が来ても、カレンダーの空き枠をタップして「ねじ込み予約」が瞬時に完了。急な予定もワンタップで枠をブロックできます。
-            </p>
+            <p style={{ ...featureDescStyle, marginBottom: '20px' }}>
+  急な電話予約や飛び込みのお客様が来ても、カレンダーの空き枠をタップして「ねじ込み予約」が瞬時に完了。急な予定もワンタップで枠をブロックできます。
+</p>
+            
+            {/* 🆕 タイムラインのスクリーンショットを追加 */}
+            <img 
+              src="/admin-timeline.png" 
+              alt="タイムライン予約台帳" 
+              style={{
+                width: '100%',
+                borderRadius: '12px',
+                border: '3px solid #cbd5e1',
+                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+                marginBottom: '40px',
+                objectFit: 'cover'
+              }}
+            />
+
             <h3 style={featureTitleStyle}>💳 高度なレジと売上管理 (AdminManagement)</h3>
-            <p style={featureDescStyle}>
-              複数メニューの組み合わせや店販商品のお会計も自動計算。別のレジを使っている店舗様向けの「自動売上確定モード」も備えています。
-            </p>
+            <p style={{ ...featureDescStyle, marginBottom: '20px' }}>
+  複数メニューの組み合わせや店販商品のお会計も自動計算。別のレジを使っている店舗様向けの「自動売上確定モード」も備えています。
+</p>
+            
+            {/* 🆕 売上管理・レジ画面のスクリーンショットを追加 */}
+            <img 
+              src="/admin-management.png" 
+              alt="売上管理・レジ画面" 
+              style={{
+                width: '100%',
+                borderRadius: '12px',
+                border: '3px solid #cbd5e1',
+                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+                objectFit: 'cover'
+              }}
+            />
           </div>
         </div>
       </section>
@@ -102,32 +157,102 @@ function LandingPage() {
           <h2 className="section-title text-center">お客様を逃さない「スムーズな予約体験」</h2>
           <p className="text-center" style={{ marginBottom: '40px', color: '#64748b' }}>LINEからシームレスに繋がり、数タップで予約が完了します。</p>
           
-          <div className="mockup-sp-group">
-            <div className="mockup-sp">ReservationForm.jsx<br/>(メニュー・指名選択)</div>
-            <div className="mockup-sp">TimeSelectionCalendar.jsx<br/>(空き時間検索)</div>
-            <div className="mockup-sp">ConfirmReservation.jsx<br/>(確認・完了画面)</div>
+          <div className="mockup-sp-group" style={{ display: 'flex', gap: '30px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            {/* 1枚目：メニュー・指名選択 */}
+            <img 
+              src="/reservation-form.png" 
+              alt="メニュー・指名選択" 
+              style={{
+                width: '230px',
+                height: 'auto',
+                borderRadius: '30px',
+                border: '8px solid #1e293b',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+                objectFit: 'cover'
+              }} 
+            />
+            {/* 2枚目：空き時間検索 */}
+            <img 
+              src="/time-selection.png" 
+              alt="空き時間検索" 
+              style={{
+                width: '230px',
+                height: 'auto',
+                borderRadius: '30px',
+                border: '8px solid #1e293b',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+                objectFit: 'cover'
+              }} 
+            />
+            {/* 3枚目：確認・完了画面 */}
+            <img 
+              src="/confirm-reservation.png" 
+              alt="確認・完了画面" 
+              style={{
+                width: '230px',
+                height: 'auto',
+                borderRadius: '30px',
+                border: '8px solid #1e293b',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+                objectFit: 'cover'
+              }} 
+            />
           </div>
         </div>
       </section>
 
       {/* 4. ポータル画面（Home, ShopList） */}
       <section className="lp-container">
-        <div className="flex-row reverse">
-          <div className="text-content">
-            <h3 style={featureTitleStyle}>🏪 お店の魅力を伝える「ポータル連携」</h3>
-            <p style={featureDescStyle}>
-              専用の店舗ページ（ShopDetail）を自動生成。メニュー表、ギャラリー、代表者メッセージを表示し、総合ポータル（Home）やカテゴリ検索（ShopList）から新しいお客様を呼び込みます。
-            </p>
-            <h3 style={featureTitleStyle}>🎮 リピートを促す「ゲーミフィケーション」</h3>
-            <p style={featureDescStyle}>
-              予約完了後（ReservedSuccess）にキャラクターが成長するゲーム連携など、他にはない遊び心でお客様のファン化を促進します。
-            </p>
-          </div>
-          <div className="image-content">
-            <div className="mockup-pc">ShopDetail.jsx / ShopList.jsx<br/>(PC・スマホ両対応ポータル)</div>
-          </div>
+        {/* 🆕 上のセクションと同じように中央揃えの縦並びレイアウトに変更 */}
+        <h2 className="section-title text-center" style={{ marginBottom: '20px' }}>🏪 お店の魅力を伝える「ポータル連携」</h2>
+        <p className="text-center" style={{ marginBottom: '50px', color: '#64748b' }}>
+          専用の店舗ページを自動生成。メニュー表、ギャラリー、代表者メッセージを表示し、<br />総合ポータルやカテゴリ検索から新しいお客様を呼び込みます。
+        </p>
+        
+        {/* 🆕 3枚の画像をテキストの下に配置（上のセクションと全く同じサイズ・枠線に統一） */}
+        <div className="mockup-sp-group" style={{ display: 'flex', gap: '30px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '80px' }}>
+          {/* 1枚目：ホーム画面 */}
+          <img 
+            src="/portal-home.png" 
+            alt="総合ポータル ホーム画面" 
+            style={{
+              width: '230px',
+              height: 'auto',
+              borderRadius: '30px',
+              border: '8px solid #1e293b',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+              objectFit: 'cover'
+            }} 
+          />
+          {/* 2枚目：ショップリスト */}
+          <img 
+            src="/portal-list.png" /* 👈 .jpg を .png に変更（※ご自身の保存したファイル名に合わせてください） */
+            alt="カテゴリ別ショップ検索" 
+            /* 👈 className="stagger-img" を削除しました！これで高さが揃います */
+            style={{
+              width: '230px',
+              height: 'auto',
+              borderRadius: '30px',
+              border: '8px solid #1e293b',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+              objectFit: 'cover'
+            }} 
+          />
+          {/* 3枚目：店舗詳細 */}
+          <img 
+            src="/portal-detail.png" 
+            alt="店舗詳細ページ" 
+            style={{
+              width: '230px',
+              height: 'auto',
+              borderRadius: '30px',
+              border: '8px solid #1e293b',
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+              objectFit: 'cover'
+            }} 
+          />
         </div>
-      </section>
+      </section> {/* 👈 ！！ここに </section> を追加します！！ */}
 
       {/* 5. CTA */}
       <section style={{ backgroundColor: '#2563eb', padding: '80px 20px', textAlign: 'center', color: '#fff' }}>
