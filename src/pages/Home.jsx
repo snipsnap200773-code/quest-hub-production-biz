@@ -94,14 +94,14 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
   // 🆕 1. 【部品】ポータルデータを読み込む関数（最優先で実行される）
   const fetchPortalData = async () => {
     try {
-      // ✅ 🆕 修正：プラン2（フルプラン）かつ「店舗(shop)」だけを表示する
       const shopRes = await supabase
         .from('profiles')
         .select('*')
         .eq('is_suspended', false)
-        .eq('service_plan', 2)
-        .eq('role', 'shop') // 🚀 ここを追記！これで管理者がリストから消えます
-        .not('business_name', 'is', null);
+        .eq('role', 'shop')
+        .not('business_name', 'is', null)
+        // 👇 🌟 🆕 プラン2の代わりに「テスター(永久無料)」または「有料契約中」または「トライアル中」を条件にする
+        .or('is_tester.eq.true,subscription_status.eq.active,subscription_status.eq.trialing');
 
       if (shopRes.data) {
         setShops(shopRes.data);
@@ -195,9 +195,12 @@ try {
           .eq('user_id', session.user.id);
 
         if (favs) {
-          // ✅ 🆕 修正：プラン2（フルプラン）の店舗だけに絞り込む
-          // profilesが存在しない（店舗削除済み）や、プラン1の店舗を一覧から除外します
-          const activeFavs = favs.filter(f => f.profiles && f.profiles.service_plan === 2);
+          // 👇 🌟 🆕 修正：テスター、有料契約中、トライアル中の店舗だけに絞り込む
+          const activeFavs = favs.filter(f => {
+            if (!f.profiles) return false;
+            const p = f.profiles;
+            return p.is_tester || p.subscription_status === 'active' || p.subscription_status === 'trialing';
+          });
           setFavorites(activeFavs);
         }
 
