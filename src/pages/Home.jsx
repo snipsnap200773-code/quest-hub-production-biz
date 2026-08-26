@@ -702,7 +702,8 @@ if (error) {
                       RECOMMENDED
                     </span>
                     <span style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: 'bold' }}>
-                      {shop.business_type || 'サロン・サービス'}
+                      {/* 👇 🌟 修正：カンマをスラッシュに変換 */}
+                      {shop.business_type ? shop.business_type.replace(/,/g, ' / ') : 'サロン・サービス'}
                     </span>
                   </div>
 
@@ -1094,7 +1095,8 @@ if (error) {
                     <div style={{ position: 'absolute', top: '0', left: '0', background: 'rgba(230,0,18,0.9)', color: '#fff', fontSize: '0.5rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '0 0 4px 0' }}>PICK UP</div>
                   </div>
                   <div style={{ padding: '12px 15px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <div style={{ fontSize: '0.6rem', color: '#2563eb', fontWeight: 'bold', marginBottom: '2px' }}>{shop.business_type}</div>
+                    {/* 👇 🌟 修正：カンマをスラッシュに変換 */}
+                    <div style={{ fontSize: '0.6rem', color: '#2563eb', fontWeight: 'bold', marginBottom: '2px' }}>{shop.business_type ? shop.business_type.replace(/,/g, ' / ') : ''}</div>
                     <h4 style={{ margin: '0 0 3px 0', fontSize: '1rem', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shop.business_name}</h4>
                     <p style={{ fontSize: '0.75rem', color: '#666', margin: 0, lineHeight: '1.4' }}>
                       {shop.description ? shop.description.substring(0, 50) + '...' : '店舗の詳細情報は準備中です。'}
@@ -1491,7 +1493,8 @@ if (error) {
                         )}
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: '900', fontSize: '1rem', color: '#1e293b' }}>{fav.profiles?.business_name}</div>
-                          <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 'bold' }}>{fav.profiles?.business_type}</div>
+                          {/* 👇 🌟 修正：カンマをスラッシュに変換 */}
+                          <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 'bold' }}>{fav.profiles?.business_type ? fav.profiles.business_type.replace(/,/g, ' / ') : ''}</div>
                         </div>
                         <div style={{ color: '#cbd5e1' }}><ChevronRight size={20} /></div>
                       </div>

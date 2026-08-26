@@ -44,7 +44,8 @@ const [shops, setShops] = useState([]);
       .from('profiles')
       .select('*')
       .eq('is_suspended', false)
-      .eq('business_type', categoryId) 
+      // 👇 🌟 修正：完全一致(.eq)から、含まれるか(.ilike)の検索に変更
+      .ilike('business_type', `%${categoryId}%`) 
       .not('business_name', 'is', null)
       // 👇 🌟 🆕 service_plan=2 の代わりに、以下の条件で絞り込む
       .or('is_tester.eq.true,subscription_status.eq.active,subscription_status.eq.trialing');
