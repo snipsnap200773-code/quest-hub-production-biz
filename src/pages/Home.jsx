@@ -100,12 +100,14 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
         .eq('is_suspended', false)
         .eq('role', 'shop')
         .not('business_name', 'is', null)
-        // 👇 🌟 🆕 プラン2の代わりに「テスター(永久無料)」または「有料契約中」または「トライアル中」を条件にする
-        .or('is_tester.eq.true,subscription_status.eq.active,subscription_status.eq.trialing');
+        .or('is_tester.eq.true,subscription_status.eq.active,subscription_status.eq.trialing')
+        .order('created_at', { ascending: false }) // 👈 🚀 🆕 DB側で新着順に並び替え
+        .limit(20); // 👈 🚀 🆕 1000件の壁＆ロード遅延を防ぐため、最新20件だけ取得
 
       if (shopRes.data) {
         setShops(shopRes.data);
-        setNewShops([...shopRes.data].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 3));
+        // 👈 既に新着順になっているので、そのまま先頭3件を取るだけでOK
+        setNewShops(shopRes.data.slice(0, 3)); 
       }
       const newsRes = await supabase.from('portal_news').select('*').order('sort_order', { ascending: true });
       if (newsRes.data) setTopics(newsRes.data);
@@ -702,8 +704,10 @@ if (error) {
                       RECOMMENDED
                     </span>
                     <span style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: 'bold' }}>
-                      {/* 👇 🌟 修正：カンマをスラッシュに変換 */}
-                      {shop.business_type ? shop.business_type.replace(/,/g, ' / ') : 'サロン・サービス'}
+                      {/* 🚀 🆕 修正：配列でも文字列でも安全に変換（クラッシュ防止） */}
+                      {Array.isArray(shop.business_type) 
+                        ? shop.business_type.join(' / ') 
+                        : String(shop.business_type || 'サロン・サービス').replace(/,|、/g, ' / ')}
                     </span>
                   </div>
 
@@ -1095,8 +1099,12 @@ if (error) {
                     <div style={{ position: 'absolute', top: '0', left: '0', background: 'rgba(230,0,18,0.9)', color: '#fff', fontSize: '0.5rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '0 0 4px 0' }}>PICK UP</div>
                   </div>
                   <div style={{ padding: '12px 15px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    {/* 👇 🌟 修正：カンマをスラッシュに変換 */}
-                    <div style={{ fontSize: '0.6rem', color: '#2563eb', fontWeight: 'bold', marginBottom: '2px' }}>{shop.business_type ? shop.business_type.replace(/,/g, ' / ') : ''}</div>
+                    {/* 🚀 🆕 修正：配列でも文字列でも安全に変換（クラッシュ防止） */}
+                    <div style={{ fontSize: '0.6rem', color: '#2563eb', fontWeight: 'bold', marginBottom: '2px' }}>
+                      {Array.isArray(shop.business_type) 
+                        ? shop.business_type.join(' / ') 
+                        : String(shop.business_type || '').replace(/,|、/g, ' / ')}
+                    </div>
                     <h4 style={{ margin: '0 0 3px 0', fontSize: '1rem', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shop.business_name}</h4>
                     <p style={{ fontSize: '0.75rem', color: '#666', margin: 0, lineHeight: '1.4' }}>
                       {shop.description ? shop.description.substring(0, 50) + '...' : '店舗の詳細情報は準備中です。'}
@@ -1493,8 +1501,12 @@ if (error) {
                         )}
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: '900', fontSize: '1rem', color: '#1e293b' }}>{fav.profiles?.business_name}</div>
-                          {/* 👇 🌟 修正：カンマをスラッシュに変換 */}
-                          <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 'bold' }}>{fav.profiles?.business_type ? fav.profiles.business_type.replace(/,/g, ' / ') : ''}</div>
+                          {/* 🚀 🆕 修正：配列でも文字列でも安全に変換（クラッシュ防止） */}
+                          <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 'bold' }}>
+                            {Array.isArray(fav.profiles?.business_type) 
+                              ? fav.profiles.business_type.join(' / ') 
+                              : String(fav.profiles?.business_type || '').replace(/,|、/g, ' / ')}
+                          </div>
                         </div>
                         <div style={{ color: '#cbd5e1' }}><ChevronRight size={20} /></div>
                       </div>
