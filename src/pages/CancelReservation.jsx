@@ -53,12 +53,12 @@ function CancelReservation() {
     setView('loading');
     
     try {
-      const { id, customer_name, shop_id } = reservation;
+      const { id, customer_id, customer_name, shop_id } = reservation;
 
-      // 1. 予約を削除
+      // 1. 予約をキャンセル状態に更新（物理削除すると来店履歴や売上集計から記録が消えてしまうため）
       const { error: deleteError } = await supabase
         .from('reservations')
-        .delete()
+        .update({ status: 'canceled' })
         .eq('id', id);
 
       if (deleteError) throw deleteError;
@@ -79,29 +79,32 @@ function CancelReservation() {
       }
 
       // 2. 名簿の自動クリーニングロジック (AdminReservations.jsxと同等)
-      // そのお客様の残りの予約数をカウント
-      const { count } = await supabase
-        .from('reservations')
-        .select('*', { count: 'exact', head: true })
-        .eq('shop_id', shop_id)
-        .eq('customer_name', customer_name);
-
-      if (count === 0) {
-        // 他に予約が1件もなければ名簿から完全に削除（ゴミデータの掃除）
-        await supabase.from('customers').delete().eq('shop_id', shop_id).eq('name', customer_name);
-      } else {
-        // 他に予約があるなら、来店回数を-1調整する
-        const { data: cust } = await supabase
-          .from('customers')
-          .select('id, total_visits')
+      // 🆕 修正：同姓同名の別人を誤って巻き込まないよう、名前(customer_name)ではなく
+      // 予約に一意に紐づく customer_id で判定する（customer_id が無い古いデータは対象外にする）
+      if (customer_id) {
+        const { count } = await supabase
+          .from('reservations')
+          .select('*', { count: 'exact', head: true })
           .eq('shop_id', shop_id)
-          .eq('name', customer_name)
-          .maybeSingle();
-          
-        if (cust) {
-          await supabase.from('customers')
-            .update({ total_visits: Math.max(0, (cust.total_visits || 1) - 1) })
-            .eq('id', cust.id);
+          .eq('customer_id', customer_id)
+          .neq('status', 'canceled'); // 🆕 追加
+
+        if (count === 0) {
+          // 他に予約が1件もなければ名簿から完全に削除（ゴミデータの掃除）
+          await supabase.from('customers').delete().eq('id', customer_id);
+        } else {
+          // 他に予約があるなら、来店回数を-1調整する
+          const { data: cust } = await supabase
+            .from('customers')
+            .select('id, total_visits')
+            .eq('id', customer_id)
+            .maybeSingle();
+
+          if (cust) {
+            await supabase.from('customers')
+              .update({ total_visits: Math.max(0, (cust.total_visits || 1) - 1) })
+              .eq('id', cust.id);
+          }
         }
       }
 
@@ -115,13 +118,10 @@ function CancelReservation() {
   // 🚀 🆕 当日かどうかを判定する関数
   const isToday = (dateInput) => {
     if (!dateInput) return false;
-    const target = new Date(dateInput);
-    const today = new Date();
-    return (
-      target.getFullYear() === today.getFullYear() &&
-      target.getMonth() === today.getMonth() &&
-      target.getDate() === today.getDate()
-    );
+    // 🆕 修正：ブラウザのタイムゾーンに依存せず、日本時間基準で「当日」を判定する
+    const target = new Date(dateInput).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    return target === today;
   };
 
   const showError = (msg) => {
@@ -159,7 +159,7 @@ function CancelReservation() {
           <strong>メニュー:</strong> {
             /* 🆕 複数名データ（people）と 従来データ（services）の両方に対応 */
             reservation.options?.people 
-              ? reservation.options.people.map(p => p.services.map(s => s.name).join(', ')).join(' / ')
+              ? reservation.options.people.map(p => (p.services || []).map(s => s.name).join(', ')).join(' / ')
               : reservation.options?.services?.map(s => s.name).join(', ') || 'なし'
           }
         </div>
