@@ -78,33 +78,22 @@ function CancelReservation() {
         console.error("キャンセル通知送信失敗:", notifyErr);
       }
 
-      // 2. 名簿の自動クリーニングロジック (AdminReservations.jsxと同等)
-      // 🆕 修正：同姓同名の別人を誤って巻き込まないよう、名前(customer_name)ではなく
-      // 予約に一意に紐づく customer_id で判定する（customer_id が無い古いデータは対象外にする）
+      // 2. 名簿の来店回数を調整する
+      // 🛡️ 修正：以前は「他に有効な予約が1件も無い場合、名簿ごと削除」していたが、
+      // それでは無断キャンセル対策の記録（cancel_countや、別途実装した「キャンセル状況・履歴」
+      // アラート）まで一緒に消えてしまい、証拠を残すという目的と矛盾するため、
+      // 名簿の削除は行わず、来店回数（total_visits）の調整だけを行う。
       if (customer_id) {
-        const { count } = await supabase
-          .from('reservations')
-          .select('*', { count: 'exact', head: true })
-          .eq('shop_id', shop_id)
-          .eq('customer_id', customer_id)
-          .neq('status', 'canceled'); // 🆕 追加
+        const { data: cust } = await supabase
+          .from('customers')
+          .select('id, total_visits')
+          .eq('id', customer_id)
+          .maybeSingle();
 
-        if (count === 0) {
-          // 他に予約が1件もなければ名簿から完全に削除（ゴミデータの掃除）
-          await supabase.from('customers').delete().eq('id', customer_id);
-        } else {
-          // 他に予約があるなら、来店回数を-1調整する
-          const { data: cust } = await supabase
-            .from('customers')
-            .select('id, total_visits')
-            .eq('id', customer_id)
-            .maybeSingle();
-
-          if (cust) {
-            await supabase.from('customers')
-              .update({ total_visits: Math.max(0, (cust.total_visits || 1) - 1) })
-              .eq('id', cust.id);
-          }
+        if (cust) {
+          await supabase.from('customers')
+            .update({ total_visits: Math.max(0, (cust.total_visits || 1) - 1) })
+            .eq('id', cust.id);
         }
       }
 
