@@ -33,11 +33,23 @@ import InquiryForm from './components/InquiryForm';
 import ScrollToTop from './components/ScrollToTop';
 import FacilitySearch from './components/FacilitySearch';
 
+// --- 📄 法務・お問い合わせページ ---
+import Terms from './pages/legal/Terms';
+import Privacy from './pages/legal/Privacy';
+import Legal from './pages/legal/Legal';
+import Contact from './pages/legal/Contact';
+
+// 💡 PCフル画面で表示するパス（事業者向けページ）
+const FULL_SCREEN_PATHS = ['/biz', '/terms', '/privacy', '/legal', '/contact'];
+
 // 🆕 ルーティングの中身を別コンポーネント化（URL判定のため）
 function AppContent({ isOnline }) {
   const location = useLocation();
-  // 💡 /biz と /demo の時は横幅100%（PCフル画面）を許可する
-  const isFullScreenRoute = location.pathname === '/biz' || location.pathname.startsWith('/demo');
+  // 💡 事業者向けページと /demo /trial の時は横幅100%（PCフル画面）を許可する
+  const isFullScreenRoute =
+    FULL_SCREEN_PATHS.includes(location.pathname) ||
+    location.pathname.startsWith('/demo') ||
+    location.pathname.startsWith('/trial');
 
   return (
     <div 
@@ -48,7 +60,7 @@ function AppContent({ isOnline }) {
         maxWidth: isFullScreenRoute ? '100%' : '480px', 
         minHeight: '100vh', 
         position: 'relative',
-        backgroundColor: '#f4f7f9',
+        backgroundColor: isFullScreenRoute ? '#fff' : '#f4f7f9',
         boxShadow: isFullScreenRoute ? 'none' : '0 0 20px rgba(0,0,0,0.05)',
         overflowX: 'hidden'
       }}
@@ -87,6 +99,12 @@ function AppContent({ isOnline }) {
         <Route path="/setup" element={<InitialSetup />} />
         <Route path="/facility-search" element={<FacilitySearch />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+
+        {/* 📄 法務・お問い合わせ */}
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/legal" element={<Legal />} />
+        <Route path="/contact" element={<Contact />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

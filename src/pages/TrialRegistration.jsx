@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase, supabaseAnon } from '../supabaseClient';
+import { COMPANY } from '../config/companyInfo';
 
 /**
  * QUEST HUB ベータ版 登録フォーム
@@ -14,23 +15,16 @@ import { supabase, supabaseAnon } from '../supabaseClient';
  *  - LINEサポート窓口への導線を追加
  *
  * ▼ TODO
- *  - LINE友だち追加URL（LINE_SUPPORT_URL）を差し替え
  *  - admin_password の平文保存をハッシュ化 or Supabase Auth へ移行
  *  - profiles.email_contact に UNIQUE 制約を付けると重複検知が確実になります
  */
-
-// TODO: 発行済みのLINE友だち追加URLに差し替えてください
-const LINE_SUPPORT_URL = 'https://lin.ee/XXXXXXX';
 
 const BUSINESS_TYPES = [
   '美容室・理容室',
   'ネイル・アイラッシュ',
   'エステ・リラク',
   '整体・接骨院・鍼灸',
-  '訪問美容・出張サービス',
-  '飲食店・カフェ',
-  'スクール・教室',
-  'その他・ライフ',
+  '訪問・出張サービス（個人宅）',
 ];
 
 function TrialRegistration() {
@@ -241,7 +235,7 @@ function TrialRegistration() {
           <p style={{ fontSize: '0.82rem', color: '#64748b', margin: '0 0 12px', lineHeight: 1.7 }}>
             登録で迷ったら、LINEからお気軽にご相談ください。
           </p>
-          <a href={LINE_SUPPORT_URL} target="_blank" rel="noopener noreferrer" style={lineButtonStyle}>
+          <a href={COMPANY.lineUrl} target="_blank" rel="noopener noreferrer" style={lineButtonStyle}>
             LINEでサポートに相談する
           </a>
           <div style={{ marginTop: '18px' }}>

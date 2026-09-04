@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { COMPANY } from '../config/companyInfo';
 
 /**
  * QUEST HUB ランディングページ（ベータ募集版）
@@ -164,13 +165,14 @@ function LandingPage() {
           border-radius: 5px; margin-left: 10px; vertical-align: middle;
         }
 
-        /* ---- 訪問業者向け ---- */
-        .qh-visit {
-          background: #fff; border: 2px solid var(--line); border-radius: 14px;
-          padding: 32px 28px; max-width: 760px; margin: 0 auto; text-align: center;
+        /* ---- 訪問・出張サービス ---- */
+        .qh-visit-grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+        .qh-visit-card {
+          background: #fff; border: 1px solid var(--line); border-radius: 12px;
+          padding: 26px 24px;
         }
-        .qh-visit h3 { font-size: 1.15rem; font-weight: 800; color: var(--ink); margin: 0 0 10px; }
-        .qh-visit p { font-size: .97rem; margin: 0 0 22px; }
+        .qh-visit-card .qh-h3 { margin-bottom: 12px; }
+        .qh-visit-card p { margin: 0; font-size: .95rem; }
 
         /* ---- 開発ストーリー ---- */
         .qh-story {
@@ -235,6 +237,7 @@ function LandingPage() {
           .qh-feature { flex-direction: row; align-items: center; gap: 52px; }
           .qh-feature--flip { flex-direction: row-reverse; }
           .qh-pains { grid-template-columns: 1fr 1fr; }
+          .qh-visit-grid { grid-template-columns: repeat(3, 1fr); gap: 22px; }
           .qh-footer-top { flex-direction: row; justify-content: space-between; align-items: flex-start; }
         }
 
@@ -437,19 +440,39 @@ function LandingPage() {
         </div>
       </section>
 
-      {/* ======================= 6. 訪問サービス業者向け（控えめに1行） ======================= */}
-      <section className="qh-section qh-section--tint" style={{ paddingTop: '0' }}>
+      {/* ======================= 6. 訪問・出張サービス ======================= */}
+      <section className="qh-section qh-section--tint">
         <div className="qh-container">
-          <div className="qh-visit">
-            <h3>訪問・出張サービスの事業者さまへ</h3>
-            <p>
-              介護施設などへの訪問業務向けに、施設側から名簿と予約依頼を送れる専用ポータルと、
-              ワークシート・利用明細の出力機能をご用意しています。
+          <div className="qh-center">
+            <span className="qh-eyebrow">出張・訪問される方へ</span>
+            <h2 className="qh-h2">お客様のご自宅へ伺うサービスにも</h2>
+            <p className="qh-lead">
+              訪問カットや家事代行など、こちらから出向くスタイルのお仕事にもお使いいただけます。
             </p>
-            {/* TODO: 訪問業者向けページのルートを作成してください（例: /for-visit） */}
-            <Link to="/for-visit" className="qh-cta qh-cta--ghost" style={{ padding: '13px 28px', fontSize: '.98rem' }}>
-              訪問サービス向けの機能を見る
-            </Link>
+          </div>
+
+          <div className="qh-visit-grid">
+            <div className="qh-visit-card">
+              <h3 className="qh-h3">予約時に住所を伺えます</h3>
+              <p>
+                予約フォームに住所の入力欄を追加できます。
+                建物名や駐車場の有無など、訪問前に確認しておきたいことを質問として設定できます。
+              </p>
+            </div>
+            <div className="qh-visit-card">
+              <h3 className="qh-h3">移動時間を自動で確保</h3>
+              <p>
+                施術時間の前後に移動のための時間を自動で挟み込めます。
+                予約が詰まりすぎて次の訪問に間に合わない、という事故を防げます。
+              </p>
+            </div>
+            <div className="qh-visit-card">
+              <h3 className="qh-h3">スマホだけで完結</h3>
+              <p>
+                移動中や訪問先でも、スマートフォンから予約の確認・変更・お会計まで行えます。
+                事務所に戻ってからの入力作業が不要になります。
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -551,10 +574,18 @@ function LandingPage() {
               </p>
             </details>
             <details>
+              <summary>お客様のご自宅へ訪問するスタイルでも使えますか</summary>
+              <p>
+                お使いいただけます。予約フォームに住所の入力欄を追加でき、
+                施術時間の前後に移動時間を自動で確保する設定もご用意しています。
+              </p>
+            </details>
+            <details>
               <summary>美容室以外の業種でも使えますか</summary>
               <p>
-                メニューや予約フォームの項目を自由に設定できるため、サロン・クリニック・スクール・整体など、
-                予約を受けて対応する業種であれば幅広くお使いいただけます。
+                ベータ版では、美容室・理容室、ネイル・アイラッシュ、エステ・リラク、
+                整体・接骨院・鍼灸、および個人宅への訪問サービスを対象としています。
+                それ以外の業種については、順次対応を広げていく予定です。
               </p>
             </details>
           </div>
@@ -566,8 +597,8 @@ function LandingPage() {
         <div className="qh-container">
           <div className="qh-footer-top">
             <div className="qh-footer-brand">
-              <strong>QUEST HUB</strong>
-              <span>運営：infec</span>
+              <strong>{COMPANY.serviceName}</strong>
+              <span>運営：{COMPANY.name}</span>
             </div>
             {/* TODO: /terms /privacy /legal のルートを実装してください */}
             <nav>
@@ -575,12 +606,12 @@ function LandingPage() {
               <Link to="/terms">利用規約</Link>
               <Link to="/privacy">プライバシーポリシー</Link>
               <Link to="/legal">特定商取引法に基づく表記</Link>
-              {/* TODO: LINE友だち追加のURLに差し替えてください */}
-              <a href="https://lin.ee/XXXXXXX" target="_blank" rel="noopener noreferrer">LINEで問い合わせる</a>
+              <Link to="/contact">お問い合わせ</Link>
+              <a href={COMPANY.lineUrl} target="_blank" rel="noopener noreferrer">LINEで問い合わせる</a>
             </nav>
           </div>
           <div className="qh-footer-legal">
-            © {new Date().getFullYear()} infec. All rights reserved.
+            © {new Date().getFullYear()} {COMPANY.name}. All rights reserved.
           </div>
         </div>
       </footer>
