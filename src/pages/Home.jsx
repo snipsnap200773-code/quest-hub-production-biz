@@ -188,27 +188,75 @@ if (!insError) {
       // 3. 履歴取得（独立したtry-catchで安全に実行）
 try {
         // 1. 予約履歴の取得
-        const { data: history } = await supabase
-          .from('reservations')
-          .select('*, profiles(id, business_name)')
-          .eq('customer_email', session.user.email)
-          .order('start_time', { ascending: false });
-        if (history) setMyHistory(history);
+        // ⚠️ 2026/09/06：profiles の JOIN を廃止しました。
+        //    ビューには外部キー制約が張れないため JOIN できません。
+        //    予約履歴は「過去の事実」なので、掲載条件で絞る public_shops ではなく、
+        //    role='shop' だけで絞る public_booking_settings を使います。
+        //    （掲載を止めた店舗の予約も履歴には残すべきため）
+        const { data: history, error: historyError } = await supabase
+          .from('reservations')
+          .select('*')
+          .eq('customer_email', session.user.email)
+          .order('start_time', { ascending: false });
 
-        // 🆕 2. お気に入り店舗の取得（店舗詳細 profiles も結合）
-        const { data: favs } = await supabase
+        if (historyError) {
+          console.error('予約履歴の取得に失敗しました:', historyError.message);
+        }
+
+        if (history && history.length > 0) {
+          const shopIds = [...new Set(history.map(r => r.shop_id).filter(Boolean))];
+          const { data: histShops, error: histShopError } = await supabase
+            .from('public_booking_settings')
+            .select('id, business_name')
+            .in('id', shopIds);
+
+          if (histShopError) {
+            console.error('予約履歴の店舗名取得に失敗しました:', histShopError.message);
+          }
+
+          // 💡 元の JOIN と同じ形（r.profiles に店舗情報が入る）に組み立て直す
+          const shopMap = new Map((histShops || []).map(s => [s.id, s]));
+          setMyHistory(history.map(r => ({ ...r, profiles: shopMap.get(r.shop_id) || null })));
+        } else {
+          setMyHistory([]);
+        }
+
+        // 🆕 2. お気に入り店舗の取得
+        // ⚠️ 2026/09/06：profiles の JOIN を廃止しました。
+        //    ビュー（public_shops）には外部キー制約が張れないため JOIN できません。
+        //    お気に入りの shop_id を集めてから、公開用ビューを別途引きます。
+        //    掲載条件（停止中・無料版の除外）はビュー側の where で判定されるため、
+        //    ここでの絞り込みは不要になりました。
+        const { data: favs, error: favError } = await supabase
           .from('favorites')
-          .select('*, profiles(*)')
+          .select('*')
           .eq('user_id', session.user.id);
 
-        if (favs) {
-          // 👇 🌟 🆕 修正：テスター、有料契約中、トライアル中の店舗だけに絞り込む
-          const activeFavs = favs.filter(f => {
-            if (!f.profiles) return false;
-            const p = f.profiles;
-            return p.is_tester || p.subscription_status === 'active' || p.subscription_status === 'trialing';
-          });
+        if (favError) {
+          console.error('お気に入りの取得に失敗しました:', favError.message);
+        }
+
+        if (favs && favs.length > 0) {
+          const shopIds = favs.map(f => f.shop_id).filter(Boolean);
+          const { data: favShops, error: favShopError } = await supabase
+            .from('public_shops')
+            .select('*')
+            .in('id', shopIds);
+
+          if (favShopError) {
+            console.error('お気に入り店舗の取得に失敗しました:', favShopError.message);
+          }
+
+          // 💡 元の JOIN と同じ形（f.profiles に店舗情報が入る）に組み立て直す。
+          //    ビューに存在しない＝掲載対象外なので、その行は除外される。
+          const shopMap = new Map((favShops || []).map(s => [s.id, s]));
+          const activeFavs = favs
+            .filter(f => shopMap.has(f.shop_id))
+            .map(f => ({ ...f, profiles: shopMap.get(f.shop_id) }));
+
           setFavorites(activeFavs);
+        } else {
+          setFavorites([]);
         }
 
       } catch (hErr) {
