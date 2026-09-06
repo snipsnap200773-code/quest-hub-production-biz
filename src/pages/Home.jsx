@@ -94,15 +94,20 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
   // 🆕 1. 【部品】ポータルデータを読み込む関数（最優先で実行される）
   const fetchPortalData = async () => {
     try {
+      // ⚠️ 2026/09/06：profiles への直接アクセスを廃止し、公開用ビュー public_shops に変更しました。
+      //    掲載条件（role='shop' / 停止中でない / 無料版でない）はビュー側の where で
+      //    判定されるため、ここでの .eq(...) や .or(...) は不要になりました。
       const shopRes = await supabase
-        .from('profiles')
+        .from('public_shops')
         .select('*')
-        .eq('is_suspended', false)
-        .eq('role', 'shop')
         .not('business_name', 'is', null)
-        .or('is_tester.eq.true,subscription_status.eq.active,subscription_status.eq.trialing')
         .order('created_at', { ascending: false }) // 👈 🚀 🆕 DB側で新着順に並び替え
         .limit(20); // 👈 🚀 🆕 1000件の壁＆ロード遅延を防ぐため、最新20件だけ取得
+
+      if (shopRes.error) {
+        // ⚠️ 失敗を握りつぶすと事故に気づけないため、必ずログに残す
+        console.error('店舗一覧の取得に失敗しました:', shopRes.error.message);
+      }
 
       if (shopRes.data) {
         setShops(shopRes.data);
