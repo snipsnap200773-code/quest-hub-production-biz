@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase, supabaseAnon } from '../supabaseClient';
 import { COMPANY } from '../config/companyInfo';
+// ⚠️ 2026/09/07：業種名は BasicSettings と完全一致していないと、
+//    staffs.capable_categories / service_categories.target_industry の
+//    照合が通らずスタッフ指名やカテゴリ表示が消えるため、共通マスタを参照します。
+import { INDUSTRY_LABELS } from '../constants/industryMaster';
 
 /**
  * QUEST HUB ベータ版 登録フォーム
@@ -18,14 +22,6 @@ import { COMPANY } from '../config/companyInfo';
  *  - admin_password の平文保存をハッシュ化 or Supabase Auth へ移行
  *  - profiles.email_contact に UNIQUE 制約を付けると重複検知が確実になります
  */
-
-const BUSINESS_TYPES = [
-  '美容室・理容室',
-  'ネイル・アイラッシュ',
-  'エステ・リラク',
-  '整体・接骨院・鍼灸',
-  '訪問・出張サービス（個人宅）',
-];
 
 function TrialRegistration() {
   const navigate = useNavigate();
@@ -168,7 +164,7 @@ function TrialRegistration() {
             <input name="shopNameKana" placeholder="店舗名のふりがな" value={formData.shopNameKana} onChange={handleChange} required style={{ ...inputStyle, marginBottom: '10px' }} />
             <select name="businessType" value={formData.businessType} onChange={handleChange} required style={{ ...inputStyle, appearance: 'none', background: '#fff' }}>
               <option value="">業種を選択してください</option>
-              {BUSINESS_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {INDUSTRY_LABELS.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </section>
 

@@ -188,35 +188,25 @@ if (!insError) {
       // 3. 履歴取得（独立したtry-catchで安全に実行）
 try {
         // 1. 予約履歴の取得
-        // ⚠️ 2026/09/06：profiles の JOIN を廃止しました。
-        //    ビューには外部キー制約が張れないため JOIN できません。
-        //    予約履歴は「過去の事実」なので、掲載条件で絞る public_shops ではなく、
-        //    role='shop' だけで絞る public_booking_settings を使います。
-        //    （掲載を止めた店舗の予約も履歴には残すべきため）
+        // ⚠️ 2026/09/07：reservations への直接アクセスを廃止し、SECURITY DEFINER の
+        //    RPC に変更しました。以前は customer_email の一致だけで引いていたため、
+        //    同じメールアドレスの別人の予約まで見えうる状態でした。
+        //    RPC 側では auth.uid() と customers.auth_id で本人を確認し、
+        //    店舗名も含めて必要な列だけを返します。
         const { data: history, error: historyError } = await supabase
-          .from('reservations')
-          .select('*')
-          .eq('customer_email', session.user.email)
-          .order('start_time', { ascending: false });
+          .rpc('get_my_reservations');
 
         if (historyError) {
           console.error('予約履歴の取得に失敗しました:', historyError.message);
         }
 
         if (history && history.length > 0) {
-          const shopIds = [...new Set(history.map(r => r.shop_id).filter(Boolean))];
-          const { data: histShops, error: histShopError } = await supabase
-            .from('public_booking_settings')
-            .select('id, business_name')
-            .in('id', shopIds);
-
-          if (histShopError) {
-            console.error('予約履歴の店舗名取得に失敗しました:', histShopError.message);
-          }
-
-          // 💡 元の JOIN と同じ形（r.profiles に店舗情報が入る）に組み立て直す
-          const shopMap = new Map((histShops || []).map(s => [s.id, s]));
-          setMyHistory(history.map(r => ({ ...r, profiles: shopMap.get(r.shop_id) || null })));
+          // 💡 画面側は r.profiles.business_name / r.profiles.id を参照しているため、
+          //    元の JOIN と同じ形に組み立て直す
+          setMyHistory(history.map(r => ({
+            ...r,
+            profiles: { id: r.shop_id, business_name: r.shop_name }
+          })));
         } else {
           setMyHistory([]);
         }
@@ -601,12 +591,26 @@ if (error) {
 
     try {
       // 1. データベースのステータスを更新
-      const { error } = await supabase
-        .from('reservations')
-        .update({ status: 'canceled' })
-        .eq('id', res.id);
+      // ⚠️ 2026/09/07：anon による reservations の直接 UPDATE を廃止し、
+      //    本人確認・当日判定・二重キャンセル防止をサーバー側の RPC に移しました。
+      const { data: cancelData, error } = await supabase
+        .rpc('cancel_my_reservation', { p_reservation_id: res.id });
 
       if (error) throw error;
+
+      const result = Array.isArray(cancelData) ? cancelData[0] : cancelData;
+      if (!result?.ok) {
+        if (result?.reason === 'today') {
+          alert("当日のキャンセルはWEBから行えません。店舗へお電話ください。");
+        } else if (result?.reason === 'canceled') {
+          alert("このご予約は既にキャンセル済みです。");
+        } else if (result?.reason === 'completed') {
+          alert("このご予約はすでに完了しているため、キャンセルできません。");
+        } else {
+          alert("キャンセル処理に失敗しました。");
+        }
+        return;
+      }
 
       // 🚀 🆕 2. 通知を送る（Edge Function を呼び出す）
       // index.ts 側の type: 'cancel' が反応してお互いにメール/LINEが飛びます

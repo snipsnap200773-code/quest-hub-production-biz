@@ -21,25 +21,30 @@ function CancelReservation() {
 
   const fetchReservation = async () => {
     try {
+      // ⚠️ 2026/09/07：reservations への直接アクセスを廃止し、SECURITY DEFINER の
+      //    RPC に変更しました。completed / canceled / 当日 の判定もサーバー側です。
       const { data, error } = await supabase
-        .from("reservations")
-        .select("*, profiles(phone)")
-        .eq("cancel_token", token)
-        .maybeSingle();
+        .rpc('get_reservation_by_cancel_token', { p_token: token });
 
       if (error) throw error;
-      if (!data) {
+      const row = Array.isArray(data) ? data[0] : data;
+
+      if (!row || row.reason === 'not_found') {
         showError("予約が見つからないか、既にキャンセル済みです。");
         return;
       }
 
-      // 🚨 【追加】すでに施術・会計処理が完了している場合はキャンセル画面を出さずに弾く
-      if (data.status === 'completed') {
+      if (row.reason === 'completed') {
         showError("このご予約はすでに施術・会計処理が完了しているため、キャンセル手続きは行えません。");
         return;
       }
 
-      setReservation(data);
+      if (row.reason === 'canceled') {
+        showError("このご予約は既にキャンセル済みです。");
+        return;
+      }
+
+      setReservation(row);
       setView('confirm');
     } catch (err) {
       console.error(err);
@@ -53,15 +58,26 @@ function CancelReservation() {
     setView('loading');
     
     try {
-      const { id, customer_id, customer_name, shop_id } = reservation;
+      // ⚠️ 2026/09/07：anon による reservations の直接 UPDATE を廃止し、
+      //    トークン照合・当日判定・二重キャンセル防止をサーバー側の RPC に移しました。
+      const { data: cancelData, error: cancelError } = await supabase
+        .rpc('cancel_reservation_by_token', { p_token: token });
 
-      // 1. 予約をキャンセル状態に更新（物理削除すると来店履歴や売上集計から記録が消えてしまうため）
-      const { error: deleteError } = await supabase
-        .from('reservations')
-        .update({ status: 'canceled' })
-        .eq('id', id);
+      if (cancelError) throw cancelError;
+      const result = Array.isArray(cancelData) ? cancelData[0] : cancelData;
 
-      if (deleteError) throw deleteError;
+      if (!result?.ok) {
+        if (result?.reason === 'today') {
+          showError("当日のキャンセルはWEBから行えません。店舗へお電話ください。");
+        } else if (result?.reason === 'canceled') {
+          showError("このご予約は既にキャンセル済みです。");
+        } else if (result?.reason === 'completed') {
+          showError("このご予約はすでに施術・会計処理が完了しているため、キャンセル手続きは行えません。");
+        } else {
+          showError("予約が見つかりませんでした。");
+        }
+        return;
+      }
 
       // 🚀 🆕 【追加】キャンセル通知の送信処理
       // 削除後でも変数 reservation にデータが残っているのでそれを利用します
@@ -78,24 +94,8 @@ function CancelReservation() {
         console.error("キャンセル通知送信失敗:", notifyErr);
       }
 
-      // 2. 名簿の来店回数を調整する
-      // 🛡️ 修正：以前は「他に有効な予約が1件も無い場合、名簿ごと削除」していたが、
-      // それでは無断キャンセル対策の記録（cancel_countや、別途実装した「キャンセル状況・履歴」
-      // アラート）まで一緒に消えてしまい、証拠を残すという目的と矛盾するため、
-      // 名簿の削除は行わず、来店回数（total_visits）の調整だけを行う。
-      if (customer_id) {
-        const { data: cust } = await supabase
-          .from('customers')
-          .select('id, total_visits')
-          .eq('id', customer_id)
-          .maybeSingle();
-
-        if (cust) {
-          await supabase.from('customers')
-            .update({ total_visits: Math.max(0, (cust.total_visits || 1) - 1) })
-            .eq('id', cust.id);
-        }
-      }
+      // 2. 名簿の来店回数の調整は cancel_reservation_by_token 内で行っています。
+      //    （anon から customers を直接 UPDATE しないため）
 
       setView('success');
     } catch (err) {
@@ -145,16 +145,12 @@ function CancelReservation() {
         <div style={detailsStyle}>
           <strong>日時:</strong> {dateStr}<br />
           <strong>お名前:</strong> {reservation.customer_name} 様<br />
-          <strong>メニュー:</strong> {
-            /* 🆕 複数名データ（people）と 従来データ（services）の両方に対応 */
-            reservation.options?.people 
-              ? reservation.options.people.map(p => (p.services || []).map(s => s.name).join(', ')).join(' / ')
-              : reservation.options?.services?.map(s => s.name).join(', ') || 'なし'
-          }
+          {/* メニュー名はサーバー側で組み立て済み（options には住所が含まれるため返していません） */}
+          <strong>メニュー:</strong> {reservation.menu_summary || 'なし'}
         </div>
         
         {/* 🚀 🆕 当日判定によるボタンの切り替え */}
-        {isToday(reservation.start_time || reservation.start_at) ? (
+        {reservation.is_today ? (
           <div style={{ 
             marginTop: '20px', 
             padding: '20px', 
@@ -170,9 +166,9 @@ function CancelReservation() {
             </p>
 
             {/* 🚀 🆕 電話発信ボタンの追加 */}
-            {reservation.profiles?.phone && (
+            {reservation.shop_phone && (
   <a 
-    href={`tel:${reservation.profiles.phone}`} 
+    href={`tel:${reservation.shop_phone}`}
     style={{ 
       ...btnStyle, 
       background: '#1e293b', 
@@ -185,7 +181,7 @@ function CancelReservation() {
     }}
   >
     <span>📞</span>
-    <span>{reservation.profiles.phone} に電話する</span>
+    <span>{reservation.shop_phone} に電話する</span>
   </a>
 )}
           </div>
