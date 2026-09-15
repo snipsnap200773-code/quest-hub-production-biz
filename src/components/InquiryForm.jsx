@@ -20,11 +20,12 @@ const InquiryForm = ({ shopId: propsShopId, themeColor: propsThemeColor }) => {
     const fetchSettings = async () => {
       if (!shopId) return;
       setLoading(true);
+      // ⚠️ 2026/09/15：profiles を閉じたため、予約用ビューに切り替えました。
       const { data, error } = await supabase
-        .from('profiles')
-        .select('theme_color, form_config, business_name') // 🆕 business_nameも取得
+        .from('public_booking_settings')
+        .select('theme_color, form_config, business_name')
         .eq('id', shopId)
-        .single();
+        .maybeSingle();
 
       if (!error && data) {
         setThemeColor(data.theme_color || '#2563eb');
