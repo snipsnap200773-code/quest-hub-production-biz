@@ -162,23 +162,11 @@ if (!insError) {
       if (currentUser) {
         setUserProfile(currentUser);
 
-        // 🆕 1. メールアドレスで紐付け（存在する場合のみ）
-        if (session.user.email) {
-          supabase.from('customers')
-            .update({ auth_id: session.user.id })
-            .eq('email', session.user.email)
-            .then();
-        }
-
-        // 🆕 2. 電話番号で紐付け
-        // Googleから取得できる場合、または今後プロフィールに電話番号を保存した場合に備えます
-        const userPhone = currentUser.phone || session.user.phone || session.user.user_metadata?.phone;
-        if (userPhone) {
-          supabase.from('customers')
-            .update({ auth_id: session.user.id })
-            .eq('phone', userPhone)
-            .then();
-        }
+        // ⚠️ 2026/09/16：customers への自動紐付け（メール・電話番号）を廃止しました（【BG】【BM】）。
+        //    本人確認なしに、全店舗の一致した行へ auth_id を上書きしていたため、
+        //    他人の電話番号・メールを登録するだけでその人の顧客情報を読めました。
+        //    実際に、一般客のアカウントが施設の顧客行に紐づく事故が起きています。
+        //    紐付けは予約時にサーバー側（RPC）で行います。
       }
       // 2. プロフィール情報をセット
       if (currentUser) {
@@ -279,12 +267,7 @@ try {
       setUserProfile({ ...userProfile, ...editFields });
       setIsEditingProfile(false);
 
-      // 🤝 【重要】電話番号が登録されたなら、名寄せ（customersテーブルとの紐付け）を実行
-      if (editFields.phone) {
-        await supabase.from('customers')
-          .update({ auth_id: user.id })
-          .eq('phone', editFields.phone);
-      }
+      // ⚠️ 2026/09/16：電話番号による customers への紐付けを廃止しました（【BG】）。
 
       alert("プロフィールを更新しました！");
     } catch (err) {
