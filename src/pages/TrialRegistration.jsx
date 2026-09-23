@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { supabase, supabaseAnon } from '../supabaseClient';
+import { Link } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
 import { COMPANY } from '../config/companyInfo';
 // ⚠️ 2026/09/07：業種名は BasicSettings と完全一致していないと、
 //    staffs.capable_categories / service_categories.target_industry の
@@ -24,8 +24,8 @@ import { INDUSTRY_LABELS } from '../constants/industryMaster';
  */
 
 function TrialRegistration() {
-  const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [agreed, setAgreed] = useState(false);
 
@@ -41,7 +41,6 @@ function TrialRegistration() {
     businessType: '',
     email: '',
     phone: '',
-    password: '',
   });
 
   const handleChange = (e) => {
@@ -53,10 +52,6 @@ function TrialRegistration() {
     e.preventDefault();
     if (isSubmitting) return;
 
-    if (formData.password.length < 8) {
-      setErrorMsg('パスワードは8文字以上で設定してください。');
-      return;
-    }
     if (!agreed) {
       setErrorMsg('利用規約とプライバシーポリシーへの同意が必要です。');
       return;
@@ -65,64 +60,84 @@ function TrialRegistration() {
     setIsSubmitting(true);
     setErrorMsg('');
 
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
+        try {
+      // 運営（QUEST HUB 総括者）の profiles ID。
+      // ベータ申し込みは、この ID あての inquiries として記録します。
+      const OPERATOR_SHOP_ID = '0f4174e6-3834-4ec5-9025-c8316fdbb555';
+
+      const summary = [
+        '【ベータ版 利用申し込み】',
+        `代表者：${formData.ownerName.trim()}（${formData.ownerNameKana.trim()}）`,
+        `店舗名：${formData.shopName.trim()}（${formData.shopNameKana.trim()}）`,
+        `業種：${formData.businessType}`,
+        `電話：${formData.phone.trim()}`,
+        `メール：${formData.email.trim().toLowerCase()}`,
+      ].join('\n');
+
+      const { error } = await supabase
+        .from('inquiries')
         .insert([{
-          owner_name: formData.ownerName.trim(),
-          owner_name_kana: formData.ownerNameKana.trim(),
-          business_name: formData.shopName.trim(),
-          business_name_kana: formData.shopNameKana.trim(),
-          business_type: formData.businessType,
-          email_contact: formData.email.trim().toLowerCase(),
+          shop_id: OPERATOR_SHOP_ID,
+          name: formData.ownerName.trim(),
+          email: formData.email.trim().toLowerCase(),
           phone: formData.phone.trim(),
-          admin_password: formData.password,
-          is_suspended: false,
-          notify_line_enabled: true,
-          slot_interval_min: 15,
-        }])
-        .select()
-        .single();
+          content: summary,
+        }]);
 
-      if (error) {
-        // 23505 = unique_violation（email_contact に UNIQUE 制約がある場合）
-        if (error.code === '23505') {
-          setErrorMsg('このメールアドレスはすでに登録されています。ログイン画面からお進みください。');
-          setIsSubmitting(false);
-          return;
-        }
-        throw error;
-      }
+      if (error) throw error;
 
-      const baseUrl = window.location.origin;
-
-      // メール送信が失敗しても、アカウント自体は発行済みなので登録は成功扱いにする
+      // 通知メール。失敗しても申し込みは受理済みなので、ここでは止めない
       try {
-        await supabaseAnon.functions.invoke('send-reservation-email', {
+        await supabase.functions.invoke('resend', {
           body: {
-            type: 'welcome',
-            shopName: formData.shopName,
-            owner_email: formData.email,
-            ownerName: formData.ownerName,
-            phone: formData.phone,
-            businessType: formData.businessType,
-            dashboard_url: `${baseUrl}/admin/${data.id}`,
-            reservations_url: `${baseUrl}/admin/${data.id}/reservations`,
-            reserve_url: `${baseUrl}/shop/${data.id}/reserve`,
-            password: formData.password,
+            type: 'inquiry',
+            shopId: OPERATOR_SHOP_ID,
+            name: formData.ownerName.trim(),
+            email: formData.email.trim().toLowerCase(),
+            phone: formData.phone.trim(),
+            content: summary,
           },
         });
       } catch (mailErr) {
-        console.error('ウェルカムメールの送信に失敗しました', mailErr);
+        console.error('申し込み通知の送信に失敗しました', mailErr);
       }
 
-      navigate(`/admin/${data.id}`);
+      setIsSubmitted(true);
+      setIsSubmitting(false);
     } catch (err) {
       console.error(err);
       setErrorMsg('登録に失敗しました。時間をおいて再度お試しください。解決しない場合はLINEサポートまでご連絡ください。');
       setIsSubmitting(false);
     }
   };
+
+  if (isSubmitted) {
+    return (
+      <div style={pageStyle}>
+        <div style={cardStyle}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={badgeStyle}>お申し込みを受け付けました</div>
+            <h1 style={{ color: '#1e3a8a', fontSize: '1.4rem', fontWeight: 900, margin: '0 0 16px' }}>
+              ありがとうございます
+            </h1>
+            <p style={{ color: '#475569', fontSize: '0.9rem', lineHeight: 1.9, margin: '0 0 24px' }}>
+              内容を確認のうえ、担当者よりご登録のメールアドレスへ<br />
+              ログイン情報をお送りします。<br />
+              数日たっても届かない場合は、LINEサポートまでご連絡ください。
+            </p>
+            <a href={COMPANY.lineUrl} target="_blank" rel="noopener noreferrer" style={lineButtonStyle}>
+              LINEでサポートに相談する
+            </a>
+            <div style={{ marginTop: '20px' }}>
+              <Link to="/" style={{ fontSize: '0.85rem', color: '#94a3b8', textDecoration: 'none' }}>
+                トップページに戻る
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={pageStyle}>
@@ -134,7 +149,7 @@ function TrialRegistration() {
             QUEST HUB
           </h1>
           <p style={{ color: '#64748b', fontSize: '0.92rem', margin: 0 }}>
-            登録すると、その場で管理画面が使えるようになります。
+            お申し込み後、担当者がアカウントを発行してご連絡します。
           </p>
         </div>
 
@@ -143,8 +158,8 @@ function TrialRegistration() {
             ベータ期間中は全機能が無料です
           </p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#15803d', lineHeight: 1.7 }}>
-            まずは店舗情報の登録だけ済ませてください。営業時間・メニュー・LINE連携などの設定は、
-            登録後の管理画面からいつでも行えます。
+            まずは店舗情報をお知らせください。内容を確認のうえ、ログイン情報をメールでお送りします。
+            営業時間・メニュー・LINE連携などの設定は、その後の管理画面から行えます。
           </p>
         </div>
 
@@ -169,30 +184,9 @@ function TrialRegistration() {
           </section>
 
           <section>
-            <label style={labelStyle}>連絡先とログイン設定</label>
+            <label style={labelStyle}>ご連絡先</label>
             <input type="email" name="email" placeholder="メールアドレス" value={formData.email} onChange={handleChange} required autoComplete="email" style={{ ...inputStyle, marginBottom: '10px' }} />
-            <input type="tel" name="phone" placeholder="電話番号" value={formData.phone} onChange={handleChange} required autoComplete="tel" style={{ ...inputStyle, marginBottom: '14px' }} />
-
-            <div style={passwordBoxStyle}>
-              <label htmlFor="qh-password" style={{ fontSize: '0.78rem', fontWeight: 700, color: '#92400e', display: 'block', marginBottom: '6px' }}>
-                管理画面のパスワード
-              </label>
-              <input
-                id="qh-password"
-                type="password"
-                name="password"
-                placeholder="8文字以上"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                minLength={8}
-                autoComplete="new-password"
-                style={{ ...inputStyle, border: '1px solid #f59e0b' }}
-              />
-              <p style={{ fontSize: '0.72rem', color: '#b45309', margin: '7px 0 0', lineHeight: 1.6 }}>
-                管理画面へのログインに使います。控えを残しておいてください。
-              </p>
-            </div>
+            <input type="tel" name="phone" placeholder="電話番号" value={formData.phone} onChange={handleChange} required autoComplete="tel" style={inputStyle} />
           </section>
 
           <label style={agreeStyle}>
@@ -223,7 +217,7 @@ function TrialRegistration() {
               cursor: isSubmitting ? 'not-allowed' : 'pointer',
             }}
           >
-            {isSubmitting ? '登録しています…' : '無料ではじめる'}
+            {isSubmitting ? '送信しています…' : '申し込む'}
           </button>
         </form>
 
@@ -275,9 +269,6 @@ const inputStyle = {
   width: '100%', padding: '13px', borderRadius: '10px',
   border: '1px solid #cbd5e1', fontSize: '1rem', boxSizing: 'border-box',
   fontFamily: 'inherit', color: '#0f172a',
-};
-const passwordBoxStyle = {
-  background: '#fffbeb', padding: '16px', borderRadius: '12px', border: '1px solid #fcd34d',
 };
 const agreeStyle = {
   display: 'flex', gap: '11px', alignItems: 'flex-start',

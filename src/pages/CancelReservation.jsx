@@ -86,7 +86,7 @@ function CancelReservation() {
         await supabase.functions.invoke('resend', {
           body: {
             type: 'cancel',
-            reservation: reservation
+            cancelToken: token
           }
         });
       } catch (notifyErr) {

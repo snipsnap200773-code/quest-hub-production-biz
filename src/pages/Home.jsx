@@ -600,8 +600,7 @@ if (error) {
       await supabase.functions.invoke('resend', {
         body: {
           type: 'cancel',
-          reservation: res, // 予約データを丸ごと渡す
-          shopId: res.shop_id
+          reservationId: res.id
         }
       });
 
