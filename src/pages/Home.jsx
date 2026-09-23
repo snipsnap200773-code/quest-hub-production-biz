@@ -67,11 +67,8 @@ const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
   }, [isModalOpen]);
 
   // 🆕 追加：多段登録フロー用
-  const [signUpStep, setSignUpStep] = useState('email'); // 'email' | 'otp' | 'password' | 'profile'
-  const [otpCode, setOtpCode] = useState('');
-  // 🆕 追記：ローカルで生成した6ケタを一時保存する箱
-  const [generatedOtpTemp, setGeneratedOtpTemp] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [signUpStep, setSignUpStep] = useState('email'); // 'email' | 'sent' | 'profile'
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [regName, setRegName] = useState('');
   const [activeTabModal, setActiveTabModal] = useState(null);
@@ -171,6 +168,21 @@ if (!insError) {
       // 2. プロフィール情報をセット
       if (currentUser) {
         setUserProfile(currentUser);
+
+        // ⚠️ 2026/09/23：メール確認のリンクから戻ってきた直後は、
+        //    お名前・電話番号がまだ未登録。その場合だけ登録画面を出す。
+        const needsProfile =
+          !currentUser.phone ||
+          !currentUser.display_name ||
+          currentUser.display_name === 'ゲストユーザー';
+
+        if (needsProfile) {
+          setRegName(currentUser.display_name === 'ゲストユーザー' ? '' : (currentUser.display_name || ''));
+          setPhone(currentUser.phone || '');
+          setIsSignUpMode(true);
+          setSignUpStep('profile');
+          setIsModalOpen(true);
+        }
       }
 
       // 3. 履歴取得（独立したtry-catchで安全に実行）
@@ -378,133 +390,65 @@ const [isSignUpMode, setIsSignUpMode] = useState(false);
     isSignUpModeRef.current = isSignUpMode;
   }, [isSignUpMode]);
 
-// 🆕 1. 新規登録フロー：自前の Edge Function (Resend) を使用
-  const handleSignUpFlow = async (e) => {
-    e.preventDefault();
-    try {
-      if (signUpStep === 'email') {
-        // 【ステップ1】自前で6ケタの数字を生成して送信
-        const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
-        setGeneratedOtpTemp(generatedOtp); // 検証用に保存
+// ⚠️ 2026/09/23【BH】【BM】：自前OTPを廃止し、Supabase Auth の
+  //    メール確認（Confirm email）に切り替えました。従来は
+  //    ・認証コードをブラウザが作り、ブラウザで照合していた（本人確認になっていない）
+  //    ・宛先とコードをブラウザが指定できた（任意の宛先へ運営ドメインから送信できた）
+  //    という状態でした。確認メールの送信・照合は Supabase が行います。
+  const handleSignUpFlow = async (e) => {
+    e.preventDefault();
+    try {
+      if (signUpStep === 'email') {
+        if (password !== confirmPassword) return alert("パスワードが一致しません");
+        if (password.length < 8) return alert("8文字以上で入力してください");
 
-        // Edge Function 'resend' を呼び出し
-        const { data, error } = await supabase.functions.invoke('resend', {
-          body: { 
-            type: 'signup_otp', 
-            customerEmail: email, 
-            otpCode: generatedOtp 
-          }
-        });
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin }
+        });
 
-if (error) {
-          console.error("Function Error:", error);
+        if (error) {
+          if (error.message.includes("already registered")) {
+            alert("このメールアドレスは既に登録されています。ログイン画面からお進みください。");
+            setIsSignUpMode(false);
+            setSignUpStep('email');
+            return;
+          }
           throw error;
         }
 
-        // 🆕 修正ポイント：サーバーからの返答が「文字列」でも「オブジェクト」でも100%見抜く
-        console.log("Server Raw Data:", data);
-        
-        let isSuccess = false;
-        if (typeof data === 'string') {
-          try {
-            const parsed = JSON.parse(data);
-            isSuccess = parsed.success === true;
-          } catch (e) { isSuccess = false; }
-        } else {
-          isSuccess = data?.success === true;
-        }
+        setSignUpStep('sent');
 
-        if (isSuccess) {
-          // 成功した時だけ次のステップへ進む
-          setSignUpStep('otp');
-          alert("認証コードを @snipsnap.biz から送信しました！");
-        } else {
-          console.error("判定失敗時のデータ:", data);
-          throw new Error("メール送信に失敗しました（サーバーからの返答を確認できません）");
-        }
-
-      } else if (signUpStep === 'otp') {
-
-        // 【ステップ2】ローカルで数字が一致するかチェック
-        if (otpCode === generatedOtpTemp) {
-          setSignUpStep('password');
-        } else {
-          alert("認証コードが一致しません。");
-        }
-        
-      } else if (signUpStep === 'password') {
-        // 【ステップ3】パスワード設定 ＆ Supabaseへの本登録
-        if (password !== confirmPassword) return alert("パスワードが一致しません");
-        if (password.length < 8) return alert("8文字以上で入力してください");
-        
-        // ここで実際に Supabase Auth にアカウントを作成
-        // ※Supabase管理画面で "Confirm email" を OFF にしておくとスムーズです
-        const { error } = await supabase.auth.signUp({ 
-          email, 
-          password 
-        });
-
-        if (error) throw error;
-        setSignUpStep('profile');
-
-} else if (signUpStep === 'password') {
-        // 🔑 【ステップ3】パスワード設定（アカウントの作成）
-        if (password !== confirmPassword) return alert("パスワードが一致しません");
-        if (password.length < 8) return alert("8文字以上で入力してください");
-        
-        // 🆕 重要：自前OTPで確認済みなので、ここで初めて Auth にユーザーを作ります
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ 
-          email, 
-          password 
-        });
-
-        if (signUpError) {
-          if (signUpError.message.includes("already registered")) {
-            alert("このメールアドレスは既に登録されています。新規登録は不要ですので、ログイン画面からそのままログインしてください！");
-            // モーダルをログインモードに切り替えてあげると親切です
-            setIsSignUpMode(false);
-            setSignUpStep('email');
-          } else {
-            throw signUpError; // その他のエラーは今まで通り外側の catch へ
-          }
-          return; // 処理を中断
-        }
-        
-        // 🆕 ユーザーが作成されたら、次の「プロフィール（電話番号）」ステップへ
-        if (signUpData.user) {
-          console.log("👤 ユーザー作成成功:", signUpData.user.id);
-          setSignUpStep('profile');
-        }
-
-} else if (signUpStep === 'profile') {
-        // 📱 【ステップ4】お名前と電話番号の最終登録
+      } else if (signUpStep === 'profile') {
+        // 確認リンクを踏んでログインした後に、お名前と電話番号を登録する
         if (!regName) return alert("お名前を入力してください");
         if (!phone) return alert("電話番号を入力してください");
-        
+
         const { data: { user: currentUser } } = await supabase.auth.getUser();
         if (!currentUser) throw new Error("セッションが見つかりません。");
 
         const randomId = `user_${Math.random().toString(36).substring(2, 7)}`;
 
-        const { error: updateError } = await supabase.from('app_users').upsert({ 
+        const { error: updateError } = await supabase.from('app_users').upsert({
           id: currentUser.id,
           display_id: randomId,
           phone: phone,
           email: currentUser.email,
-          display_name: regName, // 🆕 '新ユーザー' から変更
+          display_name: regName,
           updated_at: new Date().toISOString()
         }, { onConflict: 'id' });
-        
+
         if (updateError) throw updateError;
 
         alert(`ご登録ありがとうございます、${regName} 様！`);
-        
-        setIsSignUpMode(false); 
+
+        setIsSignUpMode(false);
         setIsModalOpen(false);
-        setSignUpStep('email'); 
+        setSignUpStep('email');
         handleSyncUser({ user: currentUser });
-      }      
-        } catch (err) {
+      }
+    } catch (err) {
       alert("エラーが発生しました: " + err.message);
     }
   };
@@ -1199,15 +1143,12 @@ if (error) {
                 {/* 🆕 SOLO から QUEST HUB に変更 */}
                 {!isSignUpMode ? 'QUEST HUB にログイン' : 
                   signUpStep === 'email' ? '新規アカウント作成' : 
-                  signUpStep === 'otp' ? '認証コードを確認' : 
-                  signUpStep === 'password' ? 'パスワード設定' : 'プロフィール登録'}
+                  signUpStep === 'sent' ? 'メールをご確認ください' : 'プロフィール登録'}
               </h2>
               <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
-                {/* 🆕 文言を整理。ログイン時はシンプルに「予約をもっとスマートに。」 */}
                 {!isSignUpMode ? '予約をもっとスマートに。' : 
-                  signUpStep === 'email' ? 'まずはメールアドレスを送信してください' : 
-                  signUpStep === 'otp' ? 'メールに届いた6ケタの番号を入力' : 
-                  signUpStep === 'password' ? 'ログイン用のパスワードを決めましょう' : '最後に連絡先を教えてください'}
+                  signUpStep === 'email' ? 'メールアドレスとパスワードを決めてください' : 
+                  signUpStep === 'sent' ? '確認メールのリンクを開くと登録が完了します' : '最後に連絡先を教えてください'}
               </p>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -1277,29 +1218,16 @@ if (error) {
                     {signUpStep === 'email' && (
                       <>
                         <input type="email" placeholder="メールアドレス" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInputStyle} required />
-                        <button type="submit" style={modalPrimaryBtnStyle}>認証コードを送信</button>
-                      </>
-                    )}
-                    {signUpStep === 'otp' && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <input type="text" placeholder="000000" maxLength={6} value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))} style={{ ...modalInputStyle, textAlign: 'center', letterSpacing: '8px', fontSize: '1.5rem', fontWeight: '900' }} required />
-                        <button type="submit" style={modalPrimaryBtnStyle}>番号を認証する</button>
-                        <button type="button" onClick={() => setSignUpStep('email')} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.8rem', cursor: 'pointer' }}>やり直す</button>
-                      </div>
-                    )}
-                    {signUpStep === 'password' && (
-                      <>
-                        {/* 🆕 1つ目のパスワード入力欄 */}
+
                         <div style={{ position: 'relative' }}>
                           <input 
-                            type={showPassword ? "text" : "password"} // 🚀 ステートで切り替え
-                            placeholder="新しいパスワード（8文字以上）" 
+                            type={showPassword ? "text" : "password"}
+                            placeholder="パスワード（8文字以上）" 
                             value={password} 
                             onChange={(e) => setPassword(e.target.value)} 
-                            style={{ ...modalInputStyle, paddingRight: '50px' }} // 🚀 アイコン分の余白を確保
+                            style={{ ...modalInputStyle, paddingRight: '50px' }}
                             required 
                           />
-                          {/* 🆕 目のマークボタン */}
                           <button 
                             type="button" 
                             onClick={() => setShowPassword(!showPassword)} 
@@ -1309,10 +1237,9 @@ if (error) {
                           </button>
                         </div>
 
-                        {/* 🆕 2つ目の確認用パスワード入力欄（こっちも目のマークに対応） */}
                         <div style={{ position: 'relative' }}>
                           <input 
-                            type={showPassword ? "text" : "password"} // 🚀 共通のステートで切り替え
+                            type={showPassword ? "text" : "password"}
                             placeholder="パスワード（確認用）" 
                             value={confirmPassword} 
                             onChange={(e) => setConfirmPassword(e.target.value)} 
@@ -1327,9 +1254,24 @@ if (error) {
                             {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                           </button>
                         </div>
-                        
-                        <button type="submit" style={modalPrimaryBtnStyle}>パスワードを確定して次へ</button>
+
+                        <button type="submit" style={modalPrimaryBtnStyle}>確認メールを送信</button>
                       </>
+                    )}
+                    {signUpStep === 'sent' && (
+                      <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                        <div style={{ display: 'inline-flex', background: '#f0f9ff', color: '#07aadb', padding: '14px', borderRadius: '50%', marginBottom: '16px' }}>
+                          <Mail size={28} />
+                        </div>
+                        <p style={{ fontSize: '0.9rem', color: '#475569', lineHeight: 1.9, margin: 0 }}>
+                          確認メールをお送りしました。<br />
+                          メール内のリンクを開くと登録が完了します。<br />
+                          その後、お名前と電話番号をご登録ください。
+                        </p>
+                        <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '16px', lineHeight: 1.7 }}>
+                          メールが届かない場合は、迷惑メールフォルダもご確認ください。
+                        </p>
+                      </div>
                     )}
                     {signUpStep === 'profile' && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
