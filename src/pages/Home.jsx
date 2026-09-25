@@ -473,15 +473,17 @@ const [isSignUpMode, setIsSignUpMode] = useState(false);
   };
 
   // 🆕 2. ログイン専用の関数
+  // ⚠️ 2026/09/25【BQ】：ID（display_id）でのログインを廃止しました。
+  //    app_users は本人の行しか読めないため、未ログインで display_id から
+  //    メールアドレスを引く処理は必ず0件になり、動いていませんでした。
+  //    display_id は画面に表示されているため、ID からメールを返す仕組みを
+  //    作ると総当たりで他人のメールアドレスを集められてしまいます。
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      let loginEmail = email;
-      // IDログイン対応
-      if (!email.includes('@')) {
-        const { data: profile } = await supabase.from('app_users').select('email').eq('display_id', email).maybeSingle();
-        if (!profile) return alert("ユーザーIDが見つかりません。");
-        loginEmail = profile.email;
+      const loginEmail = email.trim();
+      if (!loginEmail.includes('@')) {
+        return alert("メールアドレスでログインしてください。（IDでのログインは終了しました）");
       }
       const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
       if (error) throw error;
@@ -1199,7 +1201,7 @@ const [isSignUpMode, setIsSignUpMode] = useState(false);
   ) : !isSignUpMode ? (
     /* 通常のログイン表示 */
     <>
-      <input type="text" placeholder="メールアドレス または ID" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInputStyle} required />
+      <input type="email" placeholder="メールアドレス" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} style={modalInputStyle} required />
       <input type="password" placeholder="パスワード" value={password} onChange={(e) => setPassword(e.target.value)} style={modalInputStyle} required />
       
       <div style={{ textAlign: 'right', marginTop: '-8px' }}>
