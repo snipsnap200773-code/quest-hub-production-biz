@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { supabase, supabaseAnon } from '../supabaseClient';
 import { Loader2, Sparkles, Clock } from 'lucide-react';
