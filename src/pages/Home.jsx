@@ -328,13 +328,21 @@ try {
       
       if (session && !sessionError) {
         // 2. セッションがあれば、最新のユーザー情報をサーバーに再確認（これでログイン維持を確定させる）
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
         
         if (currentUser) {
           console.log("💎 ログインセッションを復元しました:", currentUser.email);
           setUser(currentUser);
           // 3. プロフィールや履歴、お気に入りを同期
           handleSyncUser(session); 
+        } else if (userError?.status >= 400 && userError?.status < 500) {
+          // ⚠️ 2026/09/25【BR①】：保存されたログイン情報がサーバーで無効（期限切れ・取り消し）だった。
+          //    従来は何もせずに終わり、お客様は「ログインしているつもり」なのに
+          //    予約履歴やお気に入りが空になり、理由が分からなかった。
+          //    電波が悪いなど通信のエラー（status が無い・500番台）では何もしない（誤ってログアウトさせないため）。
+          await supabase.auth.signOut({ scope: 'local' });
+          alert("ログインの有効期限が切れました。お手数ですが、もう一度ログインしてください。");
+          setIsModalOpen(true);
         }
       }
     };
